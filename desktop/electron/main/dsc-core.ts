@@ -32,6 +32,10 @@ export function resolveHeadlessEntry(): string {
 /** 工作目录记忆文件（~/.dsc/desktop.json）。 */
 export interface DesktopState {
   lastCwd?: string
+  /** 最近用过的工作目录，最新的排最前（侧栏切换工作区菜单的数据源）。 */
+  recentCwds?: string[]
+  /** 缩到托盘的那次气泡提示是否已经弹过（只弹一次）。 */
+  trayHintShown?: boolean
 }
 
 export function statePath(): string {
@@ -46,10 +50,14 @@ export function readState(): DesktopState {
   }
 }
 
-export function writeState(state: DesktopState): void {
+/**
+ * 合并写：先读旧文件再覆盖给定的字段。各处调用只传自己要改的字段，
+ * 全量覆盖会把别人写的字段抹掉（换工作目录曾抹掉 trayHintShown）。
+ */
+export function writeState(patch: DesktopState): void {
   try {
     mkdirSync(join(app.getPath('home'), '.dsc'), { recursive: true })
-    writeFileSync(statePath(), JSON.stringify(state, null, 2))
+    writeFileSync(statePath(), JSON.stringify({ ...readState(), ...patch }, null, 2))
   } catch {
     // 记忆失败不致命
   }

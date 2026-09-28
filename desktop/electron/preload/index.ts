@@ -56,9 +56,29 @@ const api = {
     return ipcRenderer.invoke('dsc:restart-host')
   },
 
+  /** 切到指定工作目录（侧栏点工作区名；失败给原因）。 */
+  switchCwd(path: string): Promise<{ ok: true; cwd: string } | { ok: false; error: string }> {
+    return ipcRenderer.invoke('dsc:switch-cwd', path)
+  },
+
+  /** 最近用过的工作目录（最新的排最前）。 */
+  recentCwds(): Promise<string[]> {
+    return ipcRenderer.invoke('dsc:recent-cwds')
+  },
+
   /** 系统文件选择器挑选 .js 插件并复制到 ~/.dsc/plugins/；返回复制的文件名列表。 */
   installPlugin(): Promise<string[]> {
     return ipcRenderer.invoke('dsc:plugins-install')
+  },
+
+  /** 系统选择器挑选技能（SKILL.md 所在目录或 .md 文件）并复制到 ~/.dsc/skills/；返回技能名列表。 */
+  installSkill(): Promise<string[]> {
+    return ipcRenderer.invoke('dsc:skills-install')
+  },
+
+  /** 在系统文件管理器里打开目录或文件（设置「关于」里的路径按钮）；返回空串表示成功。 */
+  openPath(path: string): Promise<string> {
+    return ipcRenderer.invoke('dsc:open-path', path)
   },
 
   // ── dock：内置终端（宿主 desktop-dock 服务，管道模式）/ 内置浏览器 ──

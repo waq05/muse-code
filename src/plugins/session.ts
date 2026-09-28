@@ -1,15 +1,40 @@
 /**
- * session 插件：provide `session` 服务（当前会话 + 列表缓存）。
+ * session 插件：provide `session` 服务（当前会话 + 列表缓存 + 会话库操作）。
  * 逻辑迁自 v2 adapter/core-runtime 的初始会话/openSessionNow/refreshSessions 段。
  * 会话切换与错误提示走 dsc/session-open、dsc/notice 事件（避免与 transcript 循环依赖）。
  *
+ * 列表操作（归档、恢复、永久删除、改名、置顶、分叉）只动磁盘文件与
+ * `sessions/meta.json` sidecar，不碰 jsonl 本体，也不改当前会话的状态机。
+ *
  * @module dsc/plugins/session
  */
-import { join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { basename } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { Session, listSessions, loadLastSessionPath, saveLastSession, sessionsRoot } from '../core/session.js'
+import {
+  Session,
+  archiveSession,
+  countTrashFiles,
+  forkSession,
+  listArchivedSessions,
+  listSessions,
+  loadLastSessionPath,
+  purgeSession,
+  readUserMessages,
+  restoreSession,
+  saveLastSession,
+  trashRoot,
+} from '../core/session.js'
+import { patchSessionMeta } from '../core/session-meta.js'
 import { errText } from '../adapter/transcript.js'
-import type { SessionOpenPayload, SessionService, SessionSummary } from '../services/types.js'
+import type {
+  ArchivedPage,
+  SessionForkResult,
+  SessionOpenPayload,
+  SessionService,
+  SessionSummary,
+  SettingsMutation,
+} from '../services/types.js'
 
 export interface SessionPluginOptions {
   cwd?: string
@@ -27,7 +52,9 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
     let session: Session
     let startupNote: string | null = null
     const resume = options.resumeSessionPath ?? null
-    const resumePath = resume === 'auto' ? loadLastSessionPath() : resume
+    const pointer = resume === 'auto' ? loadLastSessionPath() : resume
+    // 指针可能指向一个从没发过消息、因此没在磁盘上留过文件的会话：这种情况安静地开新会话
+    const resumePath = pointer !== null && existsSync(pointer) ? pointer : null
     try {
       session = resumePath !== null ? Session.load(resumePath) : Session.create(cwd)
     } catch (error) {
@@ -73,11 +100,13 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
         ctx.emit('dsc/changed')
         try {
           sessions = listSessions().map(
-            (meta): SessionSummary => ({
-              id: joinSessionPath(meta.cwd, meta.id),
-              cwd: meta.cwd,
-              createdAt: meta.createdAt,
-              title: meta.title,
+            (item): SessionSummary => ({
+              id: item.path,
+              cwd: item.cwd,
+              createdAt: item.createdAt,
+              updatedAt: item.updatedAt,
+              ...(item.title !== undefined ? { title: item.title } : {}),
+              ...(item.pinnedAt !== undefined ? { pinnedAt: item.pinnedAt } : {}),
             }),
           )
         } catch (error) {
@@ -86,6 +115,96 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
         loading = false
         ctx.emit('dsc/changed')
       },
+
+      // ── 会话库操作（归档 / 恢复 / 删除 / 改名 / 置顶 / 分叉） ──────────────
+      archive(paths) {
+        const blocked = paths.filter((path) => path === session.filePath)
+        if (blocked.length > 0) return { ok: false, error: '当前打开的会话不能归档，先切到别的会话' }
+        try {
+          for (const path of paths) archiveSession(path)
+          return { ok: true, notice: `已归档 ${paths.length} 个会话（设置 → 归档 里可以恢复）` }
+        } catch (error) {
+          return { ok: false, error: errText(error) }
+        }
+      },
+
+      archived(): ArchivedPage {
+        try {
+          return {
+            items: listArchivedSessions().map((item) => ({
+              path: item.path,
+              cwd: item.cwd,
+              ...(item.title !== undefined ? { title: item.title } : {}),
+              createdAt: item.createdAt,
+              updatedAt: item.updatedAt,
+              archivedAt: item.archivedAt ?? item.updatedAt,
+            })),
+            trashDir: trashRoot(),
+            trashCount: countTrashFiles(),
+          }
+        } catch (error) {
+          ctx.emit('dsc/notice', `归档列表读取失败：${errText(error)}`)
+          return { items: [], trashDir: trashRoot(), trashCount: 0 }
+        }
+      },
+
+      restore(paths) {
+        try {
+          for (const path of paths) restoreSession(path)
+          return { ok: true, notice: `已恢复 ${paths.length} 个会话` }
+        } catch (error) {
+          return { ok: false, error: errText(error) }
+        }
+      },
+
+      purge(paths) {
+        if (paths.some((path) => path === session.filePath)) {
+          return { ok: false, error: '当前打开的会话不能删除，先切到别的会话' }
+        }
+        try {
+          for (const path of paths) purgeSession(path)
+          return { ok: true, notice: `已删除 ${paths.length} 个会话（进了回收站，30 天后自动清空）` }
+        } catch (error) {
+          return { ok: false, error: errText(error) }
+        }
+      },
+
+      rename(path, title) {
+        const name = title.replace(/\s+/g, ' ').trim().slice(0, 60)
+        if (name === '') return { ok: false, error: '会话名字不能是空的' }
+        try {
+          patchSessionMeta(uuidOf(path), { title: name })
+          return { ok: true, notice: `已改名为「${name}」` }
+        } catch (error) {
+          return { ok: false, error: errText(error) }
+        }
+      },
+
+      setPinned(path, pinned) {
+        try {
+          patchSessionMeta(uuidOf(path), { pinnedAt: pinned ? Date.now() : null })
+          return { ok: true, notice: pinned ? '已置顶这个会话' : '已取消置顶' }
+        } catch (error) {
+          return { ok: false, error: errText(error) }
+        }
+      },
+
+      userMessages(path) {
+        try {
+          return readUserMessages(path)
+        } catch (error) {
+          ctx.emit('dsc/notice', `读取会话消息失败：${errText(error)}`)
+          return []
+        }
+      },
+
+      fork(path, index): SessionForkResult {
+        try {
+          return { ok: true, path: forkSession(path, index) }
+        } catch (error) {
+          return { ok: false, error: errText(error) }
+        }
+      },
     }
 
     ctx.on('dsc/exit', () => session.close())
@@ -93,7 +212,7 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
   },
 }
 
-/** 会话 cwd → jsonl 路径（sessions 列表的 id 即文件路径）。 */
-function joinSessionPath(cwd: string, id: string): string {
-  return join(sessionsRoot(), cwd.replace(/[\\/:]+/g, '-'), `${id}.jsonl`)
+/** 会话 jsonl 的 `<uuid>.jsonl` 文件名 → uuid（sidecar 的键）。 */
+function uuidOf(filePath: string): string {
+  return basename(filePath, '.jsonl')
 }

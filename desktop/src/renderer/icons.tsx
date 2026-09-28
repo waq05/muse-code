@@ -179,3 +179,146 @@ export function IconCoins(props: IconProps): JSX.Element {
     props,
   )
 }
+
+export function IconGear(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M12 2.8v2.4M12 18.8v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.8 12h2.4M18.8 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7" />
+    </>,
+    props,
+  )
+}
+
+export function IconSpark(props: IconProps): JSX.Element {
+  return base(<path d="M12 2.8 14.2 9l6.2 2.2-6.2 2.2L12 19.6 9.8 13.4 3.6 11.2 9.8 9Z" />, props)
+}
+
+export function IconBolt(props: IconProps): JSX.Element {
+  return base(<path d="M13.2 2.8 5.4 13.4h5l-1.2 7.8 7.8-10.6h-5Z" />, props)
+}
+
+export function IconInfo(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5.5" />
+      <circle cx="12" cy="7.9" r="0.9" fill="currentColor" stroke="none" />
+    </>,
+    props,
+  )
+}
+
+export function IconStore(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 9.5V19a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9.5" />
+      <path d="M3.2 9.5 5 4.2h14l1.8 5.3a3 3 0 0 1-5.6 1.6 3 3 0 0 1-5.4 0 3 3 0 0 1-5.6-1.6Z" />
+      <path d="M9.6 20v-4.6h4.8V20" />
+    </>,
+    props,
+  )
+}
+
+export function IconClose(props: IconProps): JSX.Element {
+  return base(<path d="M6 6l12 12M18 6 6 18" />, props)
+}
+
+export function IconTrash(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4.5 6.8h15" />
+      <path d="M9.5 6.8V4.6h5v2.2" />
+      <path d="M6.6 6.8 7.5 20a1 1 0 0 0 1 .9h7a1 1 0 0 0 1-.9l.9-13.2" />
+      <path d="M10.4 10.5v6.4M13.6 10.5v6.4" />
+    </>,
+    props,
+  )
+}
+
+export function IconEdit(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4.5 19.5h4l10-10a2.1 2.1 0 0 0-3-3l-10 10Z" />
+      <path d="M13.5 6.5l3 3" />
+    </>,
+    props,
+  )
+}
+
+export function IconKey(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="8.2" cy="12" r="3.4" />
+      <path d="M11.6 12H20" />
+      <path d="M17 12v3M14.3 12v2.2" />
+    </>,
+    props,
+  )
+}
+
+/** 更多操作（水平三点）。 */
+export function IconMore(props: IconProps): JSX.Element {
+  return base(
+    <g fill="currentColor" stroke="none">
+      <circle cx="5.5" cy="12" r="1.15" />
+      <circle cx="12" cy="12" r="1.15" />
+      <circle cx="18.5" cy="12" r="1.15" />
+    </g>,
+    props,
+  )
+}
+
+/** 排序（两条滑轨 + 两个把手，对照 dsh 头部那个图标）。 */
+export function IconSort(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 7.5h8.5" />
+      <circle cx="16.2" cy="7.5" r="2" />
+      <path d="M20.5 7.5h-.3" />
+      <path d="M20 16.5h-8.5" />
+      <circle cx="12.2" cy="16.5" r="2" />
+      <path d="M4 16.5h4.3" />
+    </>,
+    props,
+  )
+}
+
+/** 归档（箱子）。 */
+export function IconArchive(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M3.8 4.8h16.4a.8.8 0 0 1 .8.8v2.4H3v-2.4a.8.8 0 0 1 .8-.8Z" />
+      <path d="M5 8v9.4a1.6 1.6 0 0 0 1.6 1.6h10.8A1.6 1.6 0 0 0 19 17.4V8" />
+      <path d="M9.8 11.6h4.4" />
+    </>,
+    props,
+  )
+}
+
+/** 置顶（图钉）。 */
+export function IconPin(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M14.2 3.6 20.4 9.8" />
+      <path d="M16.4 5.6 12 11.4l-5.6 2.4 3.8 3.8 2.4-5.6 5.8-4.4Z" />
+      <path d="M9.6 17.4 6.4 20.6" />
+    </>,
+    props,
+  )
+}
+
+/** 拖动手柄（两列三点，用于可拖动的工作区行）。 */
+export function IconGrip(props: IconProps): JSX.Element {
+  return base(
+    <g fill="currentColor" stroke="none">
+      <circle cx="9.5" cy="6.5" r="1.05" />
+      <circle cx="9.5" cy="12" r="1.05" />
+      <circle cx="9.5" cy="17.5" r="1.05" />
+      <circle cx="14.5" cy="6.5" r="1.05" />
+      <circle cx="14.5" cy="12" r="1.05" />
+      <circle cx="14.5" cy="17.5" r="1.05" />
+    </g>,
+    props,
+  )
+}

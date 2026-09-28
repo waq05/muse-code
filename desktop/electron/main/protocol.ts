@@ -7,8 +7,8 @@
  */
 import { utilityProcess, type UtilityProcess } from 'electron'
 
-/** 协议版本（与 host-stdio 的 HOST_PROTOCOL_VERSION 对应）。 */
-export const HOST_PROTOCOL_VERSION = 1
+/** 协议版本（与 host-stdio 的 HOST_PROTOCOL_VERSION 对应；2 = 增加技能与设置方法）。 */
+export const HOST_PROTOCOL_VERSION = 2
 
 export type RuntimeSnapshot = {
   entries: unknown[]

@@ -9,6 +9,9 @@ files:
 extraResources:
   - from: runtime-staging/dsc-core
     to: dsc-core
+  # 托盘图标（主进程用 process.resourcesPath/icon.png 加载）
+  - from: build/icon.png
+    to: icon.png
 afterPack: scripts/after-pack.cjs
 asar: true
 win:

@@ -1,3 +1,5 @@
 node_modules/
 lib/
 *.tsbuildinfo
+# 自检截图（DSC_DESKTOP_SHOT 的输出目录）
+shots/
