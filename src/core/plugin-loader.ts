@@ -15,7 +15,7 @@ import { readdirSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
-import type { Context, Fiber } from '@deepseek-ai/cordis'
+import type { Context, Fiber, Plugin } from '@deepseek-ai/cordis'
 import {
   checkApiVersion,
   getPluginConfig,
@@ -34,6 +34,20 @@ export { KERNEL_API_VERSION }
 
 /** 已挂载的外部插件：文件名 → cordis Fiber（dispose 即卸载）。 */
 const mounted = new Map<string, Fiber>()
+
+/**
+ * 内置但可停用的官方插件（子智能体团队、电脑操作）：这里登记它们的插件对象，
+ * 于是「打开开关」不必去找 `~/.dsc/plugins/` 下的文件，热挂载直接挂内置对象。
+ */
+const builtinMounts = new Map<string, Plugin.Object>()
+
+/**
+ * 登记一个内置官方插件的挂载对象（宿主装配时调用一次）。
+ * @param file - 开关键，与 `registerPluginMeta` 用的名字一致。
+ */
+export function registerBuiltinMount(file: string, plugin: Plugin.Object): void {
+  builtinMounts.set(basename(file), plugin)
+}
 
 /** 初始化（宿主启动时调用一次，传入内核 root）。 */
 let rootRef: Context | null = null
@@ -80,6 +94,25 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
   const root = rootRef
   if (root === null) throw new Error('plugin runtime 未初始化')
   const base = basename(file)
+
+  // 内置官方插件：对象已在宿主装配时登记，不必读文件；与内核同源，跳过 apiVersion 检查。
+  const builtin = builtinMounts.get(base)
+  if (builtin !== undefined) {
+    await unmountExternalPlugin(base)
+    try {
+      const fiber = root.plugin(builtin, getPluginConfig(base))
+      await fiber
+      mounted.set(base, fiber)
+      const own = getPluginMeta(base)
+      if (own !== undefined) own.problem = undefined
+      return true
+    } catch (error) {
+      const own = getPluginMeta(base)
+      if (own !== undefined) own.problem = `挂载失败：${err(error)}`
+      await disableSilently(base)
+      return false
+    }
+  }
 
   const meta: PluginMeta = { file: base, name: base.replace(/\.js$/, ''), description: '', source: 'external' }
   registerPluginMeta(meta)
@@ -150,7 +183,8 @@ async function disableSilently(file: string): Promise<void> {
  */
 export async function setPluginEnabledHot(file: string, enabled: boolean): Promise<{ ok: boolean; problem?: string }> {
   if (enabled) {
-    const entryFile = resolveEntryPath(file)
+    // 内置官方插件没有磁盘文件，登记过的对象直接挂；其余仍按 ~/.dsc/plugins/ 里的文件找。
+    const entryFile = builtinMounts.has(basename(file)) ? file : resolveEntryPath(file)
     if (entryFile === null) return { ok: false, problem: `找不到插件文件 ${file}（检查 ~/.dsc/plugins/）` }
     const ok = await mountExternalPlugin(entryFile)
     if (!ok) return { ok: false, problem: getPluginMeta(file)?.problem ?? '挂载失败' }
@@ -170,13 +204,16 @@ export interface PluginMountFailure {
   problem: string
 }
 
+/** 外部插件目录（桌面端「添加插件」的复制目标，也是这里发现 `.js` 的地方）。 */
+export const DSC_PLUGINS_DIR = join(homedir(), '.dsc', 'plugins')
+
 /** 加载全部外部插件（宿主启动时调用）：条目树驱动，含热挂载与回滚语义。 */
 export async function mountAllExternalPlugins(
   root: Context,
   extraPaths: string[],
 ): Promise<PluginMountFailure[]> {
   initPluginRuntime(root)
-  const dir = join(homedir(), '.dsc', 'plugins')
+  const dir = DSC_PLUGINS_DIR
   const files = new Map<string, string>()
   try {
     for (const name of readdirSync(dir).sort()) {

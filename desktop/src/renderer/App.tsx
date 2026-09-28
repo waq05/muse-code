@@ -5,7 +5,7 @@
  * @module desktop/renderer/App
  */
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import type { ModelChoiceView, PluginInfoView, RuntimeSnapshot, TranscriptEntry } from '@dsc/runtime/contract.js'
+import type { ModelChoiceView, PluginInfoView, RuntimeSnapshot, TeammateView, TranscriptEntry, UiPrefsView } from '@dsc/runtime/contract.js'
 import { dsc, createRuntimeProxy, type RuntimeProxy } from './bridge.js'
 import { ApprovalCard } from './ApprovalCard.js'
 import { ChatView } from './ChatView.js'
@@ -13,8 +13,11 @@ import { Composer } from './Composer.js'
 import { Dock } from './Dock.js'
 import { PluginsView } from './PluginsView.js'
 import { SessionPicker } from './SessionPicker.js'
+import { SettingsModal } from './SettingsModal.js'
 import { Sidebar } from './Sidebar.js'
+import { SkillsView } from './SkillsView.js'
 import { StatusBar } from './StatusBar.js'
+import { TeammatePeek } from './TeammatePeek.js'
 import { TraceView } from './TraceView.js'
 import { IconSidebar } from './icons.js'
 
@@ -27,7 +30,12 @@ export function App(): JSX.Element {
   const [models, setModels] = useState<ModelChoiceView[]>([])
   const [plugins, setPlugins] = useState<PluginInfoView[]>([])
   const [tab, setTab] = useState<'chat' | 'trace'>('chat')
-  const [view, setView] = useState<'chat' | 'plugins'>('chat')
+  const [view, setView] = useState<'chat' | 'plugins' | 'skills'>('chat')
+  // 设置面板：open 控制遮罩，section 是打开时定位的分区（技能页右上也用它）
+  const [settings, setSettings] = useState<{ open: boolean; section: string }>({ open: false, section: 'general' })
+  // 正在只读查看的队友（侧栏「队友」那一档点开）；它不是当前会话，切不走也改不了
+  const [peek, setPeek] = useState<TeammateView | null>(null)
+  const [peekEntries, setPeekEntries] = useState<TranscriptEntry[]>([])
   const [dockOpen, setDockOpen] = useState(false)
   // dock 宽度（拖拽调宽，持久化到 localStorage）
   const [dockWidth, setDockWidth] = useState(() => {
@@ -36,6 +44,10 @@ export function App(): JSX.Element {
   })
   const proxy: RuntimeProxy = useMemo(createRuntimeProxy, [])
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 侧栏界面偏好（排序方式、工作区顺序与别名），存在宿主的 ~/.dsc/settings.json
+  const [uiPrefs, setUiPrefs] = useState<UiPrefsView>({ sessionSort: 'created', workspaceOrder: [], workspaceAliases: {} })
+  // 最近用过的工作目录：切过去但还没发过消息的工作区也要能在侧栏看到
+  const [recentCwds, setRecentCwds] = useState<string[]>([])
 
   useEffect(() => {
     const offSnapshot = dsc.onSnapshot(setSnapshot)
@@ -46,6 +58,8 @@ export function App(): JSX.Element {
       if (action === 'open-picker') openPicker()
     })
     void dsc.getCwd().then(setCwd)
+    void dsc.recentCwds().then(setRecentCwds)
+    void proxy.getUiPrefs().then(setUiPrefs)
     void proxy.refreshSessions()
     void proxy.listModels().then(setModels)
     return () => {
@@ -73,10 +87,68 @@ export function App(): JSX.Element {
     return () => timers.forEach(clearTimeout)
   }, [demo, proxy])
 
+  // 自检钩子（截图/自动化用）：?view=skills 直接切页，?settings=models 直接开面板到某分区，
+  // ?reveal=1 让只在 hover 时出现的行内按钮常驻，好拍清 hover 态
+  const shotParams = useMemo(() => new URLSearchParams(location.search), [])
+  useEffect(() => {
+    const page = shotParams.get('view')
+    if (page === 'plugins' || page === 'skills') setView(page)
+    const section = shotParams.get('settings')
+    if (section !== null && section !== '') setSettings({ open: true, section })
+    if (shotParams.has('reveal')) document.body.classList.add('shot-reveal')
+    // ?dropline=1 给第二个工作区块画上真实的落点线，好拍清拖动指示长什么样
+    const dropLine = shotParams.has('dropline')
+    if (dropLine) {
+      const timer = setTimeout(() => {
+        document.querySelector('.group:nth-child(2)')?.classList.add('drop-below')
+      }, 1500)
+      return () => clearTimeout(timer)
+    }
+  }, [shotParams])
+
+  // ?peek=1 自动打开队友清单里的第一个（自检截图用；队友名册在磁盘上，不依赖模型）
+  useEffect(() => {
+    if (!shotParams.has('peek')) return
+    let alive = true
+    void proxy
+      .listTeammates()
+      .then((mates) => {
+        if (alive && mates.length > 0) setPeek(mates[0]!)
+      })
+      .catch(() => {
+        /* 没开子智能体团队时这个调用会失败，自检环境里不必管 */
+      })
+    return () => {
+      alive = false
+    }
+  }, [shotParams, proxy])
+
   const openPicker = (): void => {
     setPicker(true)
     void proxy.refreshSessions()
   }
+
+  // 队友的运行记录是活的：这条视图开着时每两秒重读一次那个文件（只读，不动它）
+  useEffect(() => {
+    if (peek === null) return
+    const file = peek.file
+    let alive = true
+    const pull = (): void => {
+      proxy
+        .peekTranscript(file)
+        .then((entries) => {
+          if (alive) setPeekEntries(entries)
+        })
+        .catch(() => {})
+    }
+    setPeekEntries([])
+    pull()
+    const timer = setInterval(pull, 2000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [peek, proxy])
 
   // ---- 插件页动作 ----
   const refreshPlugins = (): void => {
@@ -104,6 +176,34 @@ export function App(): JSX.Element {
     void dsc.restartHost().then(() => {
       showNotice('宿主已重启')
       refreshPlugins()
+    })
+  }
+
+  // ---- 侧栏动作：切工作区、存界面偏好 ----
+  const switchCwd = (dir: string): void => {
+    void dsc.switchCwd(dir).then((outcome) => {
+      if (!outcome.ok) {
+        showNotice(`切不过去：${outcome.error}`)
+        return
+      }
+      setCwd(outcome.cwd)
+      setRecentCwds((current) => [outcome.cwd, ...current.filter((entry) => entry !== outcome.cwd)].slice(0, 12))
+      setView('chat')
+      // 宿主刚换过进程，会话清单要从新宿主重新读一遍
+      void proxy.refreshSessions()
+      showNotice(`已切到 ${outcome.cwd}`)
+    })
+  }
+
+  /** 写侧栏偏好（排序方式、工作区顺序、显示名别名），成功后把新值读回来。 */
+  const saveUiPrefs = (patch: Partial<UiPrefsView>): void => {
+    void proxy.setUiPrefs(patch).then((result) => {
+      if (!result.ok) {
+        showNotice(`没改成：${result.error}`)
+        return
+      }
+      if (result.notice !== undefined) showNotice(result.notice)
+      void proxy.getUiPrefs().then(setUiPrefs)
     })
   }
 
@@ -153,6 +253,8 @@ export function App(): JSX.Element {
     setPicker(false)
     setTab('chat')
     setView('chat')
+    // 换自己的会话就退出队友视图，别让标题还写着别人的名字
+    setPeek(null)
     void proxy.openSession(id)
   }
 
@@ -165,8 +267,10 @@ export function App(): JSX.Element {
         usage={snapshot.status.usage}
         view={view}
         onView={setView}
+        onOpenSettings={(section) => setSettings({ open: true, section })}
         onNew={() => {
           setView('chat')
+          setPeek(null)
           void proxy.openSession(undefined)
         }}
         onPick={pickSession}
@@ -175,6 +279,18 @@ export function App(): JSX.Element {
             if (next !== null) setCwd(next)
           })
         }}
+        recentCwds={recentCwds}
+        uiPrefs={uiPrefs}
+        proxy={proxy}
+        onSwitchCwd={switchCwd}
+        onUiPrefs={saveUiPrefs}
+        onNotice={showNotice}
+        onPeekTeammate={(mate) => {
+          setView('chat')
+          setTab('chat')
+          setPeek(mate)
+        }}
+        peekFile={peek?.file ?? null}
       />
 
       <div className="main">
@@ -187,23 +303,31 @@ export function App(): JSX.Element {
               onRefresh={refreshPlugins}
               onInstall={installPlugin}
               onRestartHost={restartHost}
+              onOpenSettings={(section) => setSettings({ open: true, section })}
             />
+            <StatusBar status={snapshot.status} />
+          </>
+        ) : view === 'skills' ? (
+          <>
+            <SkillsView proxy={proxy} />
             <StatusBar status={snapshot.status} />
           </>
         ) : (
           <>
             <div className="topbar">
-              <span className="title" title={conversationTitle}>
-                {conversationTitle}
+              <span className="title" title={peek === null ? conversationTitle : `队友 ${peek.name} 的运行记录（只读）`}>
+                {peek === null ? conversationTitle : `队友 ${peek.name}`}
               </span>
-          <nav className="tabs">
-            <button className={tab === 'chat' ? 'on' : ''} onClick={() => setTab('chat')}>
-              对话
-            </button>
-            <button className={tab === 'trace' ? 'on' : ''} onClick={() => setTab('trace')}>
-              轨迹
-            </button>
-          </nav>
+              {peek === null && (
+                <nav className="tabs">
+                  <button className={tab === 'chat' ? 'on' : ''} onClick={() => setTab('chat')}>
+                    对话
+                  </button>
+                  <button className={tab === 'trace' ? 'on' : ''} onClick={() => setTab('trace')}>
+                    轨迹
+                  </button>
+                </nav>
+              )}
           <div className="drag-fill" />
           <button
             className={`icon-btn dock-toggle${dockOpen ? ' on' : ''}`}
@@ -214,7 +338,9 @@ export function App(): JSX.Element {
           </button>
         </div>
 
-            {tab === 'trace' ? (
+            {peek !== null ? (
+              <TeammatePeek teammate={peek} entries={peekEntries} onClose={() => setPeek(null)} />
+            ) : tab === 'trace' ? (
               <TraceView entries={snapshot.entries as TranscriptEntry[]} status={snapshot.status} />
             ) : empty ? (
               <Welcome systemEntries={snapshot.entries.filter((entry) => entry.kind === 'system')} />
@@ -238,19 +364,26 @@ export function App(): JSX.Element {
                   onClose={() => setPicker(false)}
                 />
               ) : null}
-              <Composer
-                disabled={snapshot.pendingApproval !== null}
-                models={models}
-                model={snapshot.status.model}
-                effort={snapshot.status.effort}
-                policy={snapshot.status.policy}
-                working={snapshot.status.turnState !== 'idle'}
-                onSubmit={handleSubmit}
-                onInterrupt={() => proxy.interrupt()}
-                onModelChange={(value) => void proxy.setModel(value)}
-                onEffortChange={(value) => void proxy.setEffort(value)}
-                onPolicyChange={(value) => proxy.setPolicy(value)}
-              />
+              {peek === null ? (
+                <Composer
+                  disabled={snapshot.pendingApproval !== null}
+                  models={models}
+                  model={snapshot.status.model}
+                  effort={snapshot.status.effort}
+                  policy={snapshot.status.policy}
+                  working={snapshot.status.turnState !== 'idle'}
+                  onSubmit={handleSubmit}
+                  onInterrupt={() => proxy.interrupt()}
+                  onModelChange={(value) => void proxy.setModel(value)}
+                  onEffortChange={(value) => void proxy.setEffort(value)}
+                  onPolicyChange={(value) => proxy.setPolicy(value)}
+                />
+              ) : (
+                <div className="peek-lock">
+                  你在看队友 {peek.name} 的运行记录，这里不能发言。要给它的活得由派它的那一方用
+                  <code>subagent</code> 工具传话；你用自己的账号插手会打乱它的上下文。
+                </div>
+              )}
             </div>
 
             <StatusBar status={snapshot.status} />
@@ -271,6 +404,13 @@ export function App(): JSX.Element {
           onClose={() => setDockOpen(false)}
         />
       )}
+
+      <SettingsModal
+        open={settings.open}
+        proxy={proxy}
+        initial={settings.section}
+        onClose={() => setSettings((current) => ({ ...current, open: false }))}
+      />
     </div>
   )
 }

@@ -28,6 +28,11 @@ export interface AgentDeps {
   emit(event: CoreEvent): void
   /** 每轮请求前的自动压缩检查（估算超阈值时折叠历史）；缺省不启用。 */
   autoCompact?(): Promise<void>
+  /**
+   * 组装好「发给模型的那份消息」之后的改写钩子（只影响请求体，不改会话日志）。
+   * 插件用它丢掉过期截图之类「留在历史里只会撑上下文、对下一轮没用」的内容。
+   */
+  transformMessages?(messages: ChatMessage[]): ChatMessage[]
 }
 
 const errText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
@@ -127,10 +132,12 @@ export class MiniAgent {
   private async requestOnce(signal: AbortSignal): Promise<StreamResult> {
     const route = this.deps.route()
     const tools = this.deps.tools()
-    const messages: ChatMessage[] = [
+    const assembled: ChatMessage[] = [
       { role: 'system', content: this.deps.systemPrompt() },
       ...this.session.messages,
     ]
+    const messages =
+      this.deps.transformMessages === undefined ? assembled : this.deps.transformMessages(assembled)
     const result = await streamChat(
       {
         baseUrl: route.baseUrl,

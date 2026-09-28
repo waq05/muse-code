@@ -14,7 +14,7 @@ import type { DscRuntime } from '../contract.js'
 
 export const runtimePlugin: Plugin.Object = {
   name: 'ui-runtime',
-  inject: ['agent', 'session', 'transcript', 'approval', 'llm', 'commands', 'dock'],
+  inject: ['agent', 'session', 'transcript', 'approval', 'llm', 'commands', 'dock', 'skills', 'settings'],
   provide: 'ui',
   apply(ctx) {
     const runtime: DscRuntime = {
@@ -73,18 +73,32 @@ export const runtimePlugin: Plugin.Object = {
 
       async setPluginEnabled(file, enabled) {
         if (!writePluginEnabled(file, enabled)) {
-          ctx.transcript.system('内置插件不可停用（它们构成运行内核）')
+          ctx.transcript.system('这一档属于运行内核，构成 dsc 本身，不能停用')
           ctx.transcript.touch()
           return
         }
+        const shown = listPluginInfos().find((item) => item.file === file)?.name ?? file
         // 热启停：即时挂载/卸载，写盘持久化；失败回滚（挂载失败自动停用）
         const outcome = await setPluginEnabledHot(file, enabled)
         if (!outcome.ok) {
-          ctx.transcript.system(`插件 ${file} 未能启用：${outcome.problem ?? '未知原因'}（已回滚为停用）`)
+          ctx.transcript.system(`插件「${shown}」没能启用：${outcome.problem ?? '未知原因'}（已经退回停用状态）`)
         } else {
-          ctx.transcript.system(`已${enabled ? '启用' : '停用'}插件 ${file}（即时生效）`)
+          ctx.transcript.system(`已${enabled ? '启用' : '停用'}插件「${shown}」，即时生效`)
         }
         ctx.transcript.touch()
+      },
+
+      listTeammates() {
+        // 「子智能体团队」没开时这个服务就不存在，侧栏因此看到空列表。
+        // 必须走 ctx.get：cordis 的上下文代理对没 inject 的属性是直接抛错的，`ctx.team?.` 也会先抛
+        const team = ctx.get('team')
+        return team === undefined ? [] : team.list()
+      },
+
+      peekTranscript(file) {
+        const team = ctx.get('team')
+        if (team === undefined) return Promise.reject(new Error('子智能体团队没开，看不到队友的运行记录'))
+        return team.peek(file)
       },
 
       setPolicy(policy) {
@@ -108,8 +122,122 @@ export const runtimePlugin: Plugin.Object = {
         return ctx.llm.listModels()
       },
 
+      // ── 技能中心 ──
+      listSkills() {
+        return ctx.skills.list()
+      },
+
+      readSkill(name) {
+        return ctx.skills.read(name)
+      },
+
+      setSkillEnabled(name, enabled) {
+        return ctx.skills.setEnabled(name, enabled)
+      },
+
+      browseMarket(source) {
+        return ctx.skills.browseMarket(source ?? '')
+      },
+
+      installMarketSkill(source, name) {
+        return ctx.skills.installMarketSkill(source, name)
+      },
+
+      setMarketSources(sources) {
+        ctx.settings.setPrefs({ marketSources: sources })
+        return { ok: true, notice: `已保存 ${sources.length} 个市场源` }
+      },
+
+      // ── 设置界面 ──
+      getSettingsSections() {
+        return ctx.settings.sections()
+      },
+
+      getSectionValues(id) {
+        return ctx.settings.values(id)
+      },
+
+      setSettingValue(id, key, value) {
+        return ctx.settings.save(id, key, value)
+      },
+
+      runSettingAction(id, action) {
+        return ctx.settings.action(id, action)
+      },
+
+      getModelConfig() {
+        return ctx.settings.modelConfig()
+      },
+
+      async saveProvider(draft) {
+        return ctx.settings.saveProvider(draft)
+      },
+
+      async removeProvider(name) {
+        return ctx.settings.removeProvider(name)
+      },
+
+      async setProviderKey(name, apiKey) {
+        return ctx.settings.setProviderKey(name, apiKey)
+      },
+
+      async setDefaultModel(provider, model) {
+        return ctx.settings.setDefaultModel(provider, model)
+      },
+
       refreshSessions() {
         return ctx.session.refresh()
+      },
+
+      // ── 会话库（归档 / 恢复 / 删除 / 改名 / 置顶 / 分叉） ──
+      async archiveSessions(paths) {
+        return ctx.session.archive(paths)
+      },
+
+      listArchivedSessions() {
+        return Promise.resolve(ctx.session.archived())
+      },
+
+      async restoreSessions(paths) {
+        return ctx.session.restore(paths)
+      },
+
+      async purgeSessions(paths) {
+        return ctx.session.purge(paths)
+      },
+
+      async renameSession(path, title) {
+        return ctx.session.rename(path, title)
+      },
+
+      async setSessionPinned(path, pinned) {
+        return ctx.session.setPinned(path, pinned)
+      },
+
+      listUserMessages(path) {
+        return Promise.resolve(ctx.session.userMessages(path))
+      },
+
+      forkSession(path, index) {
+        return Promise.resolve(ctx.session.fork(path, index))
+      },
+
+      getUiPrefs() {
+        return ctx.settings.prefs().ui
+      },
+
+      setUiPrefs(patch) {
+        const current = ctx.settings.prefs().ui
+        ctx.settings.setPrefs({ ui: { ...current, ...patch } })
+        const notice =
+          patch.sessionSort !== undefined
+            ? patch.sessionSort === 'recent'
+              ? '会话改为按最近使用排序（置顶的仍排最前）'
+              : '会话改为按创建时间排序（置顶的仍排最前）'
+            : patch.workspaceOrder !== undefined
+              ? '已保存工作区顺序'
+              : '已保存工作区名字'
+        return Promise.resolve({ ok: true, notice })
       },
 
       answerApproval(answer) {

@@ -22,7 +22,7 @@ import type { RuntimeSnapshot } from '../contract.js'
 const SNAPSHOT_THROTTLE_MS = 80
 
 /** 协议版本（破坏性变更时递增，宿主据此拒绝）。 */
-export const HOST_PROTOCOL_VERSION = 1
+export const HOST_PROTOCOL_VERSION = 2
 
 // ── 消息类型 ──────────────────────────────────────────────────────────────────
 
@@ -52,10 +52,40 @@ const INVOKABLE_METHODS = new Set([
   'listModels',
   'listPlugins',
   'setPluginEnabled',
+  'listTeammates',
+  'peekTranscript',
   'runCommand',
   'setPolicy',
   'dock',
   'answerApproval',
+  // 会话库：归档 / 恢复 / 删除 / 改名 / 置顶 / 分叉 / 界面偏好
+  'archiveSessions',
+  'listArchivedSessions',
+  'restoreSessions',
+  'purgeSessions',
+  'renameSession',
+  'setSessionPinned',
+  'listUserMessages',
+  'forkSession',
+  'getUiPrefs',
+  'setUiPrefs',
+  // 技能中心
+  'listSkills',
+  'readSkill',
+  'setSkillEnabled',
+  'browseMarket',
+  'installMarketSkill',
+  'setMarketSources',
+  // 设置界面
+  'getSettingsSections',
+  'getSectionValues',
+  'setSettingValue',
+  'runSettingAction',
+  'getModelConfig',
+  'saveProvider',
+  'removeProvider',
+  'setProviderKey',
+  'setDefaultModel',
 ])
 
 // ── 传输抽象 ──────────────────────────────────────────────────────────────────

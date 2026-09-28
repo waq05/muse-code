@@ -26,6 +26,21 @@ export interface PluginMeta {
   apiVersion?: number
   /** 加载失败/被自动停用的原因（回滚说明），正常时 undefined。 */
   problem?: string
+  /**
+   * true = 内置但可停用（官方插件，例如子智能体团队、电脑操作）。
+   * 缺省 false 且 source='builtin' 的就是运行内核，不提供开关。
+   */
+  toggleable?: boolean
+  /**
+   * 这个插件在设置面板里贡献的分区 id；UI 据此决定「配置」按钮出现与否。
+   * 内置插件在 kernel 清单里声明；外部插件用 `export const settingsSection` 声明。
+   */
+  settingsSection?: string
+  /**
+   * true = 条目树还没有这条记录时，默认按「停用」处理。
+   * 危险一点的官方插件（电脑操作）用它，装完不主动拿到桌面控制权。
+   */
+  defaultDisabled?: boolean
 }
 
 const catalog = new Map<string, PluginMeta>()
@@ -40,8 +55,16 @@ export function getPluginMeta(file: string): PluginMeta | undefined {
   return catalog.get(file)
 }
 
-/** 内核插件 API 版本：外部插件用 `export const apiVersion` 声明兼容的目标版本。 */
-export const KERNEL_API_VERSION = 1
+/**
+ * 内核插件 API 版本：外部插件用 `export const apiVersion` 声明兼容的目标版本。
+ * 2 = 增加设置分区（`ctx.settings.registerSection`）与技能来源
+ * （`ctx.skills.registerProvider` / `registerMarket`）两个扩展点；
+ * 3 = 增加请求组装扩展点（`ctx.prompt.register` 附加系统提示、
+ * `ctx.prompt.transformMessages` 改写发给模型的消息），并允许外部插件用
+ * `export const settingsSection` 声明自己的设置分区 id（插件中心据此给「配置」按钮）；
+ * 1 与 2 的插件照常挂载（版本检查只拦「高于内核」的声明）。
+ */
+export const KERNEL_API_VERSION = 3
 
 /** 条目树的一项。 */
 export interface PluginEntry {
@@ -106,12 +129,46 @@ export function getPluginConfig(file: string): Record<string, unknown> {
 }
 
 /**
+ * 合并写一个插件的配置对象（插件中心「配置」分区与插件自己共用这一个入口，
+ * 落 `~/.dsc/plugins.json` 的条目树）。值传 null 表示删掉这个键，回到插件默认值。
+ */
+export function writePluginConfig(
+  file: string,
+  patch: Record<string, unknown | null>,
+): Record<string, unknown> {
+  const entries = readPluginEntries()
+  const index = entries.findIndex((entry) => entry.file === file)
+  const config: Record<string, unknown> = index >= 0 ? { ...entries[index]!.config } : {}
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === '') continue
+    if (value === null) delete config[key]
+    else config[key] = value
+  }
+  if (index >= 0) entries[index] = { ...entries[index]!, config }
+  // 新建条目时沿用元数据声明的默认开关：只改配置值不该顺手把插件点亮
+  else entries.push({ file, disabled: catalog.get(file)?.defaultDisabled === true, config })
+  writePluginEntries(entries)
+  return config
+}
+
+/**
+ * 这个插件该不该挂载。条目树没记录时回落到元数据声明的默认值
+ * （`defaultDisabled` 为 true 的官方插件在用户主动打开之前不挂载）。
+ */
+export function isPluginEnabled(file: string): boolean {
+  const entry = readPluginEntries().find((candidate) => candidate.file === file)
+  if (entry === undefined) return catalog.get(file)?.defaultDisabled !== true
+  return !entry.disabled
+}
+
+/**
  * 更新条目树的 disabled 标记并写盘。
- * @returns false = 该插件不可停用（内置）。
+ * @returns false = 该插件不可停用（属于运行内核，即 source='builtin' 且没标 toggleable）。
  */
 export function writePluginEnabled(file: string, enabled: boolean): boolean {
   const meta = catalog.get(file)
-  if (meta !== undefined && meta.source === 'builtin') return false
+  const canToggle = meta === undefined || meta.source === 'external' || meta.toggleable === true
+  if (!canToggle) return false
   const entries = readPluginEntries()
   const index = entries.findIndex((entry) => entry.file === file)
   if (index >= 0) {
@@ -141,18 +198,21 @@ export function checkApiVersion(apiVersion: number | undefined): string | null {
   return null
 }
 
-/** 目录快照 + 条目树合并成 UI 投影（内置插件恒启用）。 */
+/** 目录快照 + 条目树合并成 UI 投影（运行内核那一档恒启用）。 */
 export function listPluginInfos(): PluginInfoView[] {
   const entries = new Map(readPluginEntries().map((entry) => [entry.file, entry]))
   return [...catalog.values()].map((meta) => {
     const entry = entries.get(meta.file)
-    const disabled = meta.source === 'external' ? (entry?.disabled ?? false) : false
+    const canToggle = meta.source === 'external' || meta.toggleable === true
+    const disabled = canToggle ? (entry?.disabled ?? meta.defaultDisabled === true) : false
     return {
       file: meta.file,
       name: meta.name,
       description: meta.description,
       enabled: !disabled,
       source: meta.source,
+      toggleable: canToggle,
+      settingsSection: meta.settingsSection,
       apiVersion: meta.apiVersion,
       problem: meta.problem,
     }

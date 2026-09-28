@@ -12,9 +12,11 @@ dsc 采用「万物皆插件」架构：内核（cordis Context）只提供一�
 与内核**零源码耦合**：一个独立 `.js` 文件，放进约定目录即被加载，不改动 dsc 任何源码。
 
 **能做的扩展**：注册工具、注册 `/` 命令、监听并发布事件、消费全部内核服务、
-维护插件自身状态与清理逻辑、声明 API 版本与元数据。
+维护插件自身状态与清理逻辑、声明 API 版本与元数据；往桌面端设置面板注册一个**设置分区**，
+或往技能中心注册一个**技能来源 / 市场源**。
 **做不到的**（当前版本边界，不要向用户承诺）：
-- 不能向桌面端 / TUI 注入自定义界面（反馈只能走会话条目与命令）；
+- 不能注入自定义 React 组件、HTML 或 CSS。界面扩展只接受可 JSON 序列化的控件声明
+  （`SettingsField`，见 §4.7），渲染由桌面端唯一的渲染器完成；TUI 不渲染插件分区；
 - 不要尝试覆盖内置服务（cordis 允许 provide 同名服务，但该路径未经验证）。
 
 ## 2. 硬性规则（MUST / NEVER）
@@ -41,7 +43,7 @@ dsc 采用「万物皆插件」架构：内核（cordis Context）只提供一�
 // ~/.dsc/plugins/my-plugin.js
 export const name = '我的插件'            // 可选：管理页显示名（缺省 = 文件名去后缀）
 export const description = '一句话描述'   // 可选：管理页描述
-export const apiVersion = 1              // 可选：声明兼容的内核 API 版本（版本管理见 §3.1）
+export const apiVersion = 2              // 可选：声明兼容的内核 API 版本（版本管理见 §3.1）
 export const inject = ['tools', 'commands', 'transcript']  // 声明依赖的服务
 
 export function apply(ctx, config) {     // config = 条目树里该条目的 config 对象（可为空）
@@ -72,11 +74,19 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 
 ### 3.2 版本管理（自动回滚）
 
-内核有 API 版本号（当前 `KERNEL_API_VERSION = 1`）。插件声明 `export const apiVersion = 1`：
+内核有 API 版本号（当前 `KERNEL_API_VERSION = 2`）。插件声明 `export const apiVersion = 2`：
 - 等于内核版本 → 正常挂载；
 - **高于**内核（插件要求更新的内核）→ 拒绝挂载、**自动写入停用**（回滚到可用状态），
   管理页显示原因；升级 dsc 后重新启用即可；
 - 未声明 → 视为兼容（向后兼容旧插件）。
+
+| 内核 API | 内容 |
+|---|---|
+| 1 | 初始版本：工具、命令、事件、全部内核服务 |
+| 2 | 新增 `settings` 与 `skills` 服务：设置分区、技能来源、市场源三个扩展点；桌面端设置面板与技能中心 |
+
+`apiVersion = 1` 的旧插件在 v2 内核上照常挂载（判定只拒绝**高于**内核的声明），不用改代码；
+但要用 §4.7 / §4.8 的扩展点就必须声明 `apiVersion = 2`。
 
 ### 3.3 AI 参与插件管理
 
@@ -85,6 +95,32 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 用户也可以在会话里输入 `/plugins` 查看清单。给 AI 的指引：安装第三方插件前先 `list`
 确认没有同名文件；`install` 只接受绝对路径；版本不兼容的插件会被自动停用并在清单里
 标注原因，此时应向用户说明而不是反复重试。
+
+### 3.4 插件中心的三档：自定义 / 官方可开关 / 运行内核
+
+桌面端「插件」页从上到下分三档，档位由插件元数据决定（`PluginMeta`，见 `dsc/src/core/plugin-registry.ts`）：
+
+| 档位 | 判定 | 开关 |
+|---|---|---|
+| 自定义 | `source: 'external'`（`~/.dsc/plugins/*.js`） | 可拨，默认开 |
+| 官方可开关 | `source: 'builtin'` 且 `toggleable: true` | 可拨，`defaultDisabled: true` 时默认关 |
+| 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关，页面只露 3 行，其余折叠 |
+
+现有的两个官方可开关插件：`subagent`（子智能体团队，`subagent` + `team_task` 两个工具）、
+`computer-use`（电脑操作，`computer` / `computer_look`）。两个都默认关。
+
+新增一档官方可开关插件要做的三件事：
+
+1. 在 `dsc/src/host/kernel.ts` 的 `OFFICIAL_PLUGINS` 里登记元数据，带上
+   `toggleable: true`、`defaultDisabled: true`、`settingsSection: '<分区 id>'`；
+2. 插件自己在 `apply()` 末尾 `ctx.provide('<服务名>', {...})`，把自己挂上来的东西给出去；
+3. **不要**把这个可选服务写进 `inject`：插件关着时它不存在，写了 `inject` 会让整个挂载失败。
+   别人（比如 runtime 的 `listTeammates`）要用 cordis 的 `ctx.get('<服务名>')` 去读，
+   读不到就是 `undefined`。直接写 `ctx.<服务名>?.` 也会被代理拦下抛
+   `cannot get property "xxx" without inject`——`?.` 救不了，属性访问本身就先抛了。
+
+配置存在条目树里（`writePluginConfig(file, patch)`）。只改配置值不会把插件点亮：
+新建条目时沿用元数据声明的默认开关。
 
 ## 4. 服务 API 参考
 
@@ -165,8 +201,78 @@ ctx.compact.run(): Promise<void>        // 手动压缩上下文
 
 `subscribe / getSnapshot / submit / interrupt / openSession / compact / setModel /
 setEffort / refreshSessions / listModels / listPlugins / setPluginEnabled /
-runCommand / answerApproval / exit / dispose`。插件里通常用不到它（优先用
-`agent` / `transcript`）；`exit()` 会结束宿主进程，务必只用于用户显式退出。
+runCommand / answerApproval / exit / dispose`；
+内核 API v2 另加技能与设置两批：`listSkills / readSkill / setSkillEnabled /
+browseMarket / installMarketSkill / setMarketSources / getSettingsSections /
+getSectionValues / setSettingValue / runSettingAction / getModelConfig /
+saveProvider / removeProvider / setProviderKey / setDefaultModel`。
+插件里通常用不到它（优先用 `agent` / `transcript`，改配置优先用 `settings` 服务）；
+`exit()` 会结束宿主进程，务必只用于用户显式退出。
+
+### 4.7 settings —— 往桌面端设置面板加一个分区
+
+```js
+const off = ctx.settings.registerSection({
+  id: 'my-plugin-prefs',              // 导航键，建议 `<插件名>-<分区>`；内置 id 见下方规则
+  title: '我的插件',                   // 左栏标题（插件贡献的分区会带上「插件」标记）
+  subtitle: '轮询与同步设置',           // 可选：分区标题下的一行说明
+  order: 30,                          // 小者在前；内置：通用 0 / 模型 10 / 技能 20 / 关于 900
+  fields: () => [                     // 每次打开分区都调用；返回值必须能 JSON 序列化
+    { type: 'switch', key: 'enabled', label: '启用轮询' },
+    { type: 'select', key: 'interval', label: '间隔', options: [{ value: '60', label: '1 分钟' }, { value: '300', label: '5 分钟' }] },
+    { type: 'text', key: 'webhook', label: 'Webhook', placeholder: 'https://…', mono: true },
+    { type: 'number', key: 'retries', label: '重试次数', min: 0, max: 5 },
+    { type: 'info', label: '数据目录', text: '/home/me/.dsc/cache/ping', mono: true, copyable: true },
+    { type: 'button', action: 'sync-now', label: '立即同步', style: 'ghost' },
+  ],
+  values: () => ({ enabled: true, interval: '60', webhook: '', retries: 3 }),
+  save: (key, value) => {             // 返回字符串或抛异常 = 失败原因，桌面端就地显示
+    if (key === 'retries' && Number(value) < 0) return '重试次数不能是负数'
+    state[key] = value
+  },
+  action: (name) => {                 // 按钮；返回字符串 = 完成后的提示文案
+    if (name === 'sync-now') return `已同步 ${state.webhook}`
+  },
+})
+return off                            // MUST 在 disposer 里退订
+```
+
+规则：
+- 控件只有 `text` / `number` / `select` / `switch` / `info` / `button` 六种，样式由桌面端统一决定，
+  别指望像素级控制，也不要塞 HTML；
+- `fields()` 与 `values()` 每次打开分区都会调用，可随状态返回不同清单；
+- `save()` 抛异常与返回字符串等价，都是一句就地错误（不会弹全局提示条）；
+- 分区被停用时 disposer 执行完，分区立刻从左栏消失，用户已存的值不受影响；
+- id 撞了内置的 `general` / `models` / `skills` / `about` 时，这个分区被忽略（设置面板里看不到），
+  会话里会多一行系统提示说明原因，插件其余部分照常挂载；
+- `custom: true`（界面由桌面端自己画）只给内置的「模型」「技能」分区用，
+  插件请拆成几个普通分区，不要指望桌面端为你的分区写特判。
+
+### 4.8 skills —— 挂一个技能来源或市场源
+
+```js
+const offProvider = ctx.skills.registerProvider({
+  name: 'team-skills',                // 进 SkillInfoView.source，技能中心当成来源标记
+  rank: 500,                          // 重名裁决：小者赢。内置目录占 100/200/300/400，插件用 500+
+  list: (cwd) => [
+    { name: 'deploy', description: '部署到测试环境', whenToUse: '用户说「部署」时', source: 'team-skills', rank: 500, modelInvocable: true, userInvocable: true, local: false },
+  ],
+  get: (name) => (name === 'deploy' ? { name, description: '部署到测试环境', content: '正文（Markdown）' } : undefined),
+})
+const offMarket = ctx.skills.registerMarket({
+  name: 'internal',
+  browse: async (refresh) => [{ name: 'deploy', description: '部署到测试环境', source: 'internal', installed: false }],
+  install: async (name) => `已安装 ${name}（来自 internal）`,   // 返回一句给用户看的落点说明
+})
+ctx.skills.userDir                    // ~/.dsc/skills，技能中心「导入技能」的目标目录
+ctx.skills.catalogText()              // 模型可见目录文本（只有名字 + 一句话说明）
+return () => { offProvider(); offMarket() }
+```
+
+规则：
+- `local: false` 的虚拟条目在技能中心只展示，没有启停开关（启停只对本地文件生效）；
+- 来源清单变了要发 `ctx.emit('dsc/skills-changed')`，桌面端与模型可见目录都会重取；
+- 正文会原样进入模型上下文，别塞密钥；描述写清「做什么 + 何时用」，模型据此决定是否调用。
 
 ## 5. 事件
 
@@ -180,12 +286,16 @@ runCommand / answerApproval / exit / dispose`。插件里通常用不到它（�
 | `dsc/session-open` | `({ session, filePath })` | 会话已切换（filePath=undefined 表示新建） |
 | `dsc/exit` | — | 请求收尾；监听器须同步执行 |
 | `dsc/open-picker` | — | 命令请求打开会话选择面板 |
+| `dsc/skills-changed` | — | 技能清单或启停状态变化（桌面端技能中心据此重取） |
 
 ## 6. 示例
 
 > **综合参考**：`examples/plugins/memory.js`——Hermes 风格记忆插件，覆盖了工具注册（4 个）、
 > 命令注册、快照监听（prefetch 注入 + 回合结束自动沉淀）、session.messages 滚动注入、
 > `llm.route()` 直连 chat/completions、文件存储与 Markdown 导出。写复杂插件前先读它。
+>
+> **界面扩展参考**：`examples/plugins/settings-demo.js`——一个插件同时注册设置分区
+> （含 switch/select/text/button）、一个虚拟技能来源、一个私有市场源。
 
 ### A. 最小命令插件（消费条目树 config）
 
@@ -248,6 +358,59 @@ export function apply(ctx) {
 }
 ```
 
+### D. 界面扩展：设置分区 + 技能来源 + 私有市场源
+
+完整可运行版本见 `examples/plugins/settings-demo.js`。骨架：
+
+```js
+export const name = '设置与技能示例'
+export const description = '演示设置分区、技能来源、市场源三个扩展点'
+export const apiVersion = 2
+export const inject = ['settings', 'skills', 'transcript']
+
+export function apply(ctx, config) {
+  const state = { ...(config ?? {}), enabled: true, interval: '60', note: '' }
+
+  const offSection = ctx.settings.registerSection({
+    id: 'settings-demo-prefs',
+    title: '示例插件',
+    subtitle: '演示：控件声明由桌面端渲染，值存在插件里',
+    order: 30,
+    fields: () => [
+      { type: 'switch', key: 'enabled', label: '启用', help: '关掉后技能来源不再贡献条目' },
+      { type: 'select', key: 'interval', label: '轮询间隔', options: [{ value: '60', label: '1 分钟' }, { value: '300', label: '5 分钟' }] },
+      { type: 'text', key: 'note', label: '备注', placeholder: '随便写点什么' },
+      { type: 'button', action: 'reset', label: '恢复默认', style: 'ghost' },
+    ],
+    values: () => ({ enabled: state.enabled, interval: state.interval, note: state.note }),
+    save: (key, value) => {
+      if (key === 'interval' && !['60', '300'].includes(String(value))) return '间隔只能是 1 分钟或 5 分钟'
+      state[key] = value
+    },
+    action: (name) => {
+      Object.assign(state, { enabled: true, interval: '60', note: '' })
+      ctx.emit('dsc/skills-changed')
+      return '已恢复默认'
+    },
+  })
+
+  const offProvider = ctx.skills.registerProvider({
+    name: 'settings-demo',
+    rank: 500,
+    list: () => (state.enabled ? [{ name: 'demo-skill', description: '演示技能：说明写清做什么', whenToUse: '用户说「演示一下」时', source: 'settings-demo', rank: 500, modelInvocable: true, userInvocable: true, local: false }] : []),
+    get: (name) => (name === 'demo-skill' ? { name, description: '演示技能', content: '# 演示技能\n\n正文由插件返回，会进入模型上下文。' } : undefined),
+  })
+
+  const offMarket = ctx.skills.registerMarket({
+    name: 'settings-demo',
+    browse: () => [{ name: 'demo-skill', description: '演示技能', source: 'settings-demo', installed: false }],
+    install: (name) => `演示源不落地文件，直接用「技能」页的开关启用（${name}）`,
+  })
+
+  return () => { offSection(); offProvider(); offMarket() }
+}
+```
+
 ## 7. 交付前验证清单（AI 必须逐项执行）
 
 1. **语法**：`node --check <文件>`（若报 "Cannot use import statement"，见 §8 首条）。
@@ -257,6 +420,8 @@ export function apply(ctx) {
 4. **功能**：命令插件 → 让用户输入 `/<命令名>`；工具插件 → 在对话里诱导模型调用并确认
    结果返回；事件插件 → 触发对应场景（如切换会话）。
 5. **展示**：桌面端「插件」页确认 name/description 出现且开关可用。
+   注册了设置分区 → 打开左栏「设置」，确认分区在左栏列出（带「插件」标记）、控件能读写、
+   校验失败时错误就地显示；注册了技能来源 → 打开「技能」页，确认条目带来源标记且 `/技能名` 能调用。
 6. **清理**：临时测试文件删除；若插件不应保留，移除文件并重启宿主。
 
 ## 8. 常见错误
@@ -267,7 +432,11 @@ export function apply(ctx) {
 | 插件没被加载 | 文件不在 `~/.dsc/plugins/`；后缀非 `.js`；条目树里 `disabled: true`；宿主未重启（目录里**新放入**的文件需重启或用 plugin_manager 工具 install） |
 | 管理页显示 ⚠ 版本不兼容 | 插件 `apiVersion` 高于内核；升级 dsc，或把插件 `apiVersion` 降到当前内核版本 |
 | `ctx.tools` 等是 undefined | 忘了在 `inject` 里声明该服务 |
+| 控制台刷 `cannot get property "xxx" without inject` | 那是可选服务（插件关着时不存在）。别把它写进 `inject`，读它的人改用 `ctx.get('xxx')`；`ctx.xxx?.` 不算，属性访问就先抛了 |
 | 桌面端看不到任何输出 | 用了 console.log；反馈必须走 `transcript.system` / `ui.notice` |
 | 模型从不调用你的工具 | description 太弱或 parameters 不是合法 JSON Schema；name 要让模型望文生义 |
+| 设置分区/技能来源没出现 | `inject` 里忘了声明 `settings` 或 `skills`；或分区 id 撞了内置的 `general/models/skills/about`（该分区被忽略，会话里有一行提示） |
+| 设置分区里控件点不动、值不回填 | `values()` 返回的 key 和 `fields()` 里的 `key` 对不上；或 `values()` 返回了不能 JSON 序列化的对象（函数、Date） |
+| 技能中心有条目但 `/名字` 调不动 | 条目 `userInvocable` 为 false，或名字撞了内置命令（new/resume/compact/model/help/exit/effort/plugins/skills） |
 | 写入类工具绕过审批直接执行 | risk 误标为 `'read'`——写文件/执行命令必须是 `'write'`/`'exec'`（权限模式 readonly 下一律拒绝） |
 | 插件被启用但行为还是旧的 | 文件变更后需重新停用→启用（或重启宿主）以触发重载 |

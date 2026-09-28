@@ -4,18 +4,18 @@
  *
  * 装配顺序即依赖顺序（cordis 也会按 inject 声明等待服务就绪）：
  *   llm → session → approval → tools → tools-default → transcript
- *   → commands → compact → agent → runtime → [UI] → 外部插件
+ *   → commands → skills → settings → compact → agent → runtime → [UI] → 外部插件
  *
  * @module dsc/host/kernel
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, type Plugin } from '@deepseek-ai/cordis'
 import type { DscCoreConfig } from '../core/config.js'
 import { DSC_CONFIG_YAML, parseTolerantYaml, type MigrationReport } from '../core/migrate.js'
-import { registerPluginMeta, type PluginMeta } from '../core/plugin-registry.js'
-import { mountAllExternalPlugins } from '../core/plugin-loader.js'
+import { getPluginConfig, isPluginEnabled, registerPluginMeta, type PluginMeta } from '../core/plugin-registry.js'
+import { mountAllExternalPlugins, registerBuiltinMount } from '../core/plugin-loader.js'
 import { pluginManagerPlugin } from '../plugins/plugin-manager.js'
 import { desktopDockPlugin } from '../plugins/desktop-dock.js'
 import { llmPlugin } from '../plugins/llm.js'
@@ -25,11 +25,44 @@ import { toolsPlugin } from '../plugins/tools.js'
 import { toolsDefaultPlugin } from '../plugins/tools-default.js'
 import { transcriptPlugin } from '../plugins/transcript.js'
 import { commandsPlugin } from '../plugins/commands.js'
+import { skillsPlugin } from '../plugins/skills.js'
+import { settingsPlugin } from '../plugins/settings.js'
 import { compactPlugin } from '../plugins/compact.js'
 import { agentPlugin } from '../plugins/agent.js'
 import { runtimePlugin } from '../plugins/runtime.js'
+import { subagentPlugin } from '../plugins/subagent.js'
+import { computerUsePlugin } from '../plugins/computer-use.js'
 
 const err = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+/**
+ * 官方可开关插件（插件中心「官方可开关」那一档）：代码随包发布，但有开关，
+ * 也能跳到自己的设置分区。`defaultDisabled` 为 true 的那些在用户主动打开前不挂载。
+ */
+export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
+  {
+    file: 'subagent',
+    name: '子智能体团队',
+    description: '把活拆给几个有明确授权的队友并行干（subagent / team_task 两个工具）',
+    toggleable: true,
+    defaultDisabled: true,
+    settingsSection: 'subagent',
+  },
+  {
+    file: 'computer-use',
+    name: '电脑操作',
+    description: '截屏、点击、输入这台 Windows 桌面（每次动手都要审批）',
+    toggleable: true,
+    defaultDisabled: true,
+    settingsSection: 'computer-use',
+  },
+]
+
+/** 官方可开关插件的插件对象（开关键 → 对象）。 */
+const OFFICIAL_OBJECTS: Readonly<Record<string, Plugin.Object>> = {
+  subagent: subagentPlugin,
+  'computer-use': computerUsePlugin,
+}
 
 export interface KernelOptions {
   config: DscCoreConfig
@@ -46,6 +79,8 @@ export const BUILTIN_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   { file: 'tools-default', name: '内置工具', description: 'bash / read / write / edit / glob / grep' },
   { file: 'transcript', name: '会话流', description: '事件折叠成对话条目与快照' },
   { file: 'commands', name: '斜杠命令', description: '/ 命令注册与补全' },
+  { file: 'skills', name: '技能', description: 'SKILL.md 发现、开关、市场与 skill 工具' },
+  { file: 'settings', name: '设置', description: '设置分区注册表、模型配置与偏好' },
   { file: 'compact', name: '压缩', description: '上下文超阈值自动压缩' },
   { file: 'agent', name: 'Agent 循环', description: 'ReAct 推理与工具调用循环' },
   { file: 'runtime', name: '运行时适配器', description: '把服务织成 UI 消费的 DscRuntime' },
@@ -55,6 +90,7 @@ export const BUILTIN_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
 export async function createKernel(options: KernelOptions): Promise<Context> {
   const root = new Context()
   for (const meta of BUILTIN_PLUGINS) registerPluginMeta({ ...meta, source: 'builtin' })
+  for (const meta of OFFICIAL_PLUGINS) registerPluginMeta({ ...meta, source: 'builtin' })
   await root.plugin(llmPlugin, options.config)
   await root.plugin(sessionPlugin, { resumeSessionPath: options.resumeSessionPath })
   await root.plugin(approvalPlugin)
@@ -62,11 +98,21 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   await root.plugin(toolsDefaultPlugin)
   await root.plugin(transcriptPlugin)
   await root.plugin(commandsPlugin)
+  await root.plugin(skillsPlugin)
+  await root.plugin(settingsPlugin, options.config)
   await root.plugin(compactPlugin)
   await root.plugin(agentPlugin)
   await root.plugin(runtimePlugin)
   await root.plugin(desktopDockPlugin, { cwd: process.cwd() })
   await root.plugin(pluginManagerPlugin)
+  // 官方可开关插件：先把插件对象登记进热挂载表（拨开关时不必找磁盘文件），
+  // 再按条目树决定这次启动挂不挂（没被用户打开过的默认不挂）。
+  for (const meta of OFFICIAL_PLUGINS) {
+    const plugin = OFFICIAL_OBJECTS[meta.file]
+    if (plugin === undefined) continue
+    registerBuiltinMount(meta.file, plugin)
+    if (isPluginEnabled(meta.file)) await root.plugin(plugin, getPluginConfig(meta.file))
+  }
   return root
 }
 
