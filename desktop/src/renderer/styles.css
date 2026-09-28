@@ -1,89 +1,10 @@
 /*
- * dsc-desktop renderer theme — 对齐 DeepSeek Harness 桌面端：
- * 近黑表面（#0d0d0f）、12% 白描边、大圆角、DeepSeek 蓝点缀。
- * 深色文字阶梯取自 dsh boot 主题：#f9fafb / #cfd3d6 / #adb2b8。
+ * 各视图的布局与细节。
+ *
+ * 变量在 styles/tokens.css，全局重置在 styles/base.css，可复用控件在
+ * styles/primitives.css —— 本文件里不要再出现颜色字面量，也不要再给按钮
+ * 单独写一套 padding/hover。
  */
-
-:root {
-  --bg: #0d0d0f;
-  --bg-side: #101013;
-  --bg-panel: #17171a;
-  --bg-input: #1a1a1f;
-  --bg-hover: #1f1f24;
-  --bg-active: #26262c;
-  --border: rgb(255 255 255 / 10%);
-  --border-soft: rgb(255 255 255 / 6%);
-  --text: #f9fafb;
-  --text-dim: #cfd3d6;
-  --text-faint: #8b8f96;
-  --text-mute: #6b6f76;
-  --accent: #4d6bfe;
-  --accent-hover: #3d5cf0;
-  --accent-soft: rgb(77 107 254 / 14%);
-  --accent-text: #8ea1ff;
-  --code-bg: rgb(255 255 255 / 7%);
-  --ok: #4cc38a;
-  --warn: #e5c07b;
-  --err: #e06c75;
-  --radius-lg: 20px;
-  --radius-md: 10px;
-  --radius-sm: 8px;
-  --mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, monospace;
-  /* 窗口控件 overlay 占位（Windows WCO；env 不支持时回退 0） */
-  --wco-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
-}
-
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family:
-    -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
-  font-size: 14px;
-  line-height: 1.65;
-  -webkit-font-smoothing: antialiased;
-  overflow: hidden;
-}
-
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-thumb {
-  background: rgb(255 255 255 / 10%);
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgb(255 255 255 / 18%);
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-button {
-  font-family: inherit;
-  cursor: pointer;
-  border: none;
-  background: none;
-  color: inherit;
-  padding: 0;
-}
-
-select,
-textarea,
-input {
-  font-family: inherit;
-}
 
 .loading {
   display: flex;

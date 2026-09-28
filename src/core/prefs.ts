@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { ApprovalPolicy, EffortLevel, MarketSource, SessionSortKey, UiPrefsView } from '../contract.js'
+import type { ApprovalPolicy, EffortLevel, MarketSource, SessionSortKey, ThemeMode, UiDensity, UiFontSize, UiPrefsView } from '../contract.js'
 
 export const DSC_SETTINGS_JSON = join(homedir(), '.dsc', 'settings.json')
 
@@ -37,6 +37,9 @@ export interface DscPrefs {
 const POLICIES: readonly ApprovalPolicy[] = ['readonly', 'auto-edit', 'full-access', 'ai-review']
 const EFFORTS: readonly EffortLevel[] = ['default', 'off', 'low', 'high', 'max']
 const SESSION_SORTS: readonly SessionSortKey[] = ['created', 'recent']
+const THEME_MODES: readonly ThemeMode[] = ['dark', 'light', 'system']
+const FONT_SIZES: readonly UiFontSize[] = ['sm', 'md', 'lg']
+const DENSITIES: readonly UiDensity[] = ['compact', 'standard', 'roomy']
 
 /** 工作区别名的长度上限（侧栏一行放不下太长名字）。 */
 const ALIAS_LIMIT = 40
@@ -48,7 +51,7 @@ export function readPrefs(): DscPrefs {
     defaultEffort: null,
     marketSources: [...DEFAULT_MARKET_SOURCES],
     closeToTray: true,
-    ui: { sessionSort: 'created', workspaceOrder: [], workspaceAliases: {} },
+    ui: { sessionSort: 'created', workspaceOrder: [], workspaceAliases: {}, themeMode: 'dark', fontSize: 'md', density: 'standard' },
   }
   if (!existsSync(DSC_SETTINGS_JSON)) return prefs
   try {
@@ -70,6 +73,16 @@ export function readPrefs(): DscPrefs {
           const name = alias.replace(/\s+/g, ' ').trim().slice(0, ALIAS_LIMIT)
           if (name !== '') prefs.ui.workspaceAliases[cwd] = name
         }
+      }
+      // 外观三项：老 settings.json 里没有这几项，读不到就保持上面的默认值。
+      if (typeof ui.themeMode === 'string' && THEME_MODES.includes(ui.themeMode as ThemeMode)) {
+        prefs.ui.themeMode = ui.themeMode as ThemeMode
+      }
+      if (typeof ui.fontSize === 'string' && FONT_SIZES.includes(ui.fontSize as UiFontSize)) {
+        prefs.ui.fontSize = ui.fontSize as UiFontSize
+      }
+      if (typeof ui.density === 'string' && DENSITIES.includes(ui.density as UiDensity)) {
+        prefs.ui.density = ui.density as UiDensity
       }
     }
     if (typeof doc.defaultPolicy === 'string' && POLICIES.includes(doc.defaultPolicy as ApprovalPolicy)) {

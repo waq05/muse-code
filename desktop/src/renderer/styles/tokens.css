@@ -1,0 +1,377 @@
+/*
+ * dsc 设计令牌 —— 整套颜色只由两个种子派生，尺度全部数值化。
+ *
+ * 为什么只留两个种子：`--dsc-base`（前景墨色）与 `--dsc-accent`（品牌蓝）用
+ * color-mix 按百分比混出 5 级背景、4 级描边、4 级文字。换一套皮肤只要改下面
+ * 「旋钮」区里的百分比，不用改散在各处的几十个 hex。旧代码里那些
+ * `rgb(255 255 255 / 10%)` 就是没有这层派生才会各写一遍。
+ *
+ * 三档文件职责：tokens.css 只放变量；primitives.css 只放可复用控件；
+ * views.css 放各视图布局。规则里出现硬编码色值就算写错地方了。
+ */
+
+/* ══════════════════ 深色（默认）══════════════════ */
+
+:root {
+  color-scheme: dark;
+
+  /* ── 种子：改观感先改这两个 ── */
+  --dsc-base: #f2f4f7;
+  /* 品牌蓝。同时充当强调色与描边、填充里的暖色来源：所有「带一点蓝」的表面
+     都是从它按百分比混出来的，换品牌色不会漏改某一处。 */
+  --dsc-accent: #4d6bfe;
+
+  /* ── 旋钮：本主题的派生百分比（浅色主题各有一套）── */
+  --dsc-mix-primary: 16%;
+  --dsc-mix-secondary: 11%;
+  --dsc-mix-tertiary: 8%;
+  --dsc-mix-quaternary: 5%;
+  --dsc-mix-quinary: 3%;
+  --dsc-stroke-primary: 24%;
+  --dsc-stroke-secondary: 16%;
+  --dsc-stroke-tertiary: 10%;
+  --dsc-stroke-quaternary: 6%;
+  --dsc-row-hover: 4%;
+  --dsc-row-active: 8%;
+  --dsc-control-hover: 6%;
+  --dsc-control-active: 8%;
+
+  /* 三个大面各自的中性底色 + 种子往里混的比例。深色下中性底占大头，
+     所以 74% 意思是「底色里 74% 是种子色、26% 是中性灰」。 */
+  --dsc-neutral-page: #0d0d0e;
+  --dsc-neutral-side: #0a0a0b;
+  --dsc-neutral-card: #161618;
+  --dsc-seed-page: #121627;
+  --dsc-seed-side: #101322;
+  --dsc-seed-card: #1b2033;
+  --dsc-mix-page: 74%;
+  --dsc-mix-side: 78%;
+  --dsc-mix-card: 38%;
+
+  /* ── 大面（从外到内三级）── */
+  --dsc-bg-page: color-mix(in srgb, var(--dsc-seed-page) var(--dsc-mix-page), var(--dsc-neutral-page));
+  --dsc-bg-side: color-mix(in srgb, var(--dsc-seed-side) var(--dsc-mix-side), var(--dsc-neutral-side));
+  --dsc-bg-card: color-mix(in srgb, var(--dsc-seed-card) var(--dsc-mix-card), var(--dsc-neutral-card));
+  --dsc-bg-raised: color-mix(in srgb, var(--dsc-seed-card) 46%, var(--dsc-neutral-card));
+  /* 弹层底色比卡片再亮一点，浮起来的层次靠它 + --dsc-shadow-float 撑。 */
+  --dsc-bg-popover: color-mix(in srgb, var(--dsc-bg-raised) 96%, transparent);
+
+  /* ── 填充五级：由重到轻，从「主按钮的兄弟面」到「隔一行」── */
+  --dsc-fill-primary: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-mix-primary),
+    color-mix(in srgb, var(--dsc-base) 10%, transparent)
+  );
+  --dsc-fill-secondary: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-mix-secondary),
+    color-mix(in srgb, var(--dsc-base) 7%, transparent)
+  );
+  --dsc-fill-tertiary: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-mix-tertiary),
+    color-mix(in srgb, var(--dsc-base) 5%, transparent)
+  );
+  --dsc-fill-quaternary: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-mix-quaternary),
+    color-mix(in srgb, var(--dsc-base) 4%, transparent)
+  );
+  --dsc-fill-quinary: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-mix-quinary),
+    color-mix(in srgb, var(--dsc-base) 3%, transparent)
+  );
+
+  /* 列表行与控件的四种交互态。行的 hover 比控件轻，因为一行是整条大面积。 */
+  --dsc-row-hover-bg: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-row-hover),
+    color-mix(in srgb, var(--dsc-base) 3%, transparent)
+  );
+  --dsc-row-active-bg: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-row-active),
+    color-mix(in srgb, var(--dsc-base) 5%, transparent)
+  );
+  --dsc-control-hover-bg: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-control-hover),
+    color-mix(in srgb, var(--dsc-base) 4%, transparent)
+  );
+  --dsc-control-active-bg: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-control-active),
+    color-mix(in srgb, var(--dsc-base) 5%, transparent)
+  );
+
+  /* ── 文字四级 ── */
+  --dsc-text-primary: color-mix(in srgb, var(--dsc-base) 94%, transparent);
+  --dsc-text-secondary: color-mix(in srgb, var(--dsc-base) 74%, transparent);
+  --dsc-text-tertiary: color-mix(in srgb, var(--dsc-base) 54%, transparent);
+  --dsc-text-quaternary: color-mix(in srgb, var(--dsc-base) 36%, transparent);
+  /* 脚手架行（思考标题、已定稿的工具行、状态计时）单独一级：压在 secondary
+     与 tertiary 之间，让正文始终是画面里最亮的那一坨。 */
+  --dsc-text-scaffold: color-mix(in srgb, var(--dsc-base) 64%, transparent);
+  --dsc-text-scaffold-meta: color-mix(in srgb, var(--dsc-base) 44%, transparent);
+  --dsc-text-on-accent: #fcfcfc;
+
+  /* ── 描边四级 ── */
+  --dsc-stroke-1: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-stroke-primary),
+    color-mix(in srgb, var(--dsc-base) 10%, transparent)
+  );
+  --dsc-stroke-2: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-stroke-secondary),
+    color-mix(in srgb, var(--dsc-base) 7%, transparent)
+  );
+  /* 默认分隔线，也是聊天流里唯一允许出现的边框色。 */
+  --dsc-stroke-3: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-stroke-tertiary),
+    color-mix(in srgb, var(--dsc-base) 5%, transparent)
+  );
+  --dsc-stroke-4: color-mix(
+    in srgb,
+    var(--dsc-accent) var(--dsc-stroke-quaternary),
+    color-mix(in srgb, var(--dsc-base) 3%, transparent)
+  );
+  /* 浮层描边：跟着元素自己的文字色走，所以任何表面都不会画出一条错色线。 */
+  --dsc-stroke-float: color-mix(in srgb, currentColor 3%, transparent);
+
+  /* ── 语义色：深色一档，浅色在下面各给一档 ── */
+  --dsc-red: #e75e78;
+  --dsc-orange: #db704b;
+  --dsc-yellow: #c08532;
+  --dsc-green: #55a583;
+  --dsc-cyan: #6f9ba6;
+  --dsc-purple: #9e94d5;
+  --dsc-diff-add-bg: color-mix(in srgb, var(--dsc-green) 12%, transparent);
+  --dsc-diff-add-fg: color-mix(in srgb, var(--dsc-green) 62%, #fff);
+  --dsc-diff-remove-bg: color-mix(in srgb, var(--dsc-red) 12%, transparent);
+  --dsc-diff-remove-fg: color-mix(in srgb, var(--dsc-red) 62%, #fff);
+
+  --dsc-inline-code-bg: color-mix(in srgb, #fff 7%, transparent);
+  --dsc-inline-code-fg: color-mix(in srgb, #fff 88%, transparent);
+  --dsc-selection-bg: color-mix(in srgb, #ffd24a 38%, transparent);
+  --dsc-scrollbar-thumb: color-mix(in srgb, var(--dsc-base) 14%, transparent);
+  --dsc-scrollbar-thumb-hover: color-mix(in srgb, var(--dsc-base) 24%, transparent);
+
+  /* ── 圆角：贴 hermes 的近直角。控件 2.5px、徽标 3px、图标按钮 4px、
+     展开块与气泡 5px；只有对话框这类大面积才用 8px。── */
+  --dsc-r-control: 2.5px;
+  --dsc-r-badge: 3px;
+  --dsc-r-icon: 4px;
+  --dsc-r-block: 5px;
+  --dsc-r-overlay: 8px;
+  --dsc-r-pill: 999px;
+
+  /* ── 字号阶梯（可被 --dsc-font-scale 整体缩放）── */
+  --dsc-font-scale: 1;
+  --dsc-fs-body: calc(13px * var(--dsc-font-scale));
+  --dsc-lh-body: calc(18px * var(--dsc-font-scale));
+  --dsc-fs-caption: calc(12px * var(--dsc-font-scale));
+  --dsc-lh-caption: calc(16px * var(--dsc-font-scale));
+  --dsc-fs-tool: calc(11px * var(--dsc-font-scale));
+  --dsc-fs-label: calc(10.2px * var(--dsc-font-scale));
+  --dsc-fs-micro: calc(9.6px * var(--dsc-font-scale));
+  --dsc-fs-code: calc(11.2px * var(--dsc-font-scale));
+  --dsc-fs-ui: calc(12px * var(--dsc-font-scale));
+  --dsc-fs-ui-lg: calc(14px * var(--dsc-font-scale));
+  /* 小节标题：全大写 + 字距，用来给侧栏分组打标签（PINNED 那种）。 */
+  --dsc-label-case: uppercase;
+  --dsc-label-track: 0.16em;
+
+  /* ── 间距：4px 网格，允许半档 ── */
+  --dsc-sp-0: 2px;
+  --dsc-sp-1: 4px;
+  --dsc-sp-2: 6px;
+  --dsc-sp-3: 8px;
+  --dsc-sp-4: 10px;
+  --dsc-sp-5: 12px;
+  --dsc-sp-6: 16px;
+  --dsc-sp-7: 20px;
+  --dsc-sp-8: 24px;
+
+  /* ── 密度：整体缩放行高与纵向内距（紧凑 / 标准 / 宽松）── */
+  --dsc-density: 1;
+  --dsc-row-h: calc(26px * var(--dsc-density));
+  --dsc-row-pad-x: 8px;
+  --dsc-row-gap: 6px;
+  --dsc-row-lead: 14px;
+  --dsc-stack-gap: calc(6px * var(--dsc-density));
+  --dsc-block-gap: calc(12px * var(--dsc-density));
+  --dsc-para-gap: calc(11px * var(--dsc-density));
+
+  /* ── 几何 ── */
+  --dsc-sidebar-w: 237px;
+  --dsc-sidebar-min: 640px;
+  --dsc-page-inset: clamp(20px, 4vw, 64px);
+  --dsc-page-max: 1200px;
+  --dsc-titlebar-h: 36px;
+  --dsc-titlebar-btn: 24px;
+  --dsc-titlebar-icon: 13.9px;
+  --dsc-ctl: 24px;
+  --dsc-ctl-sm: 20px;
+  --dsc-ctl-lg: 32px;
+  --dsc-send: 26px;
+  --dsc-input-min-h: 26px;
+  --dsc-input-max-h: 150px;
+  --dsc-tool-detail-max-h: 80px;
+  --dsc-thread-max: 68ch;
+  /* 窗口控件占位：Windows Window Controls Overlay；env 不支持时回退 0。 */
+  --dsc-wco-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+
+  /* ── 阴影：一律从上方打光，每一层都向下坠、水平内收，
+     所以阴影聚在面板下方而不是四面漏光。── */
+  --dsc-shadow-xs: 0 1px 2px color-mix(in srgb, #000 5%, transparent);
+  --dsc-shadow-sm:
+    0 0 0 1px color-mix(in srgb, var(--dsc-base) 6%, transparent),
+    0 2px 8px color-mix(in srgb, #000 24%, transparent);
+  --dsc-shadow-md:
+    0 0 0 1px color-mix(in srgb, var(--dsc-base) 8%, transparent),
+    0 4px 16px color-mix(in srgb, #000 30%, transparent),
+    0 16px 32px -24px color-mix(in srgb, #000 50%, transparent);
+  --dsc-shadow-float:
+    0 2px 4px -2px color-mix(in srgb, #000 40%, transparent),
+    0 8px 12px -6px color-mix(in srgb, #000 34%, transparent),
+    0 20px 28px -14px color-mix(in srgb, #000 30%, transparent),
+    0 36px 48px -28px color-mix(in srgb, #000 0%, transparent);
+  --dsc-shadow-composer: 0 1px 2px color-mix(in srgb, #000 5%, transparent);
+
+  /* ── 浮层层级：谁的层次由这个阶梯说，不许在组件里写裸 z-index。
+     组件内部自己的前后叠压照旧用 z-index: 1/2。── */
+  --dsc-z-dock: 20;
+  --dsc-z-menu: 40;
+  --dsc-z-backdrop: 120;
+  --dsc-z-modal: 130;
+  --dsc-z-modal-popover: 140;
+  --dsc-z-toast: 200;
+  --dsc-z-tip: 210;
+  --dsc-z-picker: 220;
+  --dsc-z-crash: 1500;
+
+  /* ── 动效：控件一律 100ms。悬停不是点击，悬浮提示等 200ms 再开，
+     免得鼠标路过时一串气泡乱闪。── */
+  --dsc-dur: 100ms;
+  --dsc-dur-slow: 180ms;
+  --dsc-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --dsc-tip-delay: 200ms;
+  --dsc-tip-warm: 300ms;
+
+  /* ── 字体 ── */
+  --dsc-font-ui:
+    'Segoe WPC', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei',
+    'Hiragino Sans GB', system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --dsc-font-mono:
+    'JetBrains Mono', 'Cascadia Mono', 'Sarasa Mono SC', Consolas, 'DejaVu Sans Mono', Menlo,
+    ui-monospace, monospace;
+  --dsc-font-kbd: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ══════════════════ 浅色 ══════════════════ */
+/* 结构差异只有两处：中性底换白、语义色降饱和提亮度；
+   其余百分比旋钮在下面逐项给出。 */
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --dsc-base: #17171a;
+  --dsc-accent: #0053fd;
+
+  --dsc-neutral-page: #f3f3f3;
+  --dsc-neutral-side: #f3f3f3;
+  --dsc-neutral-card: #fcfcfc;
+  --dsc-seed-page: #f8faff;
+  --dsc-seed-side: #f3f7ff;
+  --dsc-seed-card: #ffffff;
+  --dsc-mix-page: 92%;
+  --dsc-mix-side: 100%;
+  --dsc-mix-card: 22%;
+  --dsc-bg-raised: #ffffff;
+
+  --dsc-text-on-accent: #fcfcfc;
+
+  --dsc-red: #cf2d56;
+  --dsc-orange: #db704b;
+  --dsc-yellow: #c08532;
+  --dsc-green: #1f8a65;
+  --dsc-cyan: #4c7f8c;
+  --dsc-purple: #9e94d5;
+  --dsc-diff-add-fg: color-mix(in srgb, var(--dsc-green) 70%, #000);
+  --dsc-diff-remove-fg: color-mix(in srgb, var(--dsc-red) 70%, #000);
+
+  --dsc-inline-code-bg: color-mix(in srgb, #141414 5%, transparent);
+  --dsc-inline-code-fg: color-mix(in srgb, #141414 88%, transparent);
+  --dsc-selection-bg: color-mix(in srgb, #ffd24a 55%, transparent);
+  --dsc-scrollbar-thumb: color-mix(in srgb, var(--dsc-base) 12%, transparent);
+  --dsc-scrollbar-thumb-hover: color-mix(in srgb, var(--dsc-base) 20%, transparent);
+
+  /* 白底上黑阴影要减淡，否则分隔感会变成脏感。 */
+  --dsc-shadow-sm:
+    0 0 0 1px color-mix(in srgb, var(--dsc-base) 6%, transparent),
+    0 2px 8px color-mix(in srgb, #000 4%, transparent);
+  --dsc-shadow-md:
+    0 0 0 1px color-mix(in srgb, var(--dsc-base) 8%, transparent),
+    0 4px 16px color-mix(in srgb, #000 8%, transparent),
+    0 16px 32px -24px color-mix(in srgb, #000 18%, transparent);
+  --dsc-shadow-float:
+    0 2px 4px -2px color-mix(in srgb, #000 7%, transparent),
+    0 8px 12px -6px color-mix(in srgb, #000 6%, transparent),
+    0 20px 28px -14px color-mix(in srgb, #000 6%, transparent),
+    0 36px 48px -28px color-mix(in srgb, #000 0%, transparent);
+}
+
+/* 跟随系统：由 appearance.ts 把 system 解成 dark|light 再落到 data-theme，
+   这里只兜住它还没跑起来的第一帧。 */
+@media (prefers-color-scheme: light) {
+  :root[data-theme='system'] {
+    color-scheme: light;
+  }
+}
+
+/* ══════════════════ 密度三档 ══════════════════ */
+
+:root[data-density='compact'] {
+  --dsc-density: 0.9;
+}
+
+:root[data-density='roomy'] {
+  --dsc-density: 1.15;
+}
+
+/* ══════════════════ 旧变量别名（迁移期）══════════════════
+ * 现有 481 条规则引用的还是 --bg / --text 这套老名字。这里把它们接到新 token
+ * 上，旧界面立刻吃到新调色板；规则逐条迁到 --dsc-* 之后，这一段整块删掉。
+ * 新写的规则一律用 --dsc-*，不要再引用左边的名字。
+ */
+
+:root {
+  --bg: var(--dsc-bg-page);
+  --bg-side: var(--dsc-bg-side);
+  --bg-panel: var(--dsc-bg-card);
+  --bg-input: var(--dsc-fill-quaternary);
+  --bg-hover: var(--dsc-row-hover-bg);
+  --bg-active: var(--dsc-row-active-bg);
+  --border: var(--dsc-stroke-2);
+  --border-soft: var(--dsc-stroke-4);
+  --text: var(--dsc-text-primary);
+  --text-dim: var(--dsc-text-secondary);
+  --text-faint: var(--dsc-text-tertiary);
+  --text-mute: var(--dsc-text-quaternary);
+  --accent: var(--dsc-accent);
+  --accent-hover: color-mix(in srgb, var(--dsc-accent) 88%, #fff);
+  --accent-soft: var(--dsc-fill-secondary);
+  --accent-text: color-mix(in srgb, var(--dsc-accent) 70%, var(--dsc-base));
+  --code-bg: var(--dsc-inline-code-bg);
+  --ok: var(--dsc-green);
+  --warn: var(--dsc-yellow);
+  --err: var(--dsc-red);
+  --radius-lg: var(--dsc-r-block);
+  --radius-md: var(--dsc-r-icon);
+  --radius-sm: var(--dsc-r-control);
+  --mono: var(--dsc-font-mono);
+  --wco-right: var(--dsc-wco-right);
+}

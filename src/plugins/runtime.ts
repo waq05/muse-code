@@ -236,7 +236,9 @@ export const runtimePlugin: Plugin.Object = {
               : '会话改为按创建时间排序（置顶的仍排最前）'
             : patch.workspaceOrder !== undefined
               ? '已保存工作区顺序'
-              : '已保存工作区名字'
+              : patch.themeMode !== undefined || patch.fontSize !== undefined || patch.density !== undefined
+                ? '已保存外观设置'
+                : '已保存工作区名字'
         return Promise.resolve({ ok: true, notice })
       },
 

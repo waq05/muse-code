@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import type { ModelChoiceView, PluginInfoView, RuntimeSnapshot, TeammateView, TranscriptEntry, UiPrefsView } from '@dsc/runtime/contract.js'
+import { applyAppearance, saveCachedAppearance } from './appearance.js'
 import { dsc, createRuntimeProxy, type RuntimeProxy } from './bridge.js'
 import { ApprovalCard } from './ApprovalCard.js'
 import { ChatView } from './ChatView.js'
@@ -44,8 +45,8 @@ export function App(): JSX.Element {
   })
   const proxy: RuntimeProxy = useMemo(createRuntimeProxy, [])
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // 侧栏界面偏好（排序方式、工作区顺序与别名），存在宿主的 ~/.dsc/settings.json
-  const [uiPrefs, setUiPrefs] = useState<UiPrefsView>({ sessionSort: 'created', workspaceOrder: [], workspaceAliases: {} })
+  // 侧栏界面偏好（排序方式、工作区顺序与别名、外观三项），存在宿主的 ~/.dsc/settings.json
+  const [uiPrefs, setUiPrefs] = useState<UiPrefsView>({ sessionSort: 'created', workspaceOrder: [], workspaceAliases: {}, themeMode: 'dark', fontSize: 'md', density: 'standard' })
   // 最近用过的工作目录：切过去但还没发过消息的工作区也要能在侧栏看到
   const [recentCwds, setRecentCwds] = useState<string[]>([])
 
@@ -69,6 +70,14 @@ export function App(): JSX.Element {
       offLog()
     }
   }, [proxy])
+
+  // 外观三项落到 <html> 的 data 属性和 --dsc-font-scale 上，样式表据此换色。
+  // 同时写一份 localStorage 镜像，下次冷启动的首帧就能按老设置上色，不闪默认深色。
+  useEffect(() => {
+    const appearance = { themeMode: uiPrefs.themeMode, fontSize: uiPrefs.fontSize, density: uiPrefs.density }
+    applyAppearance(appearance)
+    saveCachedAppearance(appearance)
+  }, [uiPrefs.themeMode, uiPrefs.fontSize, uiPrefs.density])
 
   const showNotice = (text: string): void => {
     setNotice(text)

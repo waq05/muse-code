@@ -114,6 +114,15 @@ export interface ArchivedPage {
 /** 会话排序方式：按创建时间，或按最后一次写入时间。 */
 export type SessionSortKey = 'created' | 'recent'
 
+/** 主题模式：固定深色、固定浅色，或跟着系统的浅色偏好走。 */
+export type ThemeMode = 'dark' | 'light' | 'system'
+
+/** 字号档位。桌面端把它换算成 `--dsc-font-scale` 的倍率。 */
+export type UiFontSize = 'sm' | 'md' | 'lg'
+
+/** 密度档位：行高与纵向内距的整体缩放（紧凑 / 标准 / 宽松）。 */
+export type UiDensity = 'compact' | 'standard' | 'roomy'
+
 /** 侧栏界面偏好，存在 `~/.dsc/settings.json`，桌面端与以后别的界面共用。 */
 export interface UiPrefsView {
   sessionSort: SessionSortKey
@@ -121,6 +130,12 @@ export interface UiPrefsView {
   workspaceOrder: string[]
   /** 工作区显示名别名：cwd → 想要的名字。 */
   workspaceAliases: Record<string, string>
+  /** 主题模式。 */
+  themeMode: ThemeMode
+  /** 字号档位。 */
+  fontSize: UiFontSize
+  /** 密度档位。 */
+  density: UiDensity
 }
 
 /** 分叉结果：成功时带新会话的 jsonl 路径，UI 拿它直接切过去。 */

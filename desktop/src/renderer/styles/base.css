@@ -1,0 +1,148 @@
+/*
+ * 全局基线：重置、正文排印、滚动条、焦点环、无障碍降级。
+ *
+ * 这里只放「整个应用共享一条」的规则。任何具体控件的长相都在 primitives.css，
+ * 具体视图的布局都在 views.css。
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--dsc-bg-page);
+  color: var(--dsc-text-primary);
+  font-family: var(--dsc-font-ui);
+  font-size: var(--dsc-fs-body);
+  line-height: var(--dsc-lh-body);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  text-rendering: optimizeLegibility;
+}
+
+/* 选中文本用暖黄而不是品牌蓝：蓝底压白字在深色里会把字吃掉。 */
+::selection {
+  background: var(--dsc-selection-bg);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--dsc-scrollbar-thumb);
+  border-radius: var(--dsc-r-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--dsc-scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 原生控件清零。三条都要留着，一条都省不得：
+ * - background 不清零，还没迁到 .btn 的旧按钮就露出 Chromium 的默认灰底；
+ * - border 写成「0 solid」而不是 none，组件后加 border-width 时盒模型不会突变；
+ * - padding 清零由 .btn/.ctl 自己给，否则同一颗按钮永远叠着两层内距。
+ * select 的 arrow 保留原生（appearance 不动），DSC 目前没画自己的下拉箭头。 */
+button,
+input,
+select,
+textarea {
+  background-color: transparent;
+  background-image: none;
+  border: 0 solid var(--dsc-stroke-2);
+  color: inherit;
+  font-family: inherit;
+  font-size: 100%;
+  font-weight: inherit;
+  line-height: inherit;
+  margin: 0;
+  padding: 0;
+  text-transform: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* 去掉 Chromium 默认聚焦外框，统一换成原语自己画的 3px 强调色环
+ * （每个可聚焦原语自己画，见 --_ring）。 */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+pre {
+  margin: 0;
+}
+
+a {
+  color: var(--dsc-accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--dsc-font-mono);
+}
+
+kbd {
+  font-family: var(--dsc-font-kbd);
+}
+
+/* 无障碍降级：系统要求减少动态效果时，一律瞬时到位。
+ * 逐组件的 @media 只处理特例，这条兜住其余全部，免得浮层卡在半透明中间态。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* 系统要求减少透明度时撤掉所有 backdrop-filter：模糊层每帧都要重采样，
+ * 而清晰度本来就不靠它撑着（每个磨砂面都有自己的半透明底色）。 */
+@media (prefers-reduced-transparency: reduce) {
+  *,
+  *::before,
+  *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* 仅供屏幕阅读器。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
