@@ -21,6 +21,10 @@ import type {
   SettingsSectionView,
   SettingsValue,
   SettingsValues,
+  UiPrefsView,
+  ThemeMode,
+  UiFontSize,
+  UiDensity,
 } from '@dsc/runtime/contract.js'
 import { dsc, type RuntimeProxy } from './bridge.js'
 import { ArchivedView } from './ArchivedView.js'
@@ -59,6 +63,9 @@ export function SettingsModal(props: {
   proxy: RuntimeProxy
   /** 打开时定位的分区 id，空串 = 第一个分区。 */
   initial: string
+  /** 外观三项的真值，由 App 从宿主的 ui 偏好里带来。 */
+  uiPrefs: UiPrefsView
+  onUiPrefs(patch: Partial<UiPrefsView>): void
   onClose(): void
 }): JSX.Element | null {
   const [sections, setSections] = useState<SettingsSectionView[]>([])
@@ -148,7 +155,7 @@ export function SettingsModal(props: {
             ) : section.custom && section.id === 'archive' ? (
               <ArchivedView proxy={props.proxy} />
             ) : (
-              <GenericFields section={section} proxy={props.proxy} />
+              <GenericFields section={section} proxy={props.proxy} uiPrefs={props.uiPrefs} onUiPrefs={props.onUiPrefs} />
             )}
           </div>
         </div>
@@ -161,6 +168,8 @@ export function SettingsModal(props: {
 function GenericFields(props: {
   section: SettingsSectionView
   proxy: RuntimeProxy
+  uiPrefs: UiPrefsView
+  onUiPrefs(patch: Partial<UiPrefsView>): void
 }): JSX.Element {
   const [values, setValues] = useState<SettingsValues>({})
   const [draft, setDraft] = useState<Record<string, string>>({})
@@ -337,6 +346,88 @@ function GenericFields(props: {
         <div className="settings-empty">这个分区没有可配置的项。</div>
       )}
       {props.section.fields.map(render)}
+      {props.section.id === 'general' && (
+        <AppearanceRows uiPrefs={props.uiPrefs} onUiPrefs={props.onUiPrefs} />
+      )}
+    </div>
+  )
+}
+
+/**
+ * 外观三项。
+ *
+ * 宿主分区是宿主侧声明的控件，而这三项只有渲染层消费，所以画在这里、
+ * 直接写回宿主的 ui 偏好：App 收到新值立刻重画，不用重启也不用等回推。
+ */
+function AppearanceRows(props: {
+  uiPrefs: UiPrefsView
+  onUiPrefs(patch: Partial<UiPrefsView>): void
+}): JSX.Element {
+  return (
+    <div className="settings-appearance">
+      <div className="settings-group-title">外观</div>
+      <div className="setting-row">
+        <div className="setting-label">主题</div>
+        <Segments
+          value={props.uiPrefs.themeMode}
+          options={[
+            { value: 'dark', label: '深色' },
+            { value: 'light', label: '浅色' },
+            { value: 'system', label: '跟随系统' },
+          ]}
+          onPick={(value) => props.onUiPrefs({ themeMode: value })}
+        />
+        <div className="setting-help">深浅两套配色都是完整的；选「跟随系统」会跟着 Windows 的浅色设置随时切换。</div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-label">字号</div>
+        <Segments
+          value={props.uiPrefs.fontSize}
+          options={[
+            { value: 'sm', label: '小' },
+            { value: 'md', label: '标准' },
+            { value: 'lg', label: '大' },
+          ]}
+          onPick={(value) => props.onUiPrefs({ fontSize: value })}
+        />
+        <div className="setting-help">标准档正文 13px，小档 92%、大档 112%，代码块跟着一起缩放。</div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-label">密度</div>
+        <Segments
+          value={props.uiPrefs.density}
+          options={[
+            { value: 'compact', label: '紧凑' },
+            { value: 'standard', label: '标准' },
+            { value: 'roomy', label: '宽松' },
+          ]}
+          onPick={(value) => props.onUiPrefs({ density: value })}
+        />
+        <div className="setting-help">只改行高与纵向内距（紧凑 90%、宽松 115%），一屏能看到的会话数会跟着变。</div>
+      </div>
+    </div>
+  )
+}
+
+/** 一小排互斥选项。选中态用 aria-selected，样式在原语的 .dsc-segmented 里。 */
+function Segments<T extends string>(props: {
+  value: T
+  options: { value: T; label: string }[]
+  onPick(value: T): void
+}): JSX.Element {
+  return (
+    <div className="dsc-segmented" role="group">
+      {props.options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className="dsc-segmented__btn"
+          aria-selected={option.value === props.value}
+          onClick={() => props.onPick(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   )
 }

@@ -24,120 +24,145 @@
 .sidebar {
   display: flex;
   flex-direction: column;
-  width: 256px;
+  width: var(--dsc-sidebar-w);
   flex-shrink: 0;
-  background: var(--bg-side);
-  border-right: 1px solid var(--border-soft);
+  background: var(--dsc-bg-side);
+  /* 侧栏右边只留一道 7.5% 的发丝线：这里靠边框分界，不靠阴影。 */
+  border-right: 1px solid color-mix(in srgb, var(--dsc-base) 7.5%, transparent);
 }
 
 .sidebar-header {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 14px 16px 8px;
-  height: 44px;
+  gap: 8px;
+  padding: 10px 12px 6px;
+  height: var(--dsc-titlebar-h);
   -webkit-app-region: drag;
 }
 
 .sidebar-header img {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--dsc-r-icon);
 }
 
 .sidebar-header .brand {
-  font-size: 16px;
+  font-size: var(--dsc-fs-ui-lg);
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
+/* 顶部 DESKTOP 徽标：小号大字距，走徽标原语的几何。 */
 .sidebar-header .badge {
-  padding: 1px 7px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  color: var(--text-faint);
-  font-size: 10px;
+  padding: 2px 5px;
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-badge);
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
   letter-spacing: 0.09em;
   user-select: none;
 }
 
+/* 侧栏唯一的主行动。软填充 + 内描边，不用 border，避免 hover 时字被挤走。 */
 .btn-new {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  margin: 6px 12px 2px;
-  padding: 8px 0;
-  border-radius: var(--radius-md);
-  background: var(--bg-active);
-  font-size: 13px;
+  gap: 6px;
+  margin: 4px 8px 2px;
+  min-height: var(--dsc-row-h);
+  padding: 4px 10px;
+  border-radius: var(--dsc-r-control);
+  background: var(--dsc-fill-quaternary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsc-stroke-2) 60%, transparent);
+  font-size: var(--dsc-fs-body);
   font-weight: 500;
-  color: var(--text);
-  transition: background 0.15s;
+  color: var(--dsc-text-primary);
+  transition: background var(--dsc-dur) var(--dsc-ease);
 }
 
 .btn-new:hover {
-  background: #2e2e35;
+  background: var(--dsc-control-hover-bg);
 }
 
 .btn-new svg {
-  color: var(--text-dim);
+  color: var(--dsc-text-secondary);
+  height: 14px;
+  width: 14px;
 }
 
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 8px 0;
+  gap: 1px;
+  padding: 4px 8px 0;
 }
 
+/* 导航行与会话行同一套几何：行高、圆角、左右内距全部共用。 */
 .nav-item {
-  display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  color: var(--text-dim);
-  font-size: 13.5px;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  display: flex;
+  font-size: var(--dsc-fs-body);
+  gap: var(--dsc-row-gap);
+  min-height: var(--dsc-row-h);
+  padding-inline: var(--dsc-row-pad-x);
   text-align: left;
-  transition: background 0.12s, color 0.12s;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.nav-item svg {
+  color: var(--dsc-text-tertiary);
+  height: 14px;
+  width: 14px;
 }
 
 .nav-item:hover {
-  background: var(--bg-hover);
-  color: var(--text);
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
 }
 
 .nav-item.on {
-  background: var(--bg-active);
-  color: var(--text);
+  background: var(--dsc-row-active-bg);
+  color: var(--dsc-text-primary);
 }
 
+/* 侧栏小节标签（工作区）。品牌色 + 大字距：靠字距和颜色跟正文分级，
+ * 中文没有大小写可转，所以字距收到 0.1em，比拉丁语的 0.16em 紧凑。 */
 .section-head {
-  display: flex;
   align-items: center;
+  color: var(--dsc-accent);
+  display: flex;
+  font-size: var(--dsc-fs-label);
+  font-weight: 600;
   justify-content: space-between;
-  padding: 14px 16px 4px;
-  color: var(--text-mute);
-  font-size: 11.5px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.1em;
+  min-height: 22px;
+  padding-inline: var(--dsc-row-pad-x);
   user-select: none;
 }
 
+/* 行尾小图标按钮：静息三级灰，hover 才提亮并上底色。 */
 .icon-btn {
-  display: inline-flex;
   align-items: center;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-tertiary);
+  display: inline-flex;
+  height: var(--dsc-ctl);
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  color: var(--text-faint);
-  transition: background 0.12s, color 0.12s;
+  width: var(--dsc-ctl);
+  flex-shrink: 0;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .icon-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
 }
 
 .sidebar-scroll {
@@ -147,159 +172,175 @@
 }
 
 .sidebar-empty {
-  padding: 12px 10px;
-  color: var(--text-mute);
-  font-size: 12.5px;
-  line-height: 1.8;
+  padding: 12px 8px;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.7;
 }
 
+/* 工作区行：会话行的基准几何，行高只写在这一处。 */
 .group-row {
-  display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 8px;
-  border-radius: var(--radius-sm);
-  color: var(--text-dim);
-  font-size: 13px;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  display: flex;
+  font-size: var(--dsc-fs-body);
+  gap: var(--dsc-row-gap);
+  min-height: var(--dsc-row-h);
+  padding-inline: var(--dsc-row-pad-x);
   text-align: left;
-  transition: background 0.12s;
+  transition: background var(--dsc-dur) var(--dsc-ease);
 }
 
 .group-row:hover {
-  background: var(--bg-hover);
+  background: var(--dsc-row-hover-bg);
 }
 
 .group-row.active {
-  color: var(--text);
+  color: var(--dsc-text-primary);
 }
 
 .group-row.active .folder-icon {
-  color: var(--accent-text);
+  color: var(--dsc-accent);
 }
 
 .group-row .folder-icon {
   display: inline-flex;
-  color: var(--text-faint);
+  color: var(--dsc-text-tertiary);
+  height: var(--dsc-row-lead);
+  width: var(--dsc-row-lead);
 }
 
 .group-row .dir {
   flex: 1;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .group-row .count {
-  color: var(--text-mute);
-  font-size: 11px;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
 }
 
+/* 会话行：比工作区行缩进一级，标签 13px 二级灰。 */
 .sess-item {
-  display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  display: flex;
+  gap: var(--dsc-row-gap);
   margin-left: 14px;
-  padding: 6px 10px 6px 8px;
-  border-radius: var(--radius-sm);
+  min-height: var(--dsc-row-h);
+  padding-inline: var(--dsc-row-pad-x);
   text-align: left;
-  color: var(--text-faint);
-  transition: background 0.12s, color 0.12s;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .sess-item:hover {
-  background: var(--bg-hover);
-  color: var(--text-dim);
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-secondary);
 }
 
 .sess-item.active {
-  background: var(--bg-active);
-  color: var(--text);
+  background: var(--dsc-row-active-bg);
+  color: var(--dsc-text-primary);
 }
 
 .sess-item .title {
   flex: 1;
+  font-size: var(--dsc-fs-body);
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
 }
 
 .sess-item .when {
+  color: var(--dsc-text-quaternary);
   flex-shrink: 0;
-  color: var(--text-mute);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
 }
 
 .expand-link {
-  margin: 2px 0 2px 40px;
-  padding: 3px 0;
-  color: var(--text-mute);
-  font-size: 12px;
+  margin: 2px 0 2px 36px;
+  padding: 2px 0;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
   text-align: left;
 }
 
 .expand-link:hover {
-  color: var(--text-dim);
+  color: var(--dsc-text-secondary);
 }
 
 /* ── 侧栏工作区：头部操作、搜索、拖动排序、行菜单、分叉选择 ── */
 
 .section-head .head-actions {
-  display: inline-flex;
   align-items: center;
-  gap: 2px;
+  display: inline-flex;
+  gap: 0;
 }
 
 .icon-btn.on {
-  background: var(--bg-active);
-  color: var(--text);
+  background: var(--dsc-control-active-bg);
+  color: var(--dsc-text-primary);
 }
 
+/* 侧栏搜索：细边框 + 极浅填充，聚焦时描边加亮并补一圈强调色环。 */
 .side-search {
-  display: flex;
   align-items: center;
+  background: var(--dsc-fill-quinary);
+  border: 1px solid color-mix(in srgb, var(--dsc-base) 7%, transparent);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  display: flex;
   gap: 6px;
   margin: 2px 8px 8px;
   padding: 0 6px 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-faint);
+  transition: border-color var(--dsc-dur) var(--dsc-ease);
+}
+.side-search:focus-within {
+  border-color: color-mix(in srgb, var(--dsc-base) 20%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 45%, transparent);
 }
 
 .side-search input {
+  color: var(--dsc-text-primary);
   flex: 1;
+  font-size: var(--dsc-fs-body);
+  height: var(--dsc-input-min-h);
   min-width: 0;
-  height: 26px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font-size: 12.5px;
   outline: none;
 }
 
 .group-row,
 .sess-item {
-  position: relative;
   cursor: pointer;
+  position: relative;
   user-select: none;
 }
 
+/* 折叠箭头占一格 14px，和工作区图标的引导格同宽，标题才不会被箭头推来推去。 */
 .group-row .twisty {
-  display: inline-flex;
   align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+  height: var(--dsc-row-lead);
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  color: var(--text-mute);
+  width: var(--dsc-row-lead);
+  flex-shrink: 0;
 }
 
 .group-row .twisty:hover {
-  background: var(--bg-active);
-  color: var(--text);
+  background: var(--dsc-control-active-bg);
+  color: var(--dsc-text-primary);
 }
 
 .group-row.dragging {
@@ -313,14 +354,14 @@
 
 .group.drop-above::before,
 .group.drop-below::after {
+  background: var(--dsc-accent);
+  border-radius: var(--dsc-r-pill);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--dsc-accent) 60%, transparent);
   content: '';
-  position: absolute;
-  left: 6px;
-  right: 6px;
   height: 2px;
-  border-radius: 2px;
-  background: var(--accent);
-  box-shadow: 0 0 6px rgb(77 107 254 / 60%);
+  left: 6px;
+  position: absolute;
+  right: 6px;
 }
 
 .group.drop-above::before {
@@ -333,25 +374,25 @@
 
 /* 拖拽期间才出现的尾部落点，负责「放到最后」 */
 .drop-tail {
+  border: 1px dashed var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
   margin: 2px 8px 4px;
   padding: 5px 8px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-mute);
-  font-size: 11.5px;
   text-align: center;
 }
 
 .drop-tail:hover {
-  border-color: var(--accent);
-  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--dsc-accent) 55%, transparent);
+  color: var(--dsc-accent);
 }
 
 .group-row .grip {
-  display: none;
   align-items: center;
-  color: var(--text-faint);
+  color: var(--dsc-text-tertiary);
   cursor: grab;
+  display: none;
 }
 
 /* 行内操作按钮默认藏着，hover 或键盘聚焦到行里才出现 */
@@ -371,8 +412,8 @@
 
 .group-row:focus-visible,
 .sess-item:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
 }
 
 /* 截图钩子（?reveal=1）：把 hover 才出现的行内按钮常驻，便于留证 */
@@ -2729,6 +2770,22 @@ body.dock-resizing iframe {
 
 .settings-fields.models {
   max-width: none;
+}
+
+/* 外观分区是渲染层本地生效的三项，用一道发丝线和宿主的字段隔开。 */
+.settings-appearance {
+  border-top: 1px solid var(--dsc-stroke-4);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 14px;
+}
+
+.settings-group-title {
+  color: var(--dsc-accent);
+  font-size: var(--dsc-fs-label);
+  font-weight: 600;
+  letter-spacing: 0.1em;
 }
 
 .setting-row {

@@ -418,6 +418,8 @@ export function App(): JSX.Element {
         open={settings.open}
         proxy={proxy}
         initial={settings.section}
+        uiPrefs={uiPrefs}
+        onUiPrefs={saveUiPrefs}
         onClose={() => setSettings((current) => ({ ...current, open: false }))}
       />
     </div>
