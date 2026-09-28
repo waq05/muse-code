@@ -437,7 +437,7 @@
   border-radius: 4px;
   background: var(--dsc-fill-quaternary);
   color: var(--dsc-text-primary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
   outline: none;
 }
 
@@ -468,7 +468,7 @@
   padding: 6px 8px;
   border-radius: 6px;
   color: var(--dsc-text-secondary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
   text-align: left;
   white-space: nowrap;
 }
@@ -491,7 +491,7 @@
   margin-left: auto;
   color: var(--dsc-text-quaternary);
   font-family: var(--dsc-font-mono);
-  font-size: 10.5px;
+  font-size: var(--dsc-fs-label);
 }
 
 .menu-sep {
@@ -520,7 +520,7 @@
 .fork-head {
   margin-bottom: 8px;
   color: var(--dsc-text-primary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
   font-weight: 600;
 }
 
@@ -539,7 +539,7 @@
   padding: 5px 8px;
   border-radius: 6px;
   color: var(--dsc-text-secondary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
   text-align: left;
 }
 
@@ -553,7 +553,7 @@
   min-width: 18px;
   color: var(--dsc-text-quaternary);
   font-family: var(--dsc-font-mono);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
 }
 
 .fork-item .txt {
@@ -565,14 +565,14 @@
 .fork-note {
   margin: 8px 0 0;
   color: var(--dsc-text-quaternary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
   line-height: 1.6;
 }
 
 .sidebar-footer {
   padding: 8px 12px 12px;
   border-top: 1px solid var(--dsc-stroke-4);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   color: var(--dsc-text-tertiary);
 }
 
@@ -717,12 +717,12 @@
 .welcome p {
   margin: 2px 0 0;
   color: var(--dsc-text-quaternary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
 }
 
 .welcome code {
   font-family: var(--dsc-font-mono);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   background: var(--dsc-inline-code-bg);
   border-radius: 5px;
   padding: 1px 6px;
@@ -731,7 +731,7 @@
 .welcome-note {
   margin-top: 4px;
   color: var(--dsc-text-quaternary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   white-space: pre-wrap;
 }
 
@@ -896,7 +896,7 @@
   max-width: 90%;
   padding: 3px 12px;
   color: var(--dsc-text-quaternary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   text-align: center;
   white-space: pre-wrap;
 }
@@ -916,7 +916,7 @@
   border-radius: 10px;
   background: rgb(255 255 255 / 2%);
   color: var(--dsc-text-quaternary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -940,7 +940,7 @@
 .round-no {
   flex-shrink: 0;
   color: var(--dsc-accent-text);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   font-weight: 600;
 }
 
@@ -949,14 +949,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--dsc-text-secondary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
   font-weight: 500;
 }
 
 .round-none {
   margin-left: 8px;
   color: var(--dsc-text-quaternary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
 }
 
 /* 步骤时间线：左竖线 + 节点圆点 */
@@ -992,7 +992,7 @@
   border-radius: 10px;
   background: rgb(255 255 255 / 1.5%);
   color: var(--dsc-text-tertiary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
   line-height: 1.7;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1001,21 +1001,21 @@
 .step-tag {
   margin-bottom: 4px;
   color: var(--dsc-text-quaternary);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
   letter-spacing: 0.05em;
   user-select: none;
 }
 
 .step-system {
   color: var(--dsc-text-quaternary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   white-space: pre-wrap;
 }
 
 .trace-empty {
   padding: 32px 0;
   color: var(--dsc-text-quaternary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
   text-align: center;
 }
 
@@ -1304,7 +1304,7 @@
 .completions .item .desc {
   margin-left: 10px;
   color: var(--dsc-text-quaternary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .completions .item.active {
@@ -1373,7 +1373,7 @@
   border: 1px solid var(--dsc-stroke-2);
   border-radius: 5px;
   color: var(--dsc-text-quaternary);
-  font-size: 10.5px;
+  font-size: var(--dsc-fs-label);
   font-weight: 400;
 }
 
@@ -1449,13 +1449,13 @@
   justify-content: space-between;
   padding: 2px 4px 6px;
   color: var(--dsc-text-quaternary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
   letter-spacing: 0.04em;
   user-select: none;
 }
 
 .pop-hint {
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
   letter-spacing: 0;
 }
 
@@ -1473,7 +1473,7 @@
   border-radius: var(--dsc-r-control);
   border: 1px solid var(--dsc-stroke-2);
   color: var(--dsc-text-secondary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
   transition: all 0.12s;
 }
 
@@ -1496,7 +1496,7 @@
 .pop-group {
   padding: 6px 6px 3px;
   color: var(--dsc-text-quaternary);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
   letter-spacing: 0.05em;
   user-select: none;
 }
@@ -1509,7 +1509,7 @@
   padding: 6px 8px;
   border-radius: var(--dsc-r-control);
   color: var(--dsc-text-secondary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
   text-align: left;
   transition: background 0.12s;
 }
@@ -1528,7 +1528,7 @@
   flex-shrink: 0;
   margin-left: auto;
   color: var(--dsc-text-quaternary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
 }
 
 .pop-item .check {
@@ -1742,13 +1742,13 @@
 .plugins-empty {
   padding: 14px 4px;
   color: var(--dsc-text-quaternary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
   line-height: 1.8;
 }
 
 .plugins-empty code {
   font-family: var(--dsc-font-mono);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   background: var(--dsc-inline-code-bg);
   border-radius: 5px;
   padding: 1px 6px;
@@ -1762,7 +1762,7 @@
   border: 1px solid var(--dsc-stroke-2);
   background: transparent;
   color: var(--dsc-text-quaternary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .plugin-config:hover {
@@ -1779,7 +1779,7 @@
   border: none;
   background: transparent;
   color: var(--dsc-text-quaternary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .plugin-more:hover {
@@ -1837,7 +1837,7 @@ body.dock-resizing iframe {
   padding: 5px 10px;
   border-radius: var(--dsc-r-control);
   color: var(--dsc-text-tertiary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
   transition: background 0.12s, color 0.12s;
 }
 
@@ -1883,7 +1883,7 @@ body.dock-resizing iframe {
 
 .term-bar-label {
   color: var(--dsc-text-tertiary);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
   letter-spacing: 0.04em;
 }
 
@@ -1893,7 +1893,7 @@ body.dock-resizing iframe {
   border: 1px solid var(--dsc-stroke-4);
   border-radius: var(--dsc-r-control);
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   outline: none;
   cursor: pointer;
 }
@@ -1909,7 +1909,7 @@ body.dock-resizing iframe {
   gap: 10px;
   padding: 8px 4px 2px;
   color: var(--dsc-text-tertiary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
 }
 
 /* 浏览器 */
@@ -1936,7 +1936,7 @@ body.dock-resizing iframe {
   border-radius: var(--dsc-r-control);
   background: var(--dsc-fill-quaternary);
   color: var(--dsc-text-secondary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   outline: none;
 }
 
@@ -1971,7 +1971,7 @@ body.dock-resizing iframe {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--dsc-text-quaternary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .files-list {
@@ -1989,7 +1989,7 @@ body.dock-resizing iframe {
   padding: 4px 8px;
   border-radius: 6px;
   color: var(--dsc-text-secondary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
   text-align: left;
 }
 
@@ -2013,7 +2013,7 @@ body.dock-resizing iframe {
 
 .file-size {
   color: var(--dsc-text-quaternary);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2030,7 +2030,7 @@ body.dock-resizing iframe {
   justify-content: space-between;
   padding: 5px 10px;
   color: var(--dsc-text-tertiary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .file-preview pre {
@@ -2040,7 +2040,7 @@ body.dock-resizing iframe {
   margin: 0;
   padding: 8px 12px;
   font-family: var(--dsc-font-mono);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
   line-height: 1.55;
   color: var(--dsc-text-secondary);
   white-space: pre-wrap;
@@ -2064,7 +2064,7 @@ body.dock-resizing iframe {
 
 .git-count {
   color: var(--dsc-text-quaternary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .git-group {
@@ -2078,7 +2078,7 @@ body.dock-resizing iframe {
   width: 100%;
   padding: 4px 2px;
   color: var(--dsc-text-tertiary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   text-align: left;
 }
 
@@ -2095,7 +2095,7 @@ body.dock-resizing iframe {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--dsc-text-secondary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .git-commit {
@@ -2114,7 +2114,7 @@ body.dock-resizing iframe {
   background: var(--dsc-fill-quaternary);
   color: var(--dsc-text-primary);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
   padding: 7px 10px;
   outline: none;
 }
@@ -2137,7 +2137,7 @@ body.dock-resizing iframe {
   align-items: baseline;
   gap: 8px;
   padding: 3px 0;
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .git-log-row code {
@@ -2157,7 +2157,7 @@ body.dock-resizing iframe {
 .git-log-meta {
   flex-shrink: 0;
   color: var(--dsc-text-quaternary);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
 }
 
 /* 顶栏 dock 开关 */
@@ -2381,7 +2381,7 @@ body.dock-resizing iframe {
 .skills-head-note {
   margin: 0;
   color: var(--dsc-text-tertiary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .skills-head-note code {
@@ -2389,7 +2389,7 @@ body.dock-resizing iframe {
   border-radius: 5px;
   background: var(--dsc-inline-code-bg);
   font-family: var(--dsc-font-mono);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .skills-actions {
@@ -2428,7 +2428,7 @@ body.dock-resizing iframe {
   border-radius: var(--dsc-r-control);
   background: none;
   color: var(--dsc-text-tertiary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
 }
 
 .skills-tabs button:hover {
@@ -2442,7 +2442,7 @@ body.dock-resizing iframe {
 
 .skills-tabs .count {
   color: var(--dsc-text-quaternary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .skills-search {
@@ -2463,7 +2463,7 @@ body.dock-resizing iframe {
   border: none;
   background: none;
   color: var(--dsc-text-primary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
   outline: none;
 }
 
@@ -2523,7 +2523,7 @@ body.dock-resizing iframe {
   align-items: center;
   gap: 7px;
   color: var(--dsc-text-primary);
-  font-size: 13.5px;
+  font-size: var(--dsc-fs-body);
 }
 
 .skill-name .slash {
@@ -2542,7 +2542,7 @@ body.dock-resizing iframe {
   overflow: hidden;
   margin-top: 3px;
   color: var(--dsc-text-tertiary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
   line-height: 1.55;
 }
 
@@ -2555,7 +2555,7 @@ body.dock-resizing iframe {
 .skill-when {
   margin-top: 3px;
   color: var(--dsc-text-quaternary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .skill-links {
@@ -2570,7 +2570,7 @@ body.dock-resizing iframe {
   min-width: 0;
   overflow: hidden;
   color: var(--dsc-text-quaternary);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2584,7 +2584,7 @@ body.dock-resizing iframe {
   background: var(--dsc-inline-code-bg);
   color: var(--dsc-text-secondary);
   font-family: var(--dsc-font-mono);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   line-height: 1.6;
   white-space: pre-wrap;
 }
@@ -2602,7 +2602,7 @@ body.dock-resizing iframe {
   border-radius: 999px;
   background: var(--dsc-fill-quaternary);
   color: var(--dsc-text-secondary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .source-chip.on {
@@ -2619,7 +2619,7 @@ body.dock-resizing iframe {
 .market-install {
   flex: none;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .market-install.done {
@@ -2639,13 +2639,13 @@ body.dock-resizing iframe {
 
 .market-edit-hint {
   color: var(--dsc-text-quaternary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
 }
 
 .skills-foot {
   margin-top: 16px;
   color: var(--dsc-text-quaternary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
   line-height: 1.6;
 }
 
@@ -2686,7 +2686,7 @@ body.dock-resizing iframe {
 .settings-nav-head {
   padding: 0 10px 10px;
   color: var(--dsc-text-tertiary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
   font-weight: 500;
 }
 
@@ -2699,7 +2699,7 @@ body.dock-resizing iframe {
   border-radius: var(--dsc-r-control);
   background: none;
   color: var(--dsc-text-secondary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
   text-align: left;
 }
 
@@ -2719,13 +2719,13 @@ body.dock-resizing iframe {
   border: 1px solid var(--dsc-stroke-2);
   border-radius: 999px;
   color: var(--dsc-text-quaternary);
-  font-size: 10.5px;
+  font-size: var(--dsc-fs-label);
 }
 
 .settings-nav-empty {
   padding: 8px 10px;
   color: var(--dsc-text-quaternary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
   line-height: 1.5;
 }
 
@@ -2733,7 +2733,7 @@ body.dock-resizing iframe {
   margin-top: auto;
   padding: 10px;
   color: var(--dsc-text-quaternary);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
   line-height: 1.5;
 }
 
@@ -2935,7 +2935,7 @@ body.dock-resizing iframe {
   gap: 8px;
   margin-top: 6px;
   color: var(--dsc-text-secondary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
 }
 
 .models-head .count {
@@ -2948,7 +2948,7 @@ body.dock-resizing iframe {
   gap: 6px;
   margin-left: auto;
   padding: 6px 12px;
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .provider-card {
@@ -2977,18 +2977,18 @@ body.dock-resizing iframe {
   align-items: center;
   gap: 8px;
   color: var(--dsc-text-primary);
-  font-size: 13.5px;
+  font-size: var(--dsc-fs-body);
 }
 
 .provider-id {
   color: var(--dsc-text-quaternary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
 }
 
 .provider-sub {
   overflow: hidden;
   color: var(--dsc-text-tertiary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3025,7 +3025,7 @@ body.dock-resizing iframe {
   border-radius: 999px;
   background: var(--dsc-fill-quaternary);
   color: var(--dsc-text-secondary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .model-chip:hover {
@@ -3041,12 +3041,12 @@ body.dock-resizing iframe {
 
 .model-chip .ctx {
   color: var(--dsc-text-quaternary);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
 }
 
 .provider-nomodel {
   color: var(--dsc-text-quaternary);
-  font-size: 12px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .provider-form {
@@ -3059,7 +3059,7 @@ body.dock-resizing iframe {
 .provider-form-title {
   margin-bottom: 10px;
   color: var(--dsc-text-primary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
   font-weight: 500;
 }
 
@@ -3081,7 +3081,7 @@ body.dock-resizing iframe {
 
 .field span {
   color: var(--dsc-text-tertiary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
 }
 
 .provider-form-actions {
@@ -3093,7 +3093,7 @@ body.dock-resizing iframe {
 
 .provider-form-hint {
   color: var(--dsc-text-quaternary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
 }
 
 .settings-paths {
@@ -3101,7 +3101,7 @@ body.dock-resizing iframe {
   flex-wrap: wrap;
   gap: 6px;
   color: var(--dsc-text-quaternary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
 }
 
 /* ── 设置 → 归档：按工作区分组的恢复与永久删除 ── */
@@ -3112,7 +3112,7 @@ body.dock-resizing iframe {
   gap: 10px;
   margin-bottom: 10px;
   color: var(--dsc-text-secondary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .arch-head .count {
@@ -3137,7 +3137,7 @@ body.dock-resizing iframe {
   padding: 7px 10px;
   background: var(--dsc-row-hover-bg);
   color: var(--dsc-text-secondary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .arch-group-head .dir {
@@ -3153,7 +3153,7 @@ body.dock-resizing iframe {
   border-radius: 8px;
   background: var(--dsc-row-active-bg);
   color: var(--dsc-text-quaternary);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
 }
 
 .arch-group-head .text-btn {
@@ -3168,7 +3168,7 @@ body.dock-resizing iframe {
   padding: 6px 10px 6px 32px;
   border-top: 1px solid var(--dsc-stroke-4);
   color: var(--dsc-text-secondary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
 }
 
 .arch-row:hover {
@@ -3186,7 +3186,7 @@ body.dock-resizing iframe {
 .arch-row .when {
   flex-shrink: 0;
   color: var(--dsc-text-quaternary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
 }
 
 .arch-actions {
@@ -3204,7 +3204,7 @@ body.dock-resizing iframe {
   padding-top: 10px;
   border-top: 1px solid var(--dsc-stroke-4);
   color: var(--dsc-text-quaternary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
   line-height: 1.7;
 }
 
@@ -3303,7 +3303,7 @@ body.dock-resizing iframe {
 }
 
 .tm-name {
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
   color: var(--dsc-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3316,20 +3316,20 @@ body.dock-resizing iframe {
   background: var(--dsc-inline-code-bg);
   color: var(--dsc-text-tertiary);
   font-family: var(--dsc-font-mono);
-  font-size: 10.5px;
+  font-size: var(--dsc-fs-label);
 }
 
 .tm-state {
   margin-left: auto;
   flex-shrink: 0;
   color: var(--dsc-text-quaternary);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
 }
 
 .tm-time {
   flex-shrink: 0;
   color: var(--dsc-text-tertiary);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
   min-width: 34px;
   text-align: right;
 }
@@ -3349,14 +3349,14 @@ body.dock-resizing iframe {
   padding: 9px 16px;
   border-bottom: 1px solid var(--dsc-stroke-4);
   background: var(--dsc-bg-card);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
   color: var(--dsc-text-quaternary);
 }
 
 .peek-name {
   color: var(--dsc-text-primary);
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
 }
 
 .peek-task {
@@ -3377,7 +3377,7 @@ body.dock-resizing iframe {
   padding: 40px 16px;
   text-align: center;
   color: var(--dsc-text-quaternary);
-  font-size: 13px;
+  font-size: var(--dsc-fs-body);
 }
 
 /* 看着队友时替代输入框的那条说明 */
@@ -3386,13 +3386,13 @@ body.dock-resizing iframe {
   border: 1px dashed var(--dsc-stroke-2);
   border-radius: var(--dsc-r-icon);
   color: var(--dsc-text-quaternary);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
   line-height: 1.75;
 }
 
 .peek-lock code {
   font-family: var(--dsc-font-mono);
-  font-size: 11.5px;
+  font-size: var(--dsc-fs-tool);
   background: var(--dsc-inline-code-bg);
   border-radius: 5px;
   padding: 1px 5px;
