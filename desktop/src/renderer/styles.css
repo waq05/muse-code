@@ -746,28 +746,29 @@
 .chat-inner {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  max-width: 800px;
+  gap: var(--dsc-turn-gap);
   margin: 0 auto;
-  padding: 0 32px;
+  max-width: var(--dsc-thread-max);
+  padding: 0 24px;
 }
 
+/* 自己发的消息：右对齐软填充块，右上角收成直角当「尾巴」，不再是 18px 大泡泡。 */
 .entry-user {
   align-self: flex-end;
+  background: var(--dsc-fill-quaternary);
+  border-radius: var(--dsc-r-block) var(--dsc-sp-0) var(--dsc-r-block) var(--dsc-r-block);
+  font-size: var(--dsc-fs-prose);
+  line-height: var(--dsc-lh-prose);
   max-width: 78%;
-  padding: 10px 16px;
-  background: var(--bg-active);
-  border-radius: 18px 18px 6px 18px;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 15px;
-  line-height: 1.7;
+  padding: 7px 12px;
+  white-space: pre-wrap;
 }
 
 .entry-text {
-  font-size: 15px;
-  line-height: 1.75;
-  color: var(--text);
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-prose);
+  line-height: var(--dsc-lh-prose);
 }
 
 .entry-text .markdown > :first-child {
@@ -802,37 +803,37 @@
 }
 
 .entry-text .markdown pre {
-  margin: 0.7em 0;
-  padding: 13px 16px;
-  overflow-x: auto;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  font-family: var(--mono);
-  font-size: 13px;
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
   line-height: 1.6;
+  margin: 0.7em 0;
+  overflow-x: auto;
+  padding: 10px 12px;
 }
 
 .entry-text .markdown code {
-  font-family: var(--mono);
+  background: var(--dsc-fill-quaternary);
+  border-radius: var(--dsc-r-badge);
+  font-family: var(--dsc-font-mono);
   font-size: 0.87em;
-  background: var(--code-bg);
-  border-radius: 6px;
-  padding: 2px 6px;
+  padding: 1px 5px;
 }
 
 .entry-text .markdown pre code {
-  padding: 0;
   background: none;
   border-radius: 0;
-  font-size: 13px;
+  font-size: inherit;
+  padding: 0;
 }
 
 .entry-text .markdown blockquote {
+  border-left: 2px solid var(--dsc-stroke-2);
+  color: var(--dsc-text-secondary);
   margin: 0.6em 0;
-  padding: 0.1em 0 0.1em 14px;
-  border-left: 3px solid var(--border);
-  color: var(--text-faint);
+  padding: 0.1em 0 0.1em 12px;
 }
 
 .entry-text .markdown table {
@@ -842,12 +843,12 @@
 
 .entry-text .markdown th,
 .entry-text .markdown td {
-  border: 1px solid var(--border);
-  padding: 6px 12px;
+  border: 1px solid var(--dsc-stroke-2);
+  padding: 5px 10px;
 }
 
 .entry-text .markdown a {
-  color: var(--accent-text);
+  color: var(--dsc-accent);
   text-decoration: none;
 }
 
@@ -857,18 +858,18 @@
 
 .entry-text .markdown hr {
   border: none;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--dsc-stroke-2);
   margin: 1em 0;
 }
 
 /* 消息操作条：hover 出现 */
 .entry-meta {
-  display: flex;
   align-items: center;
-  gap: 8px;
+  display: flex;
+  gap: 6px;
   margin-top: 2px;
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity var(--dsc-dur) var(--dsc-ease);
 }
 
 .entry-with-meta:hover .entry-meta {
@@ -876,18 +877,18 @@
 }
 
 .entry-meta .meta-btn {
-  display: inline-flex;
   align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  display: inline-flex;
+  font-size: var(--dsc-fs-ui);
   gap: 5px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  color: var(--text-faint);
-  font-size: 12px;
+  padding: 2px 6px;
 }
 
 .entry-meta .meta-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
 }
 
 .entry-system {
@@ -1037,22 +1038,23 @@
 
 /* ── 思考折叠（与正文明确区分：灰字、小一号、左竖线、可折叠） ── */
 .thinking {
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
   overflow: hidden;
-  background: rgb(255 255 255 / 1.5%);
 }
 
 .thinking > summary {
-  display: flex;
   align-items: center;
-  gap: 6px;
+  color: var(--dsc-text-tertiary);
   cursor: pointer;
-  padding: 6px 12px;
-  color: var(--text-mute);
-  font-size: 12.5px;
-  user-select: none;
+  display: flex;
+  font-size: var(--dsc-fs-ui);
+  gap: 6px;
   list-style: none;
+  min-height: var(--dsc-row-h);
+  padding: 0 10px;
+  user-select: none;
 }
 
 .thinking > summary::-webkit-details-marker {
@@ -1060,133 +1062,144 @@
 }
 
 .thinking .th-label::before {
+  color: var(--dsc-text-quaternary);
   content: '✦ ';
-  color: var(--text-mute);
 }
 
 .thinking > summary:hover {
-  color: var(--text-faint);
+  color: var(--dsc-text-secondary);
 }
 
 .thinking .th-chevron {
+  color: var(--dsc-text-quaternary);
   margin-left: auto;
-  color: var(--text-mute);
-  transition: transform 0.15s;
+  transition: transform var(--dsc-dur) var(--dsc-ease);
 }
 
 .thinking[open] .th-chevron {
   transform: rotate(180deg);
 }
 
+/* 思考内容是脚手架，比正文小一档，用左竖条表示它是引用体。 */
 .thinking .body {
-  margin: 0 10px 10px;
-  padding: 4px 0 4px 12px;
-  border-left: 2px solid rgb(255 255 255 / 9%);
-  color: var(--text-faint);
-  font-size: 13px;
+  border-left: 2px solid var(--dsc-stroke-2);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
   line-height: 1.7;
-  white-space: pre-wrap;
+  margin: 0 10px 10px;
   overflow-wrap: anywhere;
+  padding: 4px 0 4px 12px;
+  white-space: pre-wrap;
 }
 
 .thinking.live > summary {
-  color: var(--accent-text);
+  color: var(--dsc-accent);
 }
 
 .thinking.live .body {
-  border-left-color: rgb(77 107 254 / 45%);
+  border-left-color: color-mix(in srgb, var(--dsc-accent) 45%, transparent);
 }
 
-/* ── 工具卡 ── */
+/* ── 工具行 ──
+ * 参考 hermes 的工具回退：折叠时是流里的一行平铺文字，展开才给一个描边框。
+ * DSC 原来每条工具调用都套 12px 圆角卡片，一屏只能看到四五条；改成平铺后
+ * 能看到的条数翻倍，状态改用左侧竖条表示。 */
 .tool-card {
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  background: var(--bg-panel);
+  border: 1px solid transparent;
+  border-left: 2px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
   overflow: hidden;
 }
 
 .tool-card.status-running {
-  border-color: rgb(77 107 254 / 45%);
+  border-color: transparent transparent transparent color-mix(in srgb, var(--dsc-accent) 55%, transparent);
 }
 .tool-card.status-done {
-  border-left: 2px solid var(--ok);
+  border-left-color: var(--ok);
 }
 .tool-card.status-failed {
-  border-left: 2px solid var(--err);
+  border-left-color: var(--err);
 }
 .tool-card.status-rejected {
-  border-left: 2px solid var(--text-mute);
+  border-left-color: var(--dsc-stroke-1);
 }
 
 .tool-head {
-  display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 8px 12px;
-  font-family: var(--mono);
-  font-size: 12px;
   cursor: pointer;
+  display: flex;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  gap: 8px;
+  min-height: var(--dsc-row-h);
+  padding: 0 8px;
   user-select: none;
 }
 
 .tool-head .name {
-  color: var(--accent-text);
+  color: var(--dsc-accent);
   flex-shrink: 0;
 }
 
 .tool-head .preview {
+  color: var(--dsc-text-tertiary);
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-mute);
 }
 
 .tool-head .status {
+  color: var(--dsc-text-quaternary);
   flex-shrink: 0;
-  color: var(--text-mute);
-  font-size: 11px;
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
 }
 
 .tool-body {
-  padding: 0 12px 10px;
-  font-family: var(--mono);
-  font-size: 12px;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-code);
+  padding: 0 8px 8px;
 }
 
+/* 展开的详情：小圆角描边面，滚动而不是一撑就到屏幕外。 */
 .tool-body .args,
 .tool-body .result {
-  margin-top: 5px;
-  padding: 8px 10px;
-  background: var(--bg);
-  border-radius: 8px;
-  white-space: pre-wrap;
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  line-height: 1.55;
+  margin-top: 4px;
+  max-height: var(--dsc-tool-detail-max-h);
+  overflow: auto;
   overflow-wrap: anywhere;
-  max-height: 280px;
-  overflow-y: auto;
+  padding: 6px 8px;
+  white-space: pre-wrap;
 }
 
 .tool-body .label {
-  color: var(--text-mute);
-  font-size: 11px;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  letter-spacing: 0.06em;
 }
 
 /* ── 审批卡 ── */
 .approval {
-  display: flex;
   align-items: center;
-  gap: 12px;
-  max-width: 800px;
-  width: calc(100% - 64px);
-  margin: 0 auto 10px;
-  padding: 12px 16px;
-  border: 1px solid rgb(229 192 123 / 50%);
-  border-radius: 14px;
-  background: rgb(229 192 123 / 7%);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: var(--dsc-r-block);
+  display: flex;
+  gap: 10px;
+  margin: 0 auto 8px;
+  max-width: var(--dsc-thread-max);
+  padding: 9px 12px;
+  width: calc(100% - 48px);
 }
 
 .approval .text {
   flex: 1;
+  font-size: var(--dsc-fs-body);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1194,22 +1207,28 @@
 
 .approval .tool-name {
   color: var(--warn);
-  font-family: var(--mono);
+  font-family: var(--dsc-font-mono);
   font-weight: 600;
 }
 
 .approval .hint {
-  color: var(--text-mute);
-  font-size: 12px;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
 }
 
 .btn-ghost {
-  padding: 6px 14px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: 12.5px;
-  transition: background 0.15s;
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-ui);
+  min-height: var(--dsc-ctl);
+  padding: 0 10px;
+  transition: background var(--dsc-dur) var(--dsc-ease);
+}
+
+.btn-ghost:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
 }
 
 .btn-ghost:hover {

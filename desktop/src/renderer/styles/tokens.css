@@ -184,9 +184,14 @@
   --dsc-fs-code: calc(11.2px * var(--dsc-font-scale));
   --dsc-fs-ui: calc(12px * var(--dsc-font-scale));
   --dsc-fs-ui-lg: calc(14px * var(--dsc-font-scale));
+  /* 会话正文比 UI 控件松一档：读长回答时 13px 太挤。 */
+  --dsc-fs-prose: calc(14px * var(--dsc-font-scale));
+  --dsc-lh-prose: calc(22px * var(--dsc-font-scale));
   /* 小节标题：全大写 + 字距，用来给侧栏分组打标签（PINNED 那种）。 */
   --dsc-label-case: uppercase;
   --dsc-label-track: 0.16em;
+  /* 回合之间的纵向间距，跟着密度走。 */
+  --dsc-turn-gap: calc(16px * var(--dsc-density));
 
   /* ── 间距：4px 网格，允许半档 ── */
   --dsc-sp-0: 2px;
@@ -223,8 +228,10 @@
   --dsc-send: 26px;
   --dsc-input-min-h: 26px;
   --dsc-input-max-h: 150px;
-  --dsc-tool-detail-max-h: 80px;
-  --dsc-thread-max: 68ch;
+  --dsc-tool-detail-max-h: calc(180px * var(--dsc-density));
+  /* 会话列宽。ch 量的是数字「0」的宽度，中文一个字约等于两个 ch，
+   * 所以照抄英文的 68ch 会让中文每行只剩 30 字；76ch ≈ 38 个汉字。 */
+  --dsc-thread-max: 76ch;
   /* 窗口控件占位：Windows Window Controls Overlay；env 不支持时回退 0。 */
   --dsc-wco-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
 

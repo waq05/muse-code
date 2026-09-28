@@ -302,6 +302,22 @@ function createWindow(): void {
         process.stderr.write('[selfcheck] 截图超时，强制退出\n')
         app.exit(1)
       }, delay + 25000)
+      // 截图前先在渲染层跑一段脚本（DSC_DESKTOP_SHOT_EVAL）：用来点开一个有内容的
+      // 旧会话，否则自检只拍得到启动时的空状态，聊天流和工具行的样式没法验证。
+      const preScript = process.env.DSC_DESKTOP_SHOT_EVAL
+      if (preScript !== undefined && preScript !== '') {
+        // 脚本要赶在截图前跑完，所以默认提前 2 秒；要多会话来回切换的脚本
+        // 用 DSC_DESKTOP_SHOT_EVAL_LEAD 把提前量放大。
+        const lead = Number.parseInt(process.env.DSC_DESKTOP_SHOT_EVAL_LEAD ?? '2000', 10)
+        setTimeout(() => {
+          void mainWindow?.webContents
+            .executeJavaScript(preScript)
+            .then((value: unknown) =>
+              process.stderr.write(`[selfcheck] 预跑脚本完成：${JSON.stringify(value) ?? '无返回值'}\n`)
+            )
+            .catch((error: unknown) => process.stderr.write(`[selfcheck] 预跑脚本失败：${String(error)}\n`))
+        }, Math.max(0, delay - (Number.isNaN(lead) ? 2000 : lead)))
+      }
       setTimeout(() => {
         void mainWindow?.webContents
           .capturePage()
