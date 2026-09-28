@@ -104,3 +104,4 @@ scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scrip
 | [docs/development.md](docs/development.md) | 开发手册：运行时结构、三条启动链路、进程间协议、`~/.dsc` 数据面、扩展点清单、自检与打包、代码约定、排错与关键数值 |
 | [docs/development-log.md](docs/development-log.md) | 开发记录：九个阶段各自引入了什么、决策台账、真 bug 台账、还欠什么 |
 | [docs/plugin-development.md](docs/plugin-development.md) | 插件 API 与开发规范 |
+| [docs/ui-design.md](docs/ui-design.md) | 界面开发规范：设计原则、令牌体系、原语层、布局与反馈、键盘与动效、主题与 hermes 主题引擎对照 |

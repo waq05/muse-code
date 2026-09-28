@@ -7,6 +7,7 @@
 | --- | --- |
 | 怎么装、怎么跑、怎么配模型 | [README.md](../README.md) |
 | **代码怎么分层、往哪改、怎么验证** | **本文档** |
+| **界面怎么改、控件往哪加、颜色字号怎么取值** | [ui-design.md](ui-design.md) |
 | 为什么长成这样、踩过哪些坑 | [development-log.md](development-log.md) |
 | 怎么写一个插件 | [plugin-development.md](plugin-development.md) |
 
@@ -251,12 +252,16 @@ node scripts/composer-test.mjs     # TUI 输入候选面板
 cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/dsc.exe
 ```
 
-实拍的环境变量钩子（`desktop/electron/main/index.ts:292-329`）：
+实拍的环境变量钩子（`desktop/electron/main/index.ts:321-386`）：
 
 | 变量 | 作用 |
 | --- | --- |
 | `DSC_DESKTOP_SHOT=<png 路径>` | 加载完成后截图并退出（带看门狗，`capturePage` 卡住也会退） |
 | `DSC_DESKTOP_SHOT_DELAY` | 截图前等多久，默认 4000 ms |
+| `DSC_DESKTOP_SHOT_TOPMOST=1` | 把窗口钉在最上层并 `show()` 一次。脚本启动 exe 时 STARTUPINFO 里的 `SW_HIDE` 会让窗口开成隐藏的，那样整屏抓图只能抓到窗口后面的东西 |
+| `DSC_DESKTOP_SHOT_STRIP=<png 路径>` | 整屏抓图后裁出窗口右上角的原生控件条，写出 PNG 并把取样颜色打进日志。系统画的最小化/最大化/关闭**不在 `capturePage` 里**，只能这么看（实现见 `captureCaptionStrip`，`:433`） |
+| `DSC_DESKTOP_SHOT_EVAL=<js>` | 截图前先在渲染层跑一段脚本：点开某个弹层，或把算出来的颜色读回来 |
+| `DSC_DESKTOP_SHOT_EVAL_LEAD` | 上面这段脚本提前多少毫秒跑，默认 2000 ms |
 | `DSC_DESKTOP_SEARCH` | 拼到界面的 query：`view=plugins`、`settings=subagent`、`teammates=1`、`peek=1`、`reveal=1`（让 hover 才出现的按钮常驻） |
 | `DSC_DESKTOP_USER_DATA` | 换 userData 目录，单实例锁不跟已开着的实例抢 |
 | `DSC_DESKTOP_DEMO=1` | 自动跑一轮真实对话（要模型 key） |
