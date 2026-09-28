@@ -13,6 +13,7 @@ import { Box, Text, useInput } from 'ink'
 import type { JSX } from 'react'
 import type { ModelChoiceView } from '../contract.js'
 import { completionsFor, expandCommand } from '../plugins/commands.js'
+import { ACCENT, BORDER, GAP, MARK, PAD, SEP, TEXT } from './theme.js'
 
 export interface ComposerProps {
   disabled: boolean
@@ -117,29 +118,31 @@ export function Composer({ disabled, models, onSubmit }: ComposerProps): JSX.Ele
   })
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" gap={GAP.none}>
       {panelOpen ? (
-        <Box borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column">
-          {completions.map((item, position) => (
-            <Text
-              key={item.label}
-              color={position === safeIndex ? 'cyan' : undefined}
-              bold={position === safeIndex}
-            >
-              {position === safeIndex ? '❯ ' : '  '}
-              {item.label}
-              <Text dimColor>  {item.description}</Text>
-            </Text>
-          ))}
-          <Text dimColor>↑↓ 选择 · Tab 补全 · Esc 关闭</Text>
+        <Box borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline} flexDirection="column" gap={GAP.none}>
+          {completions.map((item, position) => {
+            const selected = position === safeIndex
+            return (
+              <Text key={item.label} color={selected ? ACCENT : undefined}>
+                {selected ? MARK.selected : MARK.idle}
+                {item.label}
+                <Text {...TEXT.secondary}>
+                  {SEP.gap}
+                  {item.description}
+                </Text>
+              </Text>
+            )
+          })}
+          <Text {...TEXT.secondary}>↑↓ 选择 · Tab 补全 · Esc 关闭</Text>
         </Box>
       ) : null}
-      <Box borderStyle="round" borderColor={disabled ? 'gray' : 'cyan'} paddingX={1}>
-        <Text color="cyan" bold>
+      <Box borderStyle="round" borderColor={disabled ? BORDER.frame : BORDER.active} paddingX={PAD.inline}>
+        <Text color={ACCENT}>
           ❯{' '}
         </Text>
-        <Text>{value}</Text>
-        <Text dimColor>▏</Text>
+        <Text {...TEXT.body}>{value}</Text>
+        <Text {...TEXT.secondary}>▏</Text>
       </Box>
     </Box>
   )

@@ -16,6 +16,7 @@ import { ChatView } from './ChatView.js'
 import { Composer } from './Composer.js'
 import { SessionPicker } from './SessionPicker.js'
 import { StatusBar } from './StatusBar.js'
+import { BORDER, GAP, PAD, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 双击 Ctrl+C 的判定窗口。 */
 const EXIT_WINDOW_MS = 2000
@@ -83,7 +84,7 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
   const modal = snapshot.pendingApproval !== null || picker
 
   return (
-    <Box flexDirection="column" width="100%">
+    <Box flexDirection="column" width="100%" gap={GAP.none}>
       <ChatView
         entries={snapshot.entries}
         turnState={snapshot.status.turnState}
@@ -91,8 +92,10 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       />
       {snapshot.pendingApproval !== null ? <ApprovalCard request={snapshot.pendingApproval} /> : null}
       {notice !== null ? (
-        <Box borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text color="yellow">{notice}</Text>
+        <Box borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline} marginTop={GAP.tight}>
+          <Text {...TEXT.label} color={STATUS_COLOR.waiting}>
+            {notice}
+          </Text>
         </Box>
       ) : null}
       {picker ? (

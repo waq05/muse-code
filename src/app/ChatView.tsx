@@ -1,11 +1,17 @@
 /**
  * 会话流：把 TranscriptEntry 序列渲染成终端块。只渲染尾部 N 条（MVP 无滚动回看）。
+ *
+ * 排版走 theme 的三档文字：助手回答与用户输入是正文（默认前景），思考正文与系统
+ * 说明是次要信息（暗淡色），思考标题是状态标签（暗淡色 + 状态色）。条目之间贴排，
+ * 纵向间距只在 `ChatView` 这一处声明。
+ *
  * @module dsc-tui/app/ChatView
  */
 import { Box, Text } from 'ink'
 import type { JSX } from 'react'
 import type { TranscriptEntry } from '../contract.js'
 import { ToolCard } from './ToolCard.js'
+import { ACCENT, GAP, INDENT, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 尾部渲染窗口：防止长会话每帧 reconcile 过多节点。 */
 const TAIL = 30
@@ -24,42 +30,41 @@ function Entry({
   streaming: boolean
   expandThinking: boolean
 }): JSX.Element | null {
-  const cursor = streaming ? <Text color="cyan"> ▌</Text> : null
+  const cursor = streaming ? <Text color={ACCENT}> ▌</Text> : null
   switch (entry.kind) {
     case 'user':
       return (
-        <Box marginY={0}>
-          <Text color="blue" bold>
-            ❯{' '}
-          </Text>
-          <Text>{entry.text}</Text>
+        <Box>
+          <Text {...TEXT.label}>❯ </Text>
+          <Text {...TEXT.body}>{entry.text}</Text>
         </Box>
       )
     case 'thinking': {
       if (expandThinking) {
         return (
-          <Box flexDirection="column" marginY={0}>
-            <Text color="magenta" dimColor>
-              💭 思考
+          <Box flexDirection="column" gap={GAP.none}>
+            <Text {...TEXT.label} color={STATUS_COLOR.pending}>
+              💭 思考中
             </Text>
-            <Text color="gray" dimColor>
-              {entry.text}
-            </Text>
+            <Box marginLeft={INDENT.detail}>
+              <Text {...TEXT.secondary}>{entry.text}</Text>
+            </Box>
           </Box>
         )
       }
       return (
-        <Box marginY={0}>
-          <Text color="magenta" dimColor>
-            💭 思考（ctrl+t 展开）：{oneLine(entry.text, 100)}
+        <Box>
+          <Text {...TEXT.label} color={STATUS_COLOR.pending}>
+            💭 思考中（ctrl+t 展开）：
           </Text>
+          <Text {...TEXT.secondary}>{oneLine(entry.text, 100)}</Text>
         </Box>
       )
     }
     case 'text':
       return (
-        <Box marginY={0}>
-          <Text>
+        <Box>
+          <Text {...TEXT.body}>
             {entry.text}
             {cursor}
           </Text>
@@ -69,10 +74,8 @@ function Entry({
       return <ToolCard call={entry.call} />
     case 'system':
       return (
-        <Box marginY={0}>
-          <Text color="yellow" dimColor>
-            ⓘ {entry.text}
-          </Text>
+        <Box>
+          <Text {...TEXT.secondary}>ⓘ {entry.text}</Text>
         </Box>
       )
     default:
@@ -93,7 +96,7 @@ export function ChatView({
   // 直播尾（负 id）与最后定稿 text 条目才带光标闪烁位。
   const lastId = tail[tail.length - 1]?.id
   return (
-    <Box flexDirection="column" flexGrow={1}>
+    <Box flexDirection="column" flexGrow={1} gap={GAP.none}>
       {tail.map((entry) => (
         <Entry
           key={entry.id}
@@ -107,8 +110,8 @@ export function ChatView({
         />
       ))}
       {tail.length === 0 ? (
-        <Box>
-          <Text dimColor> 输入消息开始对话；/help 查看命令，Ctrl+C 两次退出。</Text>
+        <Box marginLeft={INDENT.detail}>
+          <Text {...TEXT.secondary}>输入消息开始对话；/help 查看命令，Ctrl+C 两次退出。</Text>
         </Box>
       ) : null}
     </Box>
