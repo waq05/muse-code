@@ -237,10 +237,10 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
           </div>
         )}
         <div className="skills-actions">
-          <button className="icon-btn" title="重新扫描技能目录" onClick={reloadSkills}>
+          <button className="icon-btn" data-tip="重新扫描技能目录" onClick={reloadSkills}>
             <IconRefresh size={16} />
           </button>
-          <button className="btn-primary" title="从磁盘导入：选含 SKILL.md 的目录或 .md 文件" onClick={importSkill}>
+          <button className="btn-primary" data-tip="从磁盘导入：选含 SKILL.md 的目录或 .md 文件" onClick={importSkill}>
             <IconPlus size={14} /> 导入技能
           </button>
         </div>
@@ -302,7 +302,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
                     <>
                       <button
                         className="text-btn"
-                        title={skill.path}
+                        data-tip={skill.path}
                         onClick={() => {
                           void dsc.openPath(skill.path ?? '').then((problem) => {
                             if (problem !== '') show({ kind: 'error', text: `打开失败：${problem}` })
@@ -323,7 +323,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
                 className={`switch${skill.enabled ? ' on' : ''}${skill.toggleable ? '' : ' locked'}`}
                 role="switch"
                 aria-checked={skill.enabled}
-                title={
+                data-tip={
                   skill.toggleable
                     ? skill.enabled
                       ? '停用（不再进入模型目录，命令也摘掉）'
@@ -347,7 +347,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
               <button
                 key={source.name}
                 className={`source-chip${source.name === marketSource ? ' on' : ''}${source.ok ? '' : ' bad'}`}
-                title={source.ok ? source.url : `${source.url}\n${source.error ?? ''}`}
+                data-tip={source.ok ? source.url : `${source.url}\n${source.error ?? ''}`}
                 onClick={() => browse(source.name, false)}
               >
                 {source.name}

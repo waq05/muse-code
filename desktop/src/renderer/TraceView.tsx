@@ -70,7 +70,7 @@ export function TraceView(props: {
         </div>
         {rounds.map((round, index) => (
           <div key={index} className="trace-round">
-            <div className="round-head" title={round.user ?? undefined}>
+            <div className="round-head" data-tip={round.user ?? undefined}>
               <span className="round-no">第 {index + 1} 轮</span>
               {round.user !== null && <span className="round-user">{truncate(round.user, 60)}</span>}
             </div>

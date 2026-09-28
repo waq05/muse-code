@@ -40,7 +40,7 @@ function PluginRow({
       <div className="plugin-icon" style={{ background: iconColor(plugin.name) }}>
         {plugin.name.slice(0, 1).toUpperCase()}
       </div>
-      <div className="plugin-info" title={plugin.description || plugin.name}>
+      <div className="plugin-info" data-tip={plugin.description || plugin.name}>
         <div className="plugin-name">
           {plugin.name}
           {plugin.apiVersion !== undefined && <span className="plugin-apiver">API v{plugin.apiVersion}</span>}
@@ -53,7 +53,7 @@ function PluginRow({
       </div>
       {/* 没打开的插件还没挂上来，它的设计分区也就不存在，此时不给「配置」入口 */}
       {plugin.enabled && plugin.settingsSection !== undefined && (
-        <button className="plugin-config" title="打开这个插件的设置项" onClick={() => onOpenSettings(plugin.settingsSection!)}>
+        <button className="plugin-config" data-tip="打开这个插件的设置项" onClick={() => onOpenSettings(plugin.settingsSection!)}>
           配置
         </button>
       )}
@@ -61,7 +61,7 @@ function PluginRow({
         className={`switch${plugin.enabled ? ' on' : ''}${plugin.toggleable ? '' : ' locked'}`}
         role="switch"
         aria-checked={plugin.enabled}
-        title={plugin.toggleable ? (plugin.enabled ? '停用（即时生效）' : '启用（即时生效）') : '运行内核的一部分，不可停用'}
+        data-tip={plugin.toggleable ? (plugin.enabled ? '停用（即时生效）' : '启用（即时生效）') : '运行内核的一部分，不可停用'}
         onClick={() => onToggle(plugin.file, !plugin.enabled)}
       />
     </div>
@@ -96,10 +96,10 @@ export function PluginsView(props: {
             <p>添加和管理插件</p>
           </div>
           <div className="plugins-actions">
-            <button className="icon-btn" title="刷新列表" onClick={props.onRefresh}>
+            <button className="icon-btn" data-tip="刷新列表" onClick={props.onRefresh}>
               <IconRefresh size={16} />
             </button>
-            <button className="icon-btn" title="重启宿主（重新加载目录里的插件文件）" onClick={props.onRestartHost}>
+            <button className="icon-btn" data-tip="重启宿主（重新加载目录里的插件文件）" onClick={props.onRestartHost}>
               <IconRestart size={16} />
             </button>
             <button className="btn-primary plugins-add" onClick={props.onInstall}>

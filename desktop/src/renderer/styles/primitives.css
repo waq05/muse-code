@@ -677,59 +677,34 @@ textarea.ctl {
 }
 
 /* ══════════════════ 悬浮提示 ══════════════════
- * 替掉原来 71 处原生 title=：原生提示是系统画的、等 500ms、跟主题完全脱节。
- * 悬停是悬停不是点击，所以等 200ms 再出现，鼠标路过时不会一串气泡乱闪。
+ * 替掉原来 71 处原生 title=：原生提示由系统绘制，还要等 500ms，颜色跟主题脱节。
  *
- * 限制：提示画在元素自己身上，会被带滚动条的祖先裁掉。滚动列表里的行请改用
- * portal 版 Tip（见 components/Tip.tsx）。 */
+ * 气泡只有一个节点，由 components/tipLayer.ts 挂到 body 上定位，因此不会被
+ * .sidebar-scroll 这类带 overflow 的容器裁掉。调用方只写 data-tip，可选
+ * data-tip-place='bottom' | 'right' 指定方位。 */
 
-[data-tip] {
-  position: relative;
-}
-[data-tip]::after {
+.dsc-tip {
   background: var(--dsc-bg-popover);
   border: 1px solid var(--dsc-stroke-2);
   border-radius: var(--dsc-r-badge);
   box-shadow: var(--dsc-shadow-sm);
   color: var(--dsc-text-secondary);
-  content: attr(data-tip);
   font-size: var(--dsc-fs-tool);
   font-weight: 400;
-  left: 50%;
+  left: 0;
   letter-spacing: 0;
   line-height: 14px;
   max-width: 260px;
-  opacity: 0;
   padding: 3px 6px;
   pointer-events: none;
-  position: absolute;
-  text-transform: none;
-  top: auto;
-  bottom: calc(100% + 6px);
-  transform: translateX(-50%);
-  transition: opacity var(--dsc-dur) var(--dsc-ease);
-  transition-delay: 0s;
+  position: fixed;
+  top: 0;
   white-space: pre-wrap;
-  width: max-content;
   z-index: var(--dsc-z-tip);
 }
-[data-tip]:hover::after,
-[data-tip]:focus-visible::after {
-  opacity: 1;
-  transition-delay: var(--dsc-tip-delay);
-}
-[data-tip='']::after {
-  content: none;
-}
-[data-tip][data-tip-place='bottom']::after {
-  bottom: auto;
-  top: calc(100% + 6px);
-}
-[data-tip][data-tip-place='right']::after {
-  bottom: auto;
-  left: calc(100% + 6px);
-  top: 50%;
-  transform: translateY(-50%);
+
+.dsc-tip[hidden] {
+  display: none;
 }
 
 /* ══════════════════ 加载 / 空态 / 错态 ══════════════════ */

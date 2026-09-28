@@ -324,7 +324,7 @@ export function App(): JSX.Element {
         ) : (
           <>
             <div className="topbar">
-              <span className="title" title={peek === null ? conversationTitle : `队友 ${peek.name} 的运行记录（只读）`}>
+              <span className="title" data-tip={peek === null ? conversationTitle : `队友 ${peek.name} 的运行记录（只读）`}>
                 {peek === null ? conversationTitle : `队友 ${peek.name}`}
               </span>
               {peek === null && (
@@ -340,7 +340,7 @@ export function App(): JSX.Element {
           <div className="drag-fill" />
           <button
             className={`icon-btn dock-toggle${dockOpen ? ' on' : ''}`}
-            title="工作区面板（终端 / 浏览器 / 文件 / Git）"
+            data-tip="工作区面板（终端 / 浏览器 / 文件 / Git）"
             onClick={() => setDockOpen((current) => !current)}
           >
             <IconSidebar size={15} />

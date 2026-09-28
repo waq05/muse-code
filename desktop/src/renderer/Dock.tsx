@@ -81,7 +81,7 @@ export function Dock(props: {
     <aside className="dock" style={{ width: props.width }}>
       <div
         className="dock-resizer"
-        title="拖拽调整宽度（双击复位）"
+        data-tip="拖拽调整宽度（双击复位）"
         onMouseDown={startResize}
         onDoubleClick={() => props.onResize(420)}
       />
@@ -91,7 +91,7 @@ export function Dock(props: {
             {item.label}
           </button>
         ))}
-        <button className="dock-close" title="收起面板" onClick={props.onClose}>
+        <button className="dock-close" data-tip="收起面板" onClick={props.onClose}>
           ✕
         </button>
       </div>
@@ -281,9 +281,9 @@ function BrowserPane(): JSX.Element {
   return (
     <div className="browser-pane">
       <div className="browser-bar">
-        <button className="icon-btn" title="后退" onClick={() => navigate('back')}>‹</button>
-        <button className="icon-btn" title="前进" onClick={() => navigate('forward')}>›</button>
-        <button className="icon-btn" title="刷新" onClick={() => navigate('reload')}>
+        <button className="icon-btn" data-tip="后退" onClick={() => navigate('back')}>‹</button>
+        <button className="icon-btn" data-tip="前进" onClick={() => navigate('forward')}>›</button>
+        <button className="icon-btn" data-tip="刷新" onClick={() => navigate('reload')}>
           <IconRefresh size={13} />
         </button>
         <input
@@ -345,10 +345,10 @@ function FilesPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX.El
   return (
     <div className="files-pane">
       <div className="files-bar">
-        <button className="icon-btn" title="上一级" onClick={up} disabled={dir === '' || dir.toLowerCase() === cwd.toLowerCase()}>
+        <button className="icon-btn" data-tip="上一级" onClick={up} disabled={dir === '' || dir.toLowerCase() === cwd.toLowerCase()}>
           ↑
         </button>
-        <span className="files-cwd" title={dir || cwd}>
+        <span className="files-cwd" data-tip={dir || cwd}>
           {(dir || cwd).slice(cwd.length)}
         </span>
       </div>
@@ -507,10 +507,10 @@ function GitGroup(props: {
       {open &&
         props.files.map((file) => (
           <div key={file} className="git-file">
-            <span className="git-file-name" title={file}>
+            <span className="git-file-name" data-tip={file}>
               {file}
             </span>
-            <button className="icon-btn" title={props.action.title} onClick={() => props.action.run(file)}>
+            <button className="icon-btn" data-tip={props.action.title} onClick={() => props.action.run(file)}>
               {props.action.label}
             </button>
           </div>

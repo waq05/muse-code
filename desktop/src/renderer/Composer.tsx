@@ -174,7 +174,7 @@ export function Composer(props: {
       <div className="composer-bar">
         <button
           className="icon-btn"
-          title="插入 / 调用指令"
+          data-tip="插入 / 调用指令"
           onClick={() => {
             setValue((current) => (current === '' ? '/' : current))
             textarea.current?.focus()
@@ -190,7 +190,7 @@ export function Composer(props: {
                 setPolicyOpen((current) => !current)
                 setModelOpen(false)
               }}
-              title={POLICIES.find((item) => item.value === props.policy)?.title ?? '权限模式'}
+              data-tip={POLICIES.find((item) => item.value === props.policy)?.title ?? '权限模式'}
             >
               <IconShield size={13} />
               {POLICIES.find((item) => item.value === props.policy)?.label ?? props.policy}
@@ -205,7 +205,7 @@ export function Composer(props: {
                     <button
                       key={item.value}
                       className={`pop-item${item.value === props.policy ? ' on' : ''}`}
-                      title={item.title}
+                      data-tip={item.title}
                       onClick={() => {
                         props.onPolicyChange(item.value)
                         setPolicyOpen(false)
@@ -228,7 +228,7 @@ export function Composer(props: {
                 setModelOpen((current) => !current)
                 setPolicyOpen(false)
               }}
-              title="模型与思考强度"
+              data-tip="模型与思考强度"
             >
               <span className="model-name">{currentLabel}</span>
               <IconChevronDown size={13} />
@@ -243,7 +243,7 @@ export function Composer(props: {
                       <button
                         key={item.value}
                         className={`effort-btn${props.effort === item.value ? ' on' : ''}`}
-                        title={item.hint || item.label}
+                        data-tip={item.hint || item.label}
                         onClick={() => {
                           props.onEffortChange(item.value)
                           setModelOpen(false)
@@ -262,7 +262,7 @@ export function Composer(props: {
                           <button
                             key={choice.value}
                             className={`pop-item${choice.value === currentChoice?.value ? ' on' : ''}`}
-                            title={choice.description}
+                            data-tip={choice.description}
                             onClick={() => {
                               props.onModelChange(choice.value)
                               setModelOpen(false)
@@ -290,13 +290,13 @@ export function Composer(props: {
             )}
           </div>
           {props.working ? (
-            <button className="send-btn stop" title="打断当前回合" onClick={props.onInterrupt}>
+            <button className="send-btn stop" data-tip="打断当前回合" onClick={props.onInterrupt}>
               <IconStop size={16} />
             </button>
           ) : (
             <button
               className="send-btn"
-              title="发送（Enter）"
+              data-tip="发送（Enter）"
               disabled={value.trim() === '' || props.disabled}
               onClick={submit}
             >

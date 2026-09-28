@@ -120,7 +120,7 @@ export function SettingsModal(props: {
             <button
               key={item.id}
               className={`settings-nav-item${item.id === active ? ' on' : ''}`}
-              title={item.subtitle ?? item.title}
+              data-tip={item.subtitle ?? item.title}
               onClick={() => setActive(item.id)}
             >
               {sectionIcon(item.id)}
@@ -140,7 +140,7 @@ export function SettingsModal(props: {
               <h2>{section?.title ?? '设置'}</h2>
               {section?.subtitle !== undefined && <p>{section.subtitle}</p>}
             </div>
-            <button className="icon-btn" title="关闭设置（Esc）" onClick={props.onClose}>
+            <button className="icon-btn" data-tip="关闭设置（Esc）" onClick={props.onClose}>
               <IconClose size={16} />
             </button>
           </div>
@@ -237,7 +237,7 @@ function GenericFields(props: {
                 </button>
                 <button
                   className="text-btn"
-                  title="在文件管理器里打开"
+                  data-tip="在文件管理器里打开"
                   onClick={() => {
                     void dsc.openPath(field.text).then((problem) => {
                       if (problem !== '') show({ kind: 'error', text: `打开失败：${problem}` })
@@ -544,14 +544,14 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                 <span className="mono provider-id">{provider.name}</span>
                 {config.defaultProvider === provider.name && <span className="tag">默认</span>}
               </div>
-              <div className="provider-sub mono" title={provider.baseUrl}>
+              <div className="provider-sub mono" data-tip={provider.baseUrl}>
                 {provider.baseUrl}
               </div>
             </div>
             <div className="provider-actions">
               <button
                 className={`text-btn${provider.keyConfigured ? ' ok' : ' warn'}`}
-                title={
+                data-tip={
                   provider.keyConfigured
                     ? `${provider.keyRef} 已就绪（环境变量或凭据库）`
                     : `${provider.keyRef} 还没有值，这个端点暂时用不了`
@@ -565,7 +565,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
               </button>
               <button
                 className="text-btn"
-                title="编辑这个端点"
+                data-tip="编辑这个端点"
                 onClick={() => {
                   setDraft({
                     oldName: provider.name,
@@ -593,7 +593,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
               ) : (
                 <button
                   className="text-btn danger"
-                  title="删除这个端点"
+                  data-tip="删除这个端点"
                   onClick={() => setConfirmDelete(provider.name)}
                 >
                   <IconTrash size={13} /> 删除
@@ -631,7 +631,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
               {provider.keyConfigured && (
                 <button
                   className="btn-ghost"
-                  title="从凭据库里删掉这个 key"
+                  data-tip="从凭据库里删掉这个 key"
                   onClick={() => {
                     write(props.proxy.setProviderKey(provider.name, null))
                     setKeyFor(null)
@@ -653,7 +653,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                 <button
                   key={model.id}
                   className={`model-chip${isDefault ? ' on' : ''}`}
-                  title={isDefault ? '当前默认模型' : '设为默认模型'}
+                  data-tip={isDefault ? '当前默认模型' : '设为默认模型'}
                   onClick={() => write(props.proxy.setDefaultModel(provider.name, model.id))}
                 >
                   {model.name || model.id}

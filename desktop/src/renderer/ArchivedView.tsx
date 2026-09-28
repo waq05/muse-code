@@ -72,7 +72,7 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
         <span>
           已归档会话 <span className="count">{page.items.length}</span> 个
         </span>
-        <button className="btn-ghost" title="重新读取归档区" onClick={reload}>
+        <button className="btn-ghost" data-tip="重新读取归档区" onClick={reload}>
           <IconRefresh size={14} /> 刷新
         </button>
       </div>
@@ -87,28 +87,28 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
         <div className="arch-group" key={group.cwd}>
           <div className="arch-group-head">
             <IconArchive size={14} />
-            <span className="dir" title={group.cwd}>
+            <span className="dir" data-tip={group.cwd}>
               {lastSegment(group.cwd)}
             </span>
             <span className="count">{group.items.length}</span>
             <button
               className="text-btn"
-              title={`恢复这个工作区里的 ${group.items.length} 个会话`}
+              data-tip={`恢复这个工作区里的 ${group.items.length} 个会话`}
               onClick={() => write(props.proxy.restoreSessions(group.items.map((item) => item.path)))}
             >
               <IconRestart size={13} /> 全部恢复
             </button>
           </div>
           {group.items.map((item) => (
-            <div className="arch-row" key={item.path} title={item.path}>
+            <div className="arch-row" key={item.path} data-tip={item.path}>
               <span className="title">{item.title ?? '未命名会话'}</span>
-              <span className="when" title={`${new Date(item.archivedAt).toLocaleString()} 归档`}>
+              <span className="when" data-tip={`${new Date(item.archivedAt).toLocaleString()} 归档`}>
                 归档于 {ago(item.archivedAt)}
               </span>
               <span className="arch-actions">
                 <button
                   className="text-btn"
-                  title="放回会话列表（回到原来的工作区）"
+                  data-tip="放回会话列表（回到原来的工作区）"
                   onClick={() => {
                     setConfirm(null)
                     write(props.proxy.restoreSessions([item.path]))
@@ -129,7 +129,7 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
                 ) : (
                   <button
                     className="text-btn danger"
-                    title="移进回收站，30 天后自动清空"
+                    data-tip="移进回收站，30 天后自动清空"
                     onClick={() => setConfirm(item.path)}
                   >
                     <IconTrash size={13} /> 永久删除
@@ -148,7 +148,7 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
         </span>
         <button
           className="text-btn"
-          title="在文件管理器里打开回收站"
+          data-tip="在文件管理器里打开回收站"
           onClick={() => {
             void dsc.openPath(page.trashDir).then((problem) => {
               if (problem !== '') show({ kind: 'error', text: `打开失败：${problem}` })

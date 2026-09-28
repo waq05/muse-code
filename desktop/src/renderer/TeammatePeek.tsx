@@ -34,11 +34,11 @@ export function TeammatePeek(props: {
         <span className="peek-fact">
           {teammate.role} · {STATE_LABEL[teammate.state]} · 已发 {teammate.rounds} 轮 · 派自 {teammate.parent === 'lead' ? '主会话' : teammate.parent}
         </span>
-        <span className="peek-task" title={teammate.task}>
+        <span className="peek-task" data-tip={teammate.task}>
           任务：{teammate.task}
         </span>
         <span className="peek-hint">只读，不能在这里发言</span>
-        <button className="icon-btn" title="关掉，回自己的会话" onClick={props.onClose}>
+        <button className="icon-btn" data-tip="关掉，回自己的会话" onClick={props.onClose}>
           <IconClose size={14} />
         </button>
       </div>

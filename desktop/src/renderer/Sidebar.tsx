@@ -320,7 +320,7 @@ export function Sidebar(props: {
         >
           <IconPuzzle size={15} /> 插件
         </button>
-        <button className="nav-item" title="设置（模型、权限、技能源）" onClick={() => props.onOpenSettings('general')}>
+        <button className="nav-item" data-tip="设置（模型、权限、技能源）" onClick={() => props.onOpenSettings('general')}>
           <IconGear size={15} /> 设置
         </button>
       </nav>
@@ -333,7 +333,7 @@ export function Sidebar(props: {
             </button>
             <button
               className={`side-tab${tab === 'teammates' ? ' on' : ''}`}
-              title="子智能体团队派出去的队友；点开只读查看它在干什么"
+              data-tip="子智能体团队派出去的队友；点开只读查看它在干什么"
               onClick={() => setTab('teammates')}
             >
               队友{teammates.length > 0 ? ` ${teammates.length}` : ''}
@@ -343,7 +343,7 @@ export function Sidebar(props: {
             <span className="head-actions">
               <button
                 className={`icon-btn${searching ? ' on' : ''}`}
-                title="搜索会话"
+                data-tip="搜索会话"
                 onClick={() => {
                   setSearching((current) => !current)
                   setQuery('')
@@ -353,7 +353,7 @@ export function Sidebar(props: {
               </button>
               <button
                 className="icon-btn"
-                title={
+                data-tip={
                   props.uiPrefs.sessionSort === 'recent'
                     ? '当前按最近使用排序，点击改为按创建时间'
                     : '当前按创建时间排序，点击改为按最近使用'
@@ -362,7 +362,7 @@ export function Sidebar(props: {
               >
                 <IconSort size={14} />
               </button>
-              <button className="icon-btn" title="浏览其他目录" onClick={props.onChooseDir}>
+              <button className="icon-btn" data-tip="浏览其他目录" onClick={props.onChooseDir}>
                 <IconFolderOpen size={14} />
               </button>
             </span>
@@ -384,7 +384,7 @@ export function Sidebar(props: {
                 }
               }}
             />
-            <button className="icon-btn" title="清除搜索" onClick={() => setSearching(false)}>
+            <button className="icon-btn" data-tip="清除搜索" onClick={() => setSearching(false)}>
               <IconClose size={13} />
             </button>
           </div>
@@ -417,7 +417,7 @@ export function Sidebar(props: {
               className={`tm-row${props.peekFile === mate.file ? ' on' : ''}`}
               role="button"
               tabIndex={0}
-              title={`任务：${mate.task}`}
+              data-tip={`任务：${mate.task}`}
               onClick={() => props.onPeekTeammate(mate)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') props.onPeekTeammate(mate)
@@ -452,7 +452,7 @@ export function Sidebar(props: {
                 className={`group-row${active ? ' active' : ''}${dragCwd === cwd ? ' dragging' : ''}`}
                 role="button"
                 tabIndex={0}
-                title={`${cwd}（点击切换工作区，拖动可以排顺序）`}
+                data-tip={`${cwd}（点击切换工作区，拖动可以排顺序）`}
                 draggable={editing === null}
                 onClick={() => activateGroup(cwd)}
                 onKeyDown={(event) => {
@@ -488,7 +488,7 @@ export function Sidebar(props: {
               >
                 <button
                   className="twisty"
-                  title={expanded ? '折叠这个工作区' : '展开这个工作区'}
+                  data-tip={expanded ? '折叠这个工作区' : '展开这个工作区'}
                   onClick={(event) => {
                     event.stopPropagation()
                     toggle(cwd)
@@ -518,7 +518,7 @@ export function Sidebar(props: {
                   {sessions.length > 0 && (
                     <button
                       className="icon-btn"
-                      title="归档这个工作区的全部会话"
+                      data-tip="归档这个工作区的全部会话"
                       onClick={(event) => {
                         event.stopPropagation()
                         void run(props.proxy.archiveSessions(sessions.map((session) => session.id)))
@@ -529,7 +529,7 @@ export function Sidebar(props: {
                   )}
                   <button
                     className={`icon-btn${menu === key ? ' on' : ''}`}
-                    title="更多操作"
+                    data-tip="更多操作"
                     onClick={(event) => {
                       event.stopPropagation()
                       setMenu(menu === key ? null : key)
@@ -537,7 +537,7 @@ export function Sidebar(props: {
                   >
                     <IconMore size={14} />
                   </button>
-                  <span className="grip" title="拖动排序">
+                  <span className="grip" data-tip="拖动排序">
                     <IconGrip size={13} />
                   </span>
                 </span>
@@ -582,7 +582,7 @@ export function Sidebar(props: {
                     className={`sess-item${session.id.endsWith(`${props.activeSessionId ?? '#'}.jsonl`) ? ' active' : ''}`}
                     role="button"
                     tabIndex={0}
-                    title={`${session.title ?? '新会话'}（Ctrl+Alt+R 改名 · Ctrl+Alt+F 分叉 · Ctrl+Shift+A 归档）`}
+                    data-tip={`${session.title ?? '新会话'}（Ctrl+Alt+R 改名 · Ctrl+Alt+F 分叉 · Ctrl+Shift+A 归档）`}
                     onClick={() => props.onPick(session.id)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') {
@@ -594,7 +594,7 @@ export function Sidebar(props: {
                     }}
                   >
                     {session.pinnedAt !== undefined && (
-                      <span className="pin-mark" title="已置顶">
+                      <span className="pin-mark" data-tip="已置顶">
                         <IconPin size={11} />
                       </span>
                     )}
@@ -618,7 +618,7 @@ export function Sidebar(props: {
                     <span className="row-actions">
                       <button
                         className="icon-btn"
-                        title={session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
+                        data-tip={session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
                         onClick={(event) => {
                           event.stopPropagation()
                           void run(props.proxy.setSessionPinned(session.id, session.pinnedAt === undefined))
@@ -628,7 +628,7 @@ export function Sidebar(props: {
                       </button>
                       <button
                         className="icon-btn"
-                        title="归档会话"
+                        data-tip="归档会话"
                         onClick={(event) => {
                           event.stopPropagation()
                           void run(props.proxy.archiveSessions([session.id]))
@@ -638,7 +638,7 @@ export function Sidebar(props: {
                       </button>
                       <button
                         className={`icon-btn${menu === sKey ? ' on' : ''}`}
-                        title="更多操作"
+                        data-tip="更多操作"
                         onClick={(event) => {
                           event.stopPropagation()
                           setMenu(menu === sKey ? null : sKey)
@@ -738,7 +738,7 @@ export function Sidebar(props: {
       )}
 
       <div className="sidebar-footer">
-        <div className="row" title={`${props.cwd}（点击浏览其他目录）`} onClick={props.onChooseDir}>
+        <div className="row" data-tip={`${props.cwd}（点击浏览其他目录）`} onClick={props.onChooseDir}>
           <IconFolder size={14} />
           <span className="dir">{props.cwd}</span>
         </div>
