@@ -25,7 +25,7 @@ export function ApprovalCard(props: {
     <div className="approval">
       <div className="text">
         <span className="tool-name">{props.request.toolName}</span>{' '}
-        <span style={{ color: 'var(--text-dim)' }}>{props.request.argsSummary}</span>
+        <span style={{ color: 'var(--dsc-text-secondary)' }}>{props.request.argsSummary}</span>
       </div>
       <span className="hint">y 允许 / n 拒绝</span>
       <button className="btn" onClick={() => props.onAnswer('allow-once')}>

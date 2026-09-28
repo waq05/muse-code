@@ -355,36 +355,11 @@
   --dsc-density: 1.15;
 }
 
-/* ══════════════════ 旧变量别名（迁移期）══════════════════
- * 现有 481 条规则引用的还是 --bg / --text 这套老名字。这里把它们接到新 token
- * 上，旧界面立刻吃到新调色板；规则逐条迁到 --dsc-* 之后，这一段整块删掉。
- * 新写的规则一律用 --dsc-*，不要再引用左边的名字。
- */
+/* ══════════════════ 品牌色的两个派生 ══════════════════
+ * 悬停时更亮一点；把品牌色当文字用时向前景靠拢，保证浅底上的对比度。
+ * 定义写在 :root 并引用主题变量，浅色主题会自动算出自己的那份。 */
 
 :root {
-  --bg: var(--dsc-bg-page);
-  --bg-side: var(--dsc-bg-side);
-  --bg-panel: var(--dsc-bg-card);
-  --bg-input: var(--dsc-fill-quaternary);
-  --bg-hover: var(--dsc-row-hover-bg);
-  --bg-active: var(--dsc-row-active-bg);
-  --border: var(--dsc-stroke-2);
-  --border-soft: var(--dsc-stroke-4);
-  --text: var(--dsc-text-primary);
-  --text-dim: var(--dsc-text-secondary);
-  --text-faint: var(--dsc-text-tertiary);
-  --text-mute: var(--dsc-text-quaternary);
-  --accent: var(--dsc-accent);
-  --accent-hover: color-mix(in srgb, var(--dsc-accent) 88%, #fff);
-  --accent-soft: var(--dsc-fill-secondary);
-  --accent-text: color-mix(in srgb, var(--dsc-accent) 70%, var(--dsc-base));
-  --code-bg: var(--dsc-inline-code-bg);
-  --ok: var(--dsc-green);
-  --warn: var(--dsc-yellow);
-  --err: var(--dsc-red);
-  --radius-lg: var(--dsc-r-block);
-  --radius-md: var(--dsc-r-icon);
-  --radius-sm: var(--dsc-r-control);
-  --mono: var(--dsc-font-mono);
-  --wco-right: var(--dsc-wco-right);
+  --dsc-accent-hover: color-mix(in srgb, var(--dsc-accent) 88%, #fff);
+  --dsc-accent-text: color-mix(in srgb, var(--dsc-accent) 70%, var(--dsc-base));
 }
