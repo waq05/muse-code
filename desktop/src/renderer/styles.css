@@ -1237,11 +1237,13 @@
 }
 
 .btn-primary {
-  padding: 7px 18px;
-  border-radius: 9px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 13px;
+  background: var(--dsc-accent);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-on-accent);
+  font-size: var(--dsc-fs-ui);
+  min-height: var(--dsc-ctl);
+  padding: 0 12px;
+  transition: background var(--dsc-dur) var(--dsc-ease);
 }
 
 .btn-primary:hover {
@@ -1252,49 +1254,51 @@
 
 .composer-zone {
   flex-shrink: 0;
-  padding: 0 32px 10px;
+  padding: 0 24px 10px;
 }
 
+/* 输入区与正文列同宽，否则打字的地方和读字的地方对不齐。 */
 .composer-zone > * {
-  max-width: 800px;
   margin-left: auto;
   margin-right: auto;
+  max-width: var(--dsc-thread-max);
 }
 
 .notice {
-  padding: 5px 14px;
-  margin-bottom: 8px;
-  border: 1px solid rgb(229 192 123 / 35%);
-  border-radius: var(--radius-sm);
-  background: rgb(229 192 123 / 6%);
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  border-radius: var(--dsc-r-block);
   color: var(--warn);
-  font-size: 12.5px;
+  font-size: var(--dsc-fs-caption);
+  margin-bottom: 8px;
+  padding: 5px 10px;
   white-space: pre-wrap;
 }
 
 /* 补全面板浮在输入框上方 */
 .completions {
-  position: absolute;
-  bottom: calc(100% + 8px);
+  background: var(--dsc-bg-card);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-overlay);
+  bottom: calc(100% + 6px);
+  box-shadow: var(--dsc-shadow-float);
   left: 0;
-  right: 0;
-  max-height: 260px;
+  max-height: 240px;
   overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: #1d1d22;
-  box-shadow: 0 8px 30px rgb(0 0 0 / 50%);
-  z-index: 5;
+  position: absolute;
+  right: 0;
+  z-index: var(--dsc-z-menu);
 }
 
 .completions .item {
-  padding: 7px 14px;
   cursor: pointer;
+  min-height: var(--dsc-row-h);
+  padding: 5px 12px;
 }
 
 .completions .item .label {
-  font-family: var(--mono);
-  font-size: 13px;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-body);
 }
 
 .completions .item .desc {
@@ -1596,15 +1600,15 @@
 }
 
 .plugins-head h1 {
+  font-size: var(--dsc-fs-title);
+  font-weight: 600;
   margin: 0;
-  font-size: 22px;
-  font-weight: 700;
 }
 
 .plugins-head p {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
   margin: 3px 0 0;
-  color: var(--text-faint);
-  font-size: 13px;
 }
 
 .plugins-actions {
@@ -1625,39 +1629,43 @@
   font-weight: 500;
 }
 
+/* 分组标签：比正文小一档、半粗、加一点字距，中文不做全大写。 */
 .plugin-group-label {
-  display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 20px 0 8px;
-  color: var(--text-faint);
-  font-size: 13px;
+  color: var(--dsc-text-secondary);
+  display: flex;
+  font-size: var(--dsc-fs-ui);
   font-weight: 600;
+  gap: 6px;
+  letter-spacing: 0.06em;
+  margin: 18px 0 6px;
 }
 
 .plugin-group-label .count {
-  color: var(--text-mute);
+  color: var(--dsc-text-tertiary);
   font-weight: 400;
 }
 
 .plugin-group-label .group-hint {
-  margin-left: 6px;
-  color: var(--text-mute);
-  font-size: 11.5px;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
   font-weight: 400;
+  letter-spacing: 0;
+  margin-left: 6px;
 }
 
+/* 插件行：行高压到约 52px，圆角用小圆角档，hover 只提一层底色。 */
 .plugin-row {
-  display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  transition: background 0.12s;
+  border-radius: var(--dsc-r-block);
+  display: flex;
+  gap: 12px;
+  padding: 9px 12px;
+  transition: background var(--dsc-dur) var(--dsc-ease);
 }
 
 .plugin-row:hover {
-  background: var(--bg-hover);
+  background: var(--dsc-row-hover-bg);
 }
 
 .plugin-row.off .plugin-name,
@@ -1666,15 +1674,15 @@
 }
 
 .plugin-icon {
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  border-radius: 10px;
+  border-radius: var(--dsc-r-icon);
   color: #fff;
-  font-size: 16px;
-  font-weight: 700;
+  display: grid;
+  flex-shrink: 0;
+  font-size: var(--dsc-fs-ui-lg);
+  font-weight: 600;
+  height: 34px;
+  place-items: center;
+  width: 34px;
 }
 
 .plugin-info {
@@ -1683,16 +1691,16 @@
 }
 
 .plugin-name {
-  font-size: 14px;
+  font-size: var(--dsc-fs-body);
   font-weight: 600;
 }
 
 .plugin-desc {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-faint);
-  font-size: 12.5px;
 }
 
 /* 开关（对照 dsh 的 toggle） */
@@ -2160,36 +2168,37 @@ body.dock-resizing iframe {
 }
 
 .dock-toggle.on {
-  background: var(--bg-active);
-  color: var(--text);
+  background: var(--dsc-control-active-bg);
+  color: var(--dsc-text-primary);
 }
 
 /* ══════════ 状态栏 ══════════ */
-
+/* 状态栏只借文字颜色分段，不做底色条，也不占高度预算。 */
 .statusbar {
-  display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 4px 20px 6px;
-  color: var(--text-mute);
-  font-size: 12px;
+  color: var(--dsc-text-quaternary);
+  display: flex;
   flex-shrink: 0;
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+  justify-content: center;
+  padding: 3px 20px 5px;
 }
 
 .statusbar .segments {
-  display: flex;
   align-items: center;
+  display: flex;
 }
 
 .statusbar .segment:not(:first-child)::before {
+  color: var(--dsc-text-quaternary);
   content: '·';
-  margin: 0 10px;
-  color: var(--text-mute);
+  margin: 0 8px;
 }
 
 .statusbar .state-working,
 .statusbar .state-thinking {
-  color: var(--accent-text);
+  color: var(--dsc-accent);
 }
 
 .statusbar .state-awaiting-approval {
@@ -2199,104 +2208,112 @@ body.dock-resizing iframe {
 /* ══════════ 会话选择 overlay（/resume） ══════════ */
 
 .overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
   align-items: center;
-  justify-content: center;
   background: rgb(0 0 0 / 55%);
-  z-index: 10;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: fixed;
+  z-index: var(--dsc-z-picker);
 }
 
+/* 选择面板：卡片面 + 发丝边 + 浮层阴影；圆角用浮层级那一档（8px），不再是 16px。 */
 .picker {
-  width: 620px;
-  max-height: 70vh;
+  background: var(--dsc-bg-card);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-overlay);
+  box-shadow: var(--dsc-shadow-md);
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: #1d1d22;
+  max-height: 70vh;
   overflow: hidden;
+  width: 620px;
 }
 
 .picker .title {
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--border-soft);
-  color: var(--text-faint);
-  font-size: 13px;
+  border-bottom: 1px solid var(--dsc-stroke-3);
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-body);
+  padding: 10px 14px;
 }
 
 .picker .list {
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px;
 }
 
 .picker .row {
-  padding: 9px 14px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--dsc-r-control);
   cursor: pointer;
+  min-height: var(--dsc-row-h);
+  padding: 6px 10px;
+}
+
+.picker .row:hover {
+  background: var(--dsc-control-hover-bg);
 }
 
 .picker .row.active {
-  background: var(--bg-hover);
+  background: var(--dsc-control-active-bg);
 }
 
 .picker .row .id {
-  font-size: 13px;
-  color: var(--text);
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-body);
 }
 
 .picker .row .meta {
-  margin-left: 10px;
-  color: var(--text-mute);
-  font-size: 12px;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
+  margin-left: 8px;
 }
 
 .picker .empty {
+  color: var(--dsc-text-tertiary);
   padding: 24px;
-  color: var(--text-mute);
   text-align: center;
 }
 
 .picker .foot {
-  padding: 9px 18px;
-  border-top: 1px solid var(--border-soft);
-  color: var(--text-mute);
-  font-size: 12px;
+  border-top: 1px solid var(--dsc-stroke-3);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
+  padding: 8px 14px;
 }
 
 /* ══════════ 通用小件（技能/设置共用） ══════════ */
 
 .mono {
-  font-family: var(--mono);
+  font-family: var(--dsc-font-mono);
 }
 
+/* 小标签用方角描边，不做胶囊：胶囊在这个位置读起来像按钮。 */
 .tag {
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-mute);
-  font-size: 10.5px;
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-badge);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-micro);
   font-weight: 400;
+  padding: 0 4px;
 }
 
 .text-btn {
-  display: inline-flex;
   align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  display: inline-flex;
+  font-size: var(--dsc-fs-ui);
   gap: 4px;
-  padding: 2px 0;
-  border: none;
-  background: none;
-  color: var(--text-faint);
-  font-size: 12px;
+  padding: 2px 4px;
+  transition: color var(--dsc-dur) var(--dsc-ease);
 }
 
 .text-btn:hover {
-  color: var(--accent-text);
+  color: var(--dsc-accent);
 }
 
 .text-btn:disabled {
-  color: var(--text-mute);
+  color: var(--dsc-text-quaternary);
 }
 
 .text-btn.ok {
@@ -2345,15 +2362,15 @@ body.dock-resizing iframe {
 }
 
 .skills-head h1 {
+  font-size: var(--dsc-fs-title);
+  font-weight: 600;
   margin: 0;
-  font-size: 22px;
-  font-weight: 700;
 }
 
 .skills-head p {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
   margin: 3px 0 0;
-  color: var(--text-faint);
-  font-size: 13px;
 }
 
 /* 设置面板里的内嵌形态：标题由面板头部给出，这里只留一行说明 + 操作按钮 */

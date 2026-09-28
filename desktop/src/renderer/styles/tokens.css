@@ -184,6 +184,8 @@
   --dsc-fs-code: calc(11.2px * var(--dsc-font-scale));
   --dsc-fs-ui: calc(12px * var(--dsc-font-scale));
   --dsc-fs-ui-lg: calc(14px * var(--dsc-font-scale));
+  /* 页面标题（技能、插件、归档那一行的 H1）。 */
+  --dsc-fs-title: calc(16px * var(--dsc-font-scale));
   /* 会话正文比 UI 控件松一档：读长回答时 13px 太挤。 */
   --dsc-fs-prose: calc(14px * var(--dsc-font-scale));
   --dsc-lh-prose: calc(22px * var(--dsc-font-scale));
