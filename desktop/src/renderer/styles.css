@@ -1806,11 +1806,12 @@
   bottom: 0;
   width: 9px;
   cursor: col-resize;
-  z-index: 20;
+  z-index: var(--dsc-z-dock);
 }
 
+/* 拖拽高亮跟着品牌色走：写死 rgba 的话换浅色主题就剩一条脏蓝。 */
 .dock-resizer:hover {
-  background: rgba(142, 161, 255, 0.35);
+  background: color-mix(in srgb, var(--dsc-accent) 35%, transparent);
 }
 
 /* 拖拽调宽中：禁选中文本并锁定光标 */
@@ -1834,11 +1835,14 @@ body.dock-resizing iframe {
 
 .dock-tabs button {
   -webkit-app-region: no-drag;
-  padding: 5px 10px;
+  min-height: var(--dsc-row-h);
+  padding: 4px 10px;
   border-radius: var(--dsc-r-control);
   color: var(--dsc-text-tertiary);
   font-size: var(--dsc-fs-caption);
-  transition: background 0.12s, color 0.12s;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .dock-tabs button:hover {
@@ -1892,6 +1896,7 @@ body.dock-resizing iframe {
   color: var(--dsc-text-primary);
   border: 1px solid var(--dsc-stroke-4);
   border-radius: var(--dsc-r-control);
+  min-height: var(--dsc-row-h);
   padding: 3px 8px;
   font-size: var(--dsc-fs-caption);
   outline: none;
@@ -1986,8 +1991,9 @@ body.dock-resizing iframe {
   align-items: center;
   gap: 6px;
   width: 100%;
+  min-height: var(--dsc-row-h);
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--dsc-r-control);
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
   text-align: left;
@@ -2110,7 +2116,8 @@ body.dock-resizing iframe {
 .git-commit textarea {
   resize: none;
   border: 1px solid var(--dsc-stroke-2);
-  border-radius: 8px;
+  /* 面板里的输入块走 --dsc-r-block：--dsc-r-composer 那一档只留给主输入区。 */
+  border-radius: var(--dsc-r-block);
   background: var(--dsc-fill-quaternary);
   color: var(--dsc-text-primary);
   font-family: inherit;
@@ -2120,7 +2127,8 @@ body.dock-resizing iframe {
 }
 
 .git-commit textarea:focus {
-  border-color: rgb(255 255 255 / 18%);
+  /* 静息 stroke-2，聚焦提一档到 stroke-1，不再写死白色。 */
+  border-color: var(--dsc-stroke-1);
 }
 
 .git-commit .btn-primary {
@@ -3124,17 +3132,20 @@ body.dock-resizing iframe {
 }
 
 .arch-group {
-  margin-bottom: 14px;
+  margin-bottom: var(--dsc-block-gap);
   border: 1px solid var(--dsc-stroke-4);
   border-radius: var(--dsc-r-icon);
   overflow: hidden;
 }
 
+/* 组头和归档行沿用 .dsc-row 的几何：纵向 2px 内距 + 26px 行高地板，
+ * 行内的 .text-btn（22px）就是这一档能压到的下限。 */
 .arch-group-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 2px 10px;
+  min-height: var(--dsc-row-h);
   background: var(--dsc-row-hover-bg);
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
@@ -3150,7 +3161,7 @@ body.dock-resizing iframe {
 
 .arch-group-head .count {
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: var(--dsc-r-badge);
   background: var(--dsc-row-active-bg);
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-tool);
@@ -3165,7 +3176,8 @@ body.dock-resizing iframe {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 10px 6px 32px;
+  padding: 2px 10px 2px 32px;
+  min-height: var(--dsc-row-h);
   border-top: 1px solid var(--dsc-stroke-4);
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
@@ -3205,7 +3217,7 @@ body.dock-resizing iframe {
   border-top: 1px solid var(--dsc-stroke-4);
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-tool);
-  line-height: 1.7;
+  line-height: var(--dsc-lh-body);
 }
 
 .arch-foot .mono {
