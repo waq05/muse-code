@@ -81,6 +81,11 @@ const api = {
     return ipcRenderer.invoke('dsc:open-path', path)
   },
 
+  /** 主题切换时把窗口底色、原生控件区的图标色报给主进程（两个 #rrggbb）。 */
+  setWindowChrome(bar: string, symbol: string): void {
+    ipcRenderer.send('dsc:set-window-chrome', bar, symbol)
+  },
+
   // ── dock：内置终端（宿主 desktop-dock 服务，管道模式）/ 内置浏览器 ──
 
   /** dock 终端输出流（term-spawn 会话 id 维度）。 */

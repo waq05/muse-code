@@ -440,6 +440,23 @@ localStorage——每帧 setState 会重渲染整棵对话树。复位（双击�
 里那份默认值自己回来，JS 里不抄第二份默认数字。正文列宽写一个变量就够，是因为正文、审批卡、
 输入区三处读的都是它。
 
+### 主题色怎么送到原生窗口控件
+
+Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不到它，所以主题切换时要多走一跳 IPC：
+
+1. `tokens.css` 里的 `--dsc-chrome-bar` / `--dsc-chrome-symbol` 给出两个**不透明**颜色：
+   底色就是顶栏透出来的 `--dsc-bg-page`，图标色把顶栏图标用的那 74% 次要文字色压平到页面
+   底色上（系统那侧不接受 alpha，半透明颜色交过去会被压成错色）。
+2. `appearance.ts` 的 `applyAppearance` 每次落完 `data-theme` 就调一次 `pushWindowChrome()`：
+   用一个隐藏探针让浏览器把 `var(--dsc-chrome-*)` 算成 `rgb()`，转成 `#rrggbb` 后经
+   `dsc:set-window-chrome` 发给主进程；同一次外观里两个值没变就不重发。
+3. 主进程收到后调 `setTitleBarOverlay` 改控件条、`setBackgroundColor` 改窗口底色。
+   只收 `#rrggbb`，其它格式直接拒收，窗口留着深色默认值。
+
+顺带一条颜色纪律：`styles.css` 里不再出现颜色字面量，只剩 6 行是故意留的（品牌渐变 logo
+和它的白字、彩底上的白色图标、开关的白滑块、两处深色遮罩）。要更重或更轻的语义色就用
+`color-mix(in srgb, var(--dsc-*) N%, transparent)` 现调，不要再抄一份十六进制。
+
 ### 命令与补全（`src/plugins/commands.ts`）
 
 内置命令 6 条：`new` / `resume` / `compact` / `model` / `help` / `exit`（`:19-26`），插件

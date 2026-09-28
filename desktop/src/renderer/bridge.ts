@@ -54,6 +54,8 @@ export interface DscBridge {
   dockBrowser(visible: boolean, rect?: { x: number; y: number; width: number; height: number }): Promise<boolean>
   browserNav(url: string, action: 'load' | 'back' | 'forward' | 'reload'): Promise<{ ok: boolean; url?: string; error?: string }>
   onBrowserState(listener: (state: { url: string }) => void): () => void
+  /** 主题切换时同步窗口底色与原生控件区颜色（两个 #rrggbb，不带 alpha）。 */
+  setWindowChrome(bar: string, symbol: string): void
   quit(): void
 }
 

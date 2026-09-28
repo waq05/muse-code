@@ -543,7 +543,7 @@
   border: 1px solid var(--dsc-stroke-2);
   border-radius: var(--dsc-r-icon);
   background: var(--dsc-bg-card);
-  box-shadow: 0 12px 40px rgb(0 0 0 / 55%);
+  box-shadow: var(--dsc-shadow-float);
 }
 
 .menu-item {
@@ -565,11 +565,11 @@
 }
 
 .menu-item.danger {
-  color: #e79aa1;
+  color: var(--dsc-red);
 }
 
 .menu-item.danger:hover {
-  background: rgb(224 108 117 / 14%);
+  background: color-mix(in srgb, var(--dsc-red) 14%, transparent);
   color: var(--dsc-red);
 }
 
@@ -599,7 +599,7 @@
   border: 1px solid var(--dsc-stroke-2);
   border-radius: var(--dsc-r-block);
   background: var(--dsc-bg-card);
-  box-shadow: 0 24px 70px rgb(0 0 0 / 55%);
+  box-shadow: var(--dsc-shadow-md);
   transform: translate(-50%, -50%);
 }
 
@@ -859,7 +859,7 @@
   font-size: 19px;
   font-weight: 800;
   margin-bottom: 14px;
-  box-shadow: 0 8px 30px rgb(77 107 254 / 25%);
+  box-shadow: 0 8px 30px color-mix(in srgb, var(--dsc-accent) 25%, transparent);
 }
 
 .welcome h1 {
@@ -1069,7 +1069,7 @@
   padding: 6px 14px;
   border: 1px solid var(--dsc-stroke-4);
   border-radius: var(--dsc-r-card);
-  background: rgb(255 255 255 / 2%);
+  background: var(--dsc-fill-quinary);
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-caption);
   font-variant-numeric: tabular-nums;
@@ -1119,7 +1119,8 @@
   position: relative;
   margin-left: 7px;
   padding-left: 18px;
-  border-left: 1px solid rgb(255 255 255 / 10%);
+  /* 竖线要跟正文一样安静，所以用不带品牌色的中性描边，而不是 --dsc-stroke-1 */
+  border-left: 1px solid color-mix(in srgb, var(--dsc-base) 10%, transparent);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1137,7 +1138,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #3c3c44;
+  background: var(--dsc-text-quaternary);
   box-shadow: 0 0 0 3px var(--dsc-bg-page);
 }
 
@@ -1145,7 +1146,7 @@
   padding: 8px 12px;
   border: 1px solid var(--dsc-stroke-4);
   border-radius: var(--dsc-r-card);
-  background: rgb(255 255 255 / 1.5%);
+  background: var(--dsc-fill-quinary);
   color: var(--dsc-text-tertiary);
   font-size: var(--dsc-fs-body);
   line-height: 1.7;
@@ -1594,8 +1595,8 @@
   border: 1px solid var(--dsc-stroke-2);
   /* 320px 宽的模型浮层独有的大圆角，全站就这一处，属一次性几何值，不入阶梯。 */
   border-radius: 14px;
-  background: #1d1d22;
-  box-shadow: 0 12px 40px rgb(0 0 0 / 55%);
+  background: var(--dsc-bg-popover);
+  box-shadow: var(--dsc-shadow-float);
   z-index: var(--dsc-z-menu);
 }
 
@@ -1923,7 +1924,7 @@
 
 .plugin-config:hover {
   color: var(--dsc-text-primary);
-  border-color: rgb(255 255 255 / 22%);
+  border-color: color-mix(in srgb, var(--dsc-base) 22%, transparent);
   background: var(--dsc-row-hover-bg);
 }
 
@@ -2679,8 +2680,8 @@ body.resizing iframe {
 }
 
 .skill-icon.store {
-  background: rgb(18 165 165 / 14%);
-  color: #5cc6c6;
+  background: color-mix(in srgb, var(--dsc-cyan) 16%, transparent);
+  color: var(--dsc-cyan);
 }
 
 .skill-info {
@@ -2776,13 +2777,13 @@ body.resizing iframe {
 }
 
 .source-chip.on {
-  border-color: rgb(77 107 254 / 45%);
+  border-color: color-mix(in srgb, var(--dsc-accent) 45%, transparent);
   background: var(--dsc-fill-secondary);
   color: var(--dsc-text-primary);
 }
 
 .source-chip.bad {
-  border-color: rgb(224 108 117 / 35%);
+  border-color: color-mix(in srgb, var(--dsc-red) 35%, transparent);
   color: var(--dsc-red);
 }
 
@@ -2839,7 +2840,7 @@ body.resizing iframe {
   border: 1px solid var(--dsc-stroke-2);
   border-radius: var(--dsc-r-block);
   background: var(--dsc-bg-card);
-  box-shadow: 0 24px 70px rgb(0 0 0 / 55%);
+  box-shadow: var(--dsc-shadow-md);
 }
 
 .settings-nav {
@@ -3125,7 +3126,7 @@ body.resizing iframe {
   padding: 12px 14px;
   border: 1px solid var(--dsc-stroke-4);
   border-radius: var(--dsc-r-icon);
-  background: rgb(255 255 255 / 2%);
+  background: var(--dsc-fill-quinary);
 }
 
 .provider-row {
@@ -3196,12 +3197,12 @@ body.resizing iframe {
 }
 
 .model-chip:hover {
-  border-color: rgb(77 107 254 / 50%);
+  border-color: color-mix(in srgb, var(--dsc-accent) 50%, transparent);
   color: var(--dsc-text-primary);
 }
 
 .model-chip.on {
-  border-color: rgb(77 107 254 / 45%);
+  border-color: color-mix(in srgb, var(--dsc-accent) 45%, transparent);
   background: var(--dsc-fill-secondary);
   color: var(--dsc-text-primary);
 }
@@ -3218,9 +3219,9 @@ body.resizing iframe {
 
 .provider-form {
   padding: 14px;
-  border: 1px solid rgb(77 107 254 / 30%);
+  border: 1px solid color-mix(in srgb, var(--dsc-accent) 30%, transparent);
   border-radius: var(--dsc-r-icon);
-  background: rgb(77 107 254 / 6%);
+  background: color-mix(in srgb, var(--dsc-accent) 6%, transparent);
 }
 
 .provider-form-title {

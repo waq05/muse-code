@@ -9,7 +9,7 @@
  */
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
-import { BrowserWindow, Menu, Tray, WebContentsView, app, dialog, ipcMain, nativeImage, shell, utilityProcess, type UtilityProcess } from 'electron'
+import { BrowserWindow, Menu, Tray, WebContentsView, app, desktopCapturer, dialog, ipcMain, nativeImage, screen, shell, utilityProcess, type UtilityProcess } from 'electron'
 import type { NativeImage } from 'electron'
 import { HostProtocol } from './protocol.js'
 import { registerDockIpc } from './dock.js'
@@ -23,6 +23,16 @@ let suppressHostExit = false
 
 /** 当前宿主工作目录（会话 cwd；desktop.json 记忆）。 */
 let hostCwd = ''
+
+/** 原生窗口控件区的高度：renderer 顶栏是 36px，多给 2px 让按钮命中区不裁边。 */
+const CAPTION_HEIGHT = 38
+/** 深色主题的窗口底色与控件区配色；浅色主题由 renderer 在外观生效时推过来覆盖。 */
+const DARK_CHROME = { bar: '#0d0d0f', symbol: '#9a9aa2' }
+
+/** 能否交给系统给窗口控件着色：只收 #rrggbb，半透明颜色到了那侧会被丢掉。 */
+function isChromeColor(value: unknown): value is string {
+  return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value)
+}
 
 // ── 宿主生命周期 ──────────────────────────────────────────────────────────────
 
@@ -260,6 +270,16 @@ function registerIpc(): void {
   ipcMain.on('dsc:quit', () => {
     mainWindow?.close()
   })
+
+  // 原生窗口控件区（最小化/最大化/关闭）由系统画，样式表够不着，只能在主题
+  // 切换时由 renderer 把两个颜色报上来。只收 #rrggbb：带 alpha 的颜色到了系统
+  // 那侧会被丢掉，宁可拒收也不要在浅色主题下留一块错色的条。
+  ipcMain.on('dsc:set-window-chrome', (event, bar: unknown, symbol: unknown) => {
+    if (event.sender !== mainWindow?.webContents) return
+    if (!isChromeColor(bar) || !isChromeColor(symbol) || !mainWindow) return
+    mainWindow.setTitleBarOverlay({ color: bar, symbolColor: symbol, height: CAPTION_HEIGHT })
+    mainWindow.setBackgroundColor(bar)
+  })
 }
 
 // ── 窗口与应用 ────────────────────────────────────────────────────────────────
@@ -270,14 +290,16 @@ function createWindow(): void {
     height: 940,
     minWidth: 960,
     minHeight: 640,
-    // 全暗色无边框：Windows 用原生 overlay 窗口控件，renderer 内留出拖拽区
-    backgroundColor: '#0d0d0f',
+    // 无边框：Windows 用原生 overlay 窗口控件，renderer 内留出拖拽区。
+    // 窗口底色与控件区按深色主题起步；选浅色主题时 renderer 在外观生效那一刻
+    // 把压平后的两个颜色报过来（IPC 频道 dsc:set-window-chrome）。
+    backgroundColor: DARK_CHROME.bar,
     title: 'dsc',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#0d0d0f',
-      symbolColor: '#9a9aa2',
-      height: 38,
+      color: DARK_CHROME.bar,
+      symbolColor: DARK_CHROME.symbol,
+      height: CAPTION_HEIGHT,
     },
     autoHideMenuBar: true,
     webPreferences: {
@@ -293,6 +315,12 @@ function createWindow(): void {
   // 必须在 loadFile/loadURL 之前注册，否则会错过 did-finish-load。
   const shotPath = process.env.DSC_DESKTOP_SHOT
   if (shotPath !== undefined && shotPath !== '') {
+    // 原生窗口控件区不进 capturePage，只能整屏抓；抓屏时窗口要盖在别的窗口之上，
+    // 所以 DSC_DESKTOP_SHOT_TOPMOST=1 时把它钉在最上层。
+    if (process.env.DSC_DESKTOP_SHOT_TOPMOST === '1') {
+      mainWindow.setAlwaysOnTop(true, 'screen-saver')
+      mainWindow.focus()
+    }
     const wait = Number.parseInt(process.env.DSC_DESKTOP_SHOT_DELAY ?? '4000', 10)
     const delay = Number.isNaN(wait) ? 4000 : wait
     // capturePage 在 GPU 合成不正常时可能永远不返回，因此挂个看门狗：自动化不能挂在这里
@@ -317,6 +345,15 @@ function createWindow(): void {
             )
             .catch((error: unknown) => process.stderr.write(`[selfcheck] 预跑脚本失败：${String(error)}\n`))
         }, Math.max(0, delay - (Number.isNaN(lead) ? 2000 : lead)))
+      }
+      // 原生窗口控件条（最小化/最大化/关闭）由系统画，capturePage 拍不到，只能整屏抓
+      // 再裁。坐标换算放在这里做：getBounds 给的是 DIP，乘所在显示器的 scaleFactor 才是
+      // 屏幕像素，外部抓屏脚本容易被 DPI 虚拟化绕晕。
+      const stripPath = process.env.DSC_DESKTOP_SHOT_STRIP
+      if (stripPath !== undefined && stripPath !== '') {
+        setTimeout(() => {
+          void captureCaptionStrip(stripPath)
+        }, Math.max(0, delay - 3000))
       }
       setTimeout(() => {
         void mainWindow?.webContents
@@ -373,6 +410,69 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+}
+
+/**
+ * 自检用：整屏抓图后裁出窗口右上角的原生控件条，写出 PNG，并把取样到的颜色打进日志。
+ *
+ * 三个窗口按钮由系统画，capturePage 只拍网页，拍不到它们；控件条有没有跟着主题换色，
+ * 只能靠整屏抓图来看。裁剪坐标用 getBounds()（DIP）乘所在显示器的 scaleFactor 换算，
+ * 交给外部脚本换算会被 DPI 虚拟化绕晕。
+ *
+ * @param stripPath 要写出的 PNG 路径
+ */
+async function captureCaptionStrip(stripPath: string): Promise<void> {
+  const win = mainWindow
+  if (!win) return
+  const bounds = win.getBounds()
+  const display = screen.getDisplayMatching(bounds)
+  const scale = display.scaleFactor
+  const [source] = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: Math.round(display.size.width * scale), height: Math.round(display.size.height * scale) },
+  })
+  if (!source) {
+    process.stderr.write('[selfcheck] 整屏抓图没拿到源\n')
+    return
+  }
+  // 控件条贴着窗口右上角：取右端 260 DIP 宽、70 DIP 高，够装下三个按钮还留点余量
+  const image = source.thumbnail.crop({
+    x: Math.round((display.bounds.x + bounds.x + bounds.width - 260) * scale),
+    y: Math.round((display.bounds.y + bounds.y) * scale),
+    width: Math.round(260 * scale),
+    height: Math.round(70 * scale),
+  })
+  mkdirSync(resolve(stripPath, '..'), { recursive: true })
+  writeFileSync(stripPath, image.toPNG())
+  const { width, height } = image.getSize()
+  const bitmap = image.toBitmap()
+  // toBitmap() 在 Windows 上的字节序是 BGRA
+  const hexAt = (px: number, py: number): string => {
+    const i = (py * width + px) * 4
+    const part = (offset: number): string => bitmap[i + offset].toString(16).padStart(2, '0')
+    return `#${part(2)}${part(1)}${part(0)}`
+  }
+  const row = new Map<string, number>()
+  for (let px = 0; px < width; px += 2) {
+    const hex = hexAt(px, 4)
+    row.set(hex, (row.get(hex) ?? 0) + 1)
+  }
+  const bar = [...row.entries()].sort((a, b) => b[1] - a[1])[0]
+  let darkest = hexAt(0, 0)
+  let darkestLum = Number.POSITIVE_INFINITY
+  for (let py = 0; py < height; py += 2) {
+    for (let px = 0; px < width; px += 2) {
+      const i = (py * width + px) * 4
+      const lum = 0.2126 * bitmap[i + 2] + 0.7152 * bitmap[i + 1] + 0.0722 * bitmap[i]
+      if (lum < darkestLum) {
+        darkestLum = lum
+        darkest = hexAt(px, py)
+      }
+    }
+  }
+  process.stderr.write(
+    `[selfcheck] 控件条 ${width}x${height} 像素已写出 ${stripPath}；顶行主色 ${bar[0]}（${bar[1]}/${width / 2} 点），最暗像素 ${darkest}\n`,
+  )
 }
 
 // 自检/并行实例：换一个 userData 目录，单实例锁与已开着的打包版互不影响

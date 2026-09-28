@@ -4,8 +4,10 @@
  * 真源在宿主侧 ~/.dsc/settings.json（走 UiPrefsView）。这里另存一份
  * localStorage 镜像，只为了首帧不要闪：主进程还没连上时就能按上次的
  * 设置画出颜色，等 prefs 到了再用真值覆盖一次。
+ * 主题色还要额外报给主进程一次：原生窗口控件区不归样式表管，见 pushWindowChrome。
  */
 import type { ThemeMode, UiDensity, UiFontSize } from '@dsc/runtime/contract.js'
+import { dsc } from './bridge.js'
 
 export type { ThemeMode, UiDensity, UiFontSize }
 
@@ -54,6 +56,10 @@ export function applyAppearance(appearance: Appearance): void {
   root.dataset.density = appearance.density
   root.style.setProperty('--dsc-font-scale', String(FONT_SCALE[appearance.fontSize] ?? 1))
 
+  // 窗口底色和原生窗口控件区跟着这次的主题一起换，否则浅色主题下顶栏右端
+  // 会留一块深色的控件条。
+  pushWindowChrome()
+
   // 只有跟随系统时才需要挂监听；系统翻脸就按 current 重画一次。
   if (!media) return
   if (requested === 'system' && !systemWatcher) {
@@ -63,6 +69,65 @@ export function applyAppearance(appearance: Appearance): void {
     media.removeEventListener('change', systemWatcher)
     systemWatcher = undefined
   }
+}
+
+/** 上一轮报给主进程的窗口颜色；字号、密度改动也会走 applyAppearance，靠它吃掉重复推送。 */
+let lastChrome = ''
+/** 隐藏探针：借浏览器把 var(--dsc-chrome-*) 算成具体颜色，再从这里读走。 */
+let chromeProbe: HTMLDivElement | undefined
+
+/**
+ * 把当前主题下的窗口底色与原生控件区图标色报给主进程。
+ *
+ * 原生控件区（最小化/最大化/关闭）由系统画，拿不到 CSS 变量，因此用探针把
+ * tokens.css 里那两个压平过的令牌算成 rgb，再转成主进程要的 #rrggbb。
+ * 任一值转不出不透明颜色就整轮跳过，主进程留着深色默认值，不会画出错色。
+ */
+function pushWindowChrome(): void {
+  if (!chromeProbe) {
+    chromeProbe = document.createElement('div')
+    chromeProbe.style.cssText =
+      'position:absolute;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none'
+    document.documentElement.append(chromeProbe)
+  }
+  const probe = chromeProbe
+  const read = (token: string): string | null => {
+    probe.style.backgroundColor = `var(${token})`
+    return toHexColor(getComputedStyle(probe).backgroundColor)
+  }
+  const bar = read('--dsc-chrome-bar')
+  const symbol = read('--dsc-chrome-symbol')
+  if (bar === null || symbol === null) return
+  const next = `${bar} ${symbol}`
+  if (next === lastChrome) return
+  lastChrome = next
+  dsc?.setWindowChrome?.(bar, symbol)
+}
+
+/**
+ * 把浏览器算出来的颜色转成 #rrggbb。
+ *
+ * 颜色是从 getComputedStyle 读来的，同一个 color-mix() 令牌在不同内核版本里
+ * 可能被写成 `rgb(13, 13, 15)` 或 `color(srgb 0.051 0.051 0.059)`，两种都要认。
+ *
+ * @param color getComputedStyle 读到的 background-color
+ * @returns 不透明颜色的十六进制写法；带 alpha 或不是 sRGB 时返回 null
+ */
+function toHexColor(color: string): string | null {
+  const parts = /^(rgb|color)\((.+)\)$/i.exec(color.trim())
+  if (!parts) return null
+  // color(srgb …) 的分量是 0~1 的浮点数，rgb() 是 0~255；两种都可能在末位带 alpha。
+  const srgb = parts[1].toLowerCase() === 'color'
+  const body = srgb ? parts[2].replace(/^\s*srgb\s+/i, '') : parts[2]
+  const nums = body.split(/[,/\s]+/).filter((piece) => piece !== '').map(Number)
+  if (nums.length < 3 || nums.slice(0, 4).some((n) => !Number.isFinite(n))) return null
+  if (nums.length > 3 && nums[3] < 0.999) return null
+  const scale = srgb ? 255 : 1
+  const hex = (n: number): string =>
+    Math.min(255, Math.max(0, Math.round(n * scale)))
+      .toString(16)
+      .padStart(2, '0')
+  return `#${hex(nums[0])}${hex(nums[1])}${hex(nums[2])}`
 }
 
 /**

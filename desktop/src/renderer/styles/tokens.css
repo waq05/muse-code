@@ -372,4 +372,11 @@
 :root {
   --dsc-accent-hover: color-mix(in srgb, var(--dsc-accent) 88%, #fff);
   --dsc-accent-text: color-mix(in srgb, var(--dsc-accent) 70%, var(--dsc-base));
+
+  /* 原生窗口控件区（Windows 的最小化/最大化/关闭按钮）由系统画，CSS 够不着，
+     只能由 renderer 把两个颜色报给主进程。系统那侧不接受半透明，所以这里
+     给出压平到页面底色上的值：底色就是顶栏透出来的页面色，图标色取顶栏
+     图标用的次要文字色（--dsc-text-secondary 那 74%）压平后的结果。 */
+  --dsc-chrome-bar: var(--dsc-bg-page);
+  --dsc-chrome-symbol: color-mix(in srgb, var(--dsc-base) 74%, var(--dsc-bg-page));
 }
