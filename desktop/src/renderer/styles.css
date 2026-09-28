@@ -26,9 +26,89 @@
   flex-direction: column;
   width: var(--dsc-sidebar-w);
   flex-shrink: 0;
+  position: relative;
   background: var(--dsc-bg-side);
+  /* 收起/展开时让宽度过渡一下。拖动中由 body.resizing 关掉它，
+     否则手柄会永远比鼠标慢半拍。 */
+  transition: width var(--dsc-dur) var(--dsc-ease);
   /* 侧栏右边只留一道 7.5% 的发丝线：这里靠边框分界，不靠阴影。 */
   border-right: 1px solid color-mix(in srgb, var(--dsc-base) 7.5%, transparent);
+}
+
+/* 右边界拖拽调宽：9px 热区压在 1px 分界线上（往两侧各伸 4px），
+   和右侧 dock 的拖拽条同一套几何与高亮。 */
+.sidebar-resizer {
+  position: absolute;
+  right: -4px;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  cursor: col-resize;
+  z-index: var(--dsc-z-handle);
+}
+
+.sidebar-resizer:hover,
+.sidebar-resizer[data-dragging] {
+  background: color-mix(in srgb, var(--dsc-accent) 35%, transparent);
+}
+
+/* ── 收起态：56px 图标窄栏（对照 dsh 的窄栏——36px 控件、18px 图标）──
+   收起时宽内容整块不渲染（见 Sidebar.tsx 的 rail 分支），所以这里只管窄栏。
+   align-items: center 让图标在宽度收缩的路上一直居中，看起来是滑过去而不是跳过去。 */
+.sidebar.rail {
+  align-items: center;
+  gap: 4px;
+  width: var(--dsc-sidebar-rail);
+  padding: 6px 0 8px;
+  /* 顶栏那一条要能拖着窗口走，按钮自己再改回 no-drag。 */
+  -webkit-app-region: drag;
+}
+
+.rail-logo,
+.rail-btn {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  display: flex;
+  flex-shrink: 0;
+  height: 36px;
+  justify-content: center;
+  width: 36px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+  -webkit-app-region: no-drag;
+}
+
+.rail-logo img {
+  border-radius: var(--dsc-r-icon);
+  height: 22px;
+  width: 22px;
+}
+
+.rail-logo:hover,
+.rail-btn:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+/* 窄栏里当前页那一档常亮，跟展开态的 .nav-item.on 同一个底色。 */
+.rail-btn.on {
+  background: var(--dsc-row-active-bg);
+  color: var(--dsc-text-primary);
+}
+
+.rail-nav {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 用量和工作目录挤不下窄栏，收成一个目录图标顶到底部，点开就是展开侧栏。 */
+.rail-foot {
+  display: flex;
+  margin-top: auto;
 }
 
 .sidebar-header {
@@ -61,6 +141,12 @@
   font-size: var(--dsc-fs-micro);
   letter-spacing: 0.09em;
   user-select: none;
+}
+
+/* 收起侧栏的按钮顶到行尾，和右侧窗口控件隔开。头部整行是拖窗口区，按钮要摘出去。 */
+.sidebar-header .rail-toggle {
+  margin-left: auto;
+  -webkit-app-region: no-drag;
 }
 
 /* 侧栏唯一的主行动。软填充 + 内描边，不用 border，避免 hover 时字被挤走。 */
@@ -616,6 +702,74 @@
   flex: 1;
   flex-direction: column;
   min-width: 0;
+}
+
+/* 正文那一层（正文 + 输入区）：拖拽条摆在这里，纵向正好卡在顶栏之下、状态栏之上，
+   横向和正文列同一个中心。 */
+.thread-zone {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+/* 正文列两侧的拖拽条（对照 dsh 的正文宽度手柄）：10px 热区，离正文列 24px。
+   列宽由 --dsc-thread-max 说了算，两条各自按「50% ± 列宽/2」摆位，
+   所以拖一下，正文、审批卡、输入框三处一起挪。
+   窗口窄到列两边塞不下「24px 内缩 + 10px 热区」时，min() 把热区算成负数，
+   绝对定位的空元素宽度归零——不会留下一块位置错位却抓得住的热区。 */
+.thread-handle {
+  cursor: col-resize;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  touch-action: none;
+  width: min(10px, calc((100% - var(--dsc-thread-max)) / 2 - 48px));
+  z-index: var(--dsc-z-handle);
+}
+
+.thread-handle[data-side='left'] {
+  right: calc(50% + var(--dsc-thread-max) / 2 + 24px);
+}
+
+.thread-handle[data-side='right'] {
+  left: calc(50% + var(--dsc-thread-max) / 2 + 24px);
+}
+
+/* 高亮：一条 2px 竖条跟着鼠标上下走（拖动中由 JS 把鼠标竖向位置写进 --dsc-handle-y），
+   静息不亮，hover 或拖动才亮；中段 16px 是实的，两头各化开 28px。
+   用滚动条那个灰，是为了让这根次要的手柄在浅色主题里也不刺眼。 */
+.thread-handle::after {
+  background: linear-gradient(
+    to bottom,
+    transparent calc(var(--dsc-handle-y, 50%) - 36px),
+    var(--dsc-scrollbar-thumb) calc(var(--dsc-handle-y, 50%) - 8px),
+    var(--dsc-scrollbar-thumb) calc(var(--dsc-handle-y, 50%) + 8px),
+    transparent calc(var(--dsc-handle-y, 50%) + 36px)
+  );
+  border-radius: var(--dsc-r-pill);
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  transition: opacity var(--dsc-dur) var(--dsc-ease);
+  width: 2px;
+}
+
+.thread-handle[data-side='left']::after {
+  right: 4px;
+}
+
+.thread-handle[data-side='right']::after {
+  left: 4px;
+}
+
+.thread-handle:hover::after,
+.thread-handle[data-dragging]::after {
+  opacity: 1;
 }
 
 .topbar {
@@ -1816,13 +1970,19 @@
   background: color-mix(in srgb, var(--dsc-accent) 35%, transparent);
 }
 
-/* 拖拽调宽中：禁选中文本并锁定光标 */
-body.dock-resizing {
+/* 拖拽调宽中（侧栏、正文列、dock 共用这一个类）：锁光标、禁选中文本，
+   并关掉侧栏的宽度过渡，否则手柄永远比鼠标慢半拍。 */
+body.resizing {
   cursor: col-resize;
   user-select: none;
 }
 
-body.dock-resizing iframe {
+body.resizing .sidebar {
+  transition: none;
+}
+
+/* 指针滑进内置浏览器那块会把拖动吞掉，拖的时候先摘掉它的指针事件。 */
+body.resizing iframe {
   pointer-events: none;
 }
 

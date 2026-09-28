@@ -223,8 +223,10 @@
   --dsc-para-gap: calc(11px * var(--dsc-density));
 
   /* ── 几何 ── */
+  /* 侧栏默认宽（可拖，拖完由 renderer 写成根元素上的行内值覆盖这里）。 */
   --dsc-sidebar-w: 237px;
-  --dsc-sidebar-min: 640px;
+  /* 侧栏收起后的图标窄栏宽：36px 控件 + 左右各 10px。 */
+  --dsc-sidebar-rail: 56px;
   --dsc-page-inset: clamp(20px, 4vw, 64px);
   --dsc-page-max: 1200px;
   --dsc-titlebar-h: 36px;
@@ -263,6 +265,8 @@
   /* ── 浮层层级：谁的层次由这个阶梯说，不许在组件里写裸 z-index。
      组件内部自己的前后叠压照旧用 z-index: 1/2。── */
   --dsc-z-dock: 20;
+  /* 拖拽边界条：压在内容之上，浮层菜单之下。 */
+  --dsc-z-handle: 24;
   --dsc-z-menu: 40;
   --dsc-z-backdrop: 120;
   --dsc-z-modal: 130;

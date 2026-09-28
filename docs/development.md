@@ -418,8 +418,27 @@ dock 的操作名：`term-spawn` / `term-input` / `term-kill` / `fs-list` / `fs-
 直接抛「dock 未知操作：xxx」。终端是管道模式（没有 tty），所以全屏程序跑不了。
 
 `Dock.tsx` 四个 tab（terminal / browser / files / git），宽度夹在 300~820，双击复位 420；
-shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`——这是唯一存在
-`~/.dsc` 之外的用户状态。
+shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`。
+
+### 面板尺寸与收起状态存哪
+
+存在 renderer 的 `localStorage`、而不是 `~/.dsc/settings.json` 的用户状态，都是「这个窗口在
+这台机器上摆成什么样」这一类，跟跨机器的用户偏好（外观、会话排序）分开：
+
+| localStorage 键 | 管什么 | 夹取范围 / 默认 |
+| --- | --- | --- |
+| `dsc.dockShell` | dock 终端用哪个 shell | 5 个白名单值 |
+| `dsc.dockWidth` | 右侧 dock 宽 | 300~820，双击复位 420 |
+| `dsc.sidebarWidth` | 左侧侧栏宽 | 200~420，默认取样式表的 `--dsc-sidebar-w` |
+| `dsc.sidebarRail` | 侧栏是否收成 56px 图标窄栏（`Ctrl+B` 切） | `'1'` / `'0'` |
+| `dsc.threadWidth` | 中间正文列宽 | 480 ~（可用宽 − 80），默认取样式表的 `--dsc-thread-max`（76ch） |
+
+拖拽逻辑共用 `desktop/src/renderer/panels.ts` 的 `useWidthDrag`：Pointer Capture 攥住指针
+（拖出窗口外再回来还接着拖），移动按 `requestAnimationFrame` 合并，取消就退回原宽。
+**拖动中只改根元素上的 CSS 变量**（`--dsc-sidebar-w`、`--dsc-thread-max`），松手才写状态和
+localStorage——每帧 setState 会重渲染整棵对话树。复位（双击）就是撤掉行内变量，让 `:root`
+里那份默认值自己回来，JS 里不抄第二份默认数字。正文列宽写一个变量就够，是因为正文、审批卡、
+输入区三处读的都是它。
 
 ### 命令与补全（`src/plugins/commands.ts`）
 

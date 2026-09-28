@@ -16,6 +16,7 @@ import iconUrl from '../../build/icon.png'
 import { confirmAction } from './components/confirm.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { dsc, type RuntimeProxy } from './bridge.js'
+import { SIDEBAR_MAX, SIDEBAR_MIN, readRootPx, setRootVar, useWidthDrag } from './panels.js'
 import { moveToEnd, moveWithin } from './workspace-order.js'
 import {
   IconArchive,
@@ -33,6 +34,7 @@ import {
   IconPlus,
   IconPuzzle,
   IconSearch,
+  IconSidebar,
   IconSort,
 } from './icons.js'
 
@@ -68,6 +70,14 @@ export function Sidebar(props: {
   onPeekTeammate(teammate: TeammateView): void
   /** 当前正看着哪个队友的运行记录（高亮那一行）。 */
   peekFile: string | null
+  /** 侧栏收成 56px 图标窄栏（Ctrl+B，或点窄栏最上面那颗 logo）。 */
+  rail: boolean
+  /** 拖出来的侧栏宽度（px）。null = 没拖过，用样式表默认的 237px。 */
+  sidebarWidth: number | null
+  /** 收起 / 展开侧栏。 */
+  onToggleRail(): void
+  /** 侧栏拖宽落盘（null = 双击复位成默认宽）。 */
+  onSidebarResize(width: number | null): void
 }): JSX.Element {
   /** 活动工作区默认展开的会话条数（其余收进「展开剩余」）。 */
   const PREVIEW_COUNT = 5
@@ -311,12 +321,68 @@ export function Sidebar(props: {
     }
   }
 
+  // 右边界拖拽调宽：拖动中只改 CSS 变量，松手才把宽度交给 App 落盘。
+  const resizeDrag = useWidthDrag({
+    // 兜底数 237 只在样式表那条 --dsc-sidebar-w 被改坏时才会用到。
+    getBase: () => props.sidebarWidth ?? readRootPx('--dsc-sidebar-w', 237),
+    sign: 1,
+    clamp: (px) => Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, px))),
+    onDrag: (px) => setRootVar('--dsc-sidebar-w', `${px}px`),
+    onCommit: (px) => props.onSidebarResize(px),
+  })
+
+  // 收起态：56px 图标窄栏（照 dsh 的窄栏规格——36px 控件、18px 图标）。
+  // 最上面那颗就是展开按钮：窄栏里 logo 就代表「点开侧栏」，不再另摆一颗开关。
+  if (props.rail) {
+    return (
+      <aside className="sidebar rail">
+        <button className="rail-logo" data-tip="展开侧边栏（Ctrl+B）" onClick={props.onToggleRail}>
+          <img src={iconUrl} alt="dsc" draggable={false} />
+        </button>
+        <button className="rail-btn" data-tip="新会话" onClick={props.onNew}>
+          <IconPlus size={18} />
+        </button>
+        <nav className="rail-nav">
+          <button
+            className={`rail-btn${props.view === 'skills' ? ' on' : ''}`}
+            data-tip="技能"
+            onClick={() => props.onView(props.view === 'skills' ? 'chat' : 'skills')}
+          >
+            <IconBolt size={18} />
+          </button>
+          <button
+            className={`rail-btn${props.view === 'plugins' ? ' on' : ''}`}
+            data-tip="插件"
+            onClick={() => props.onView(props.view === 'plugins' ? 'chat' : 'plugins')}
+          >
+            <IconPuzzle size={18} />
+          </button>
+          <button className="rail-btn" data-tip="设置（模型、权限、技能源）" onClick={() => props.onOpenSettings('general')}>
+            <IconGear size={18} />
+          </button>
+        </nav>
+        <div className="rail-foot">
+          <button
+            className="rail-btn"
+            data-tip={`工作目录 ${props.cwd}；要挑会话就先展开侧栏`}
+            onClick={props.onToggleRail}
+          >
+            <IconFolder size={18} />
+          </button>
+        </div>
+      </aside>
+    )
+  }
+
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
         <img src={iconUrl} alt="dsc" draggable={false} />
         <span className="brand">dsc</span>
         <span className="badge">DESKTOP</span>
+        <button className="icon-btn rail-toggle" data-tip="收起侧边栏（Ctrl+B）" onClick={props.onToggleRail}>
+          <IconSidebar size={15} />
+        </button>
       </div>
 
       <button className="btn-new" onClick={props.onNew}>
@@ -780,6 +846,17 @@ export function Sidebar(props: {
           <span className="num">{formatTokens(totalTokens)} tok</span>
         </div>
       </div>
+
+      {/* 右边界拖拽条：9px 热区压在侧栏那道 1px 分界线上，双击复位成默认宽。 */}
+      <div
+        className="sidebar-resizer"
+        data-tip="拖拽调整宽度（双击复位）"
+        onPointerDown={resizeDrag.onPointerDown}
+        onPointerMove={resizeDrag.onPointerMove}
+        onPointerUp={resizeDrag.onPointerUp}
+        onPointerCancel={resizeDrag.onPointerCancel}
+        onDoubleClick={() => props.onSidebarResize(null)}
+      />
     </aside>
   )
 }

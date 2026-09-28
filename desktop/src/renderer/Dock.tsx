@@ -69,11 +69,11 @@ export function Dock(props: {
       props.onResize(Math.min(DOCK_MAX_WIDTH, Math.max(DOCK_MIN_WIDTH, startWidth + (startX - move.clientX))))
     }
     const onUp = (): void => {
-      document.body.classList.remove('dock-resizing')
+      document.body.classList.remove('resizing')
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-    document.body.classList.add('dock-resizing')
+    document.body.classList.add('resizing')
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }

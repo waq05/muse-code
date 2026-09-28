@@ -4,7 +4,7 @@
  *
  * @module desktop/renderer/App
  */
-import { useEffect, useMemo, useState, type JSX } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import type { ModelChoiceView, PluginInfoView, RuntimeSnapshot, TeammateView, TranscriptEntry, UiPrefsView } from '@dsc/runtime/contract.js'
 import { applyAppearance, saveCachedAppearance } from './appearance.js'
 import { toastErr, toastOk } from './components/toast.js'
@@ -20,7 +20,20 @@ import { Sidebar } from './Sidebar.js'
 import { SkillsView } from './SkillsView.js'
 import { StatusBar } from './StatusBar.js'
 import { TeammatePeek } from './TeammatePeek.js'
+import { ThreadResizer } from './ThreadResizer.js'
 import { TraceView } from './TraceView.js'
+import {
+  PANEL_KEYS,
+  SIDEBAR_MAX,
+  SIDEBAR_MIN,
+  STORED_MAX,
+  THREAD_MIN,
+  readStoredFlag,
+  readStoredPx,
+  setRootVar,
+  writeStoredFlag,
+  writeStoredPx,
+} from './panels.js'
 import { IconSidebar } from './icons.js'
 
 export function App(): JSX.Element {
@@ -44,6 +57,17 @@ export function App(): JSX.Element {
     return Number.isFinite(saved) && saved >= 300 && saved <= 820 ? saved : 420
   })
   const proxy: RuntimeProxy = useMemo(createRuntimeProxy, [])
+  // 面板尺寸三项：侧栏宽度、侧栏收成图标窄栏没有、中间正文列宽。都能拖，值存 localStorage。
+  // null = 没拖过，样式表里 `:root` 那份默认值（237px / 76ch）照常生效。
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(() =>
+    readStoredPx(PANEL_KEYS.sidebarWidth, SIDEBAR_MIN, SIDEBAR_MAX),
+  )
+  const [rail, setRail] = useState(() => readStoredFlag(PANEL_KEYS.sidebarRail))
+  const [threadWidth, setThreadWidth] = useState<number | null>(() =>
+    readStoredPx(PANEL_KEYS.threadWidth, THREAD_MIN, STORED_MAX),
+  )
+  // 正文那一层（含输入区）：拖拽条定位在它里面，夹宽度也要量它的实际宽。
+  const zoneRef = useRef<HTMLDivElement | null>(null)
   // 侧栏界面偏好（排序方式、工作区顺序与别名、外观三项），存在宿主的 ~/.dsc/settings.json
   const [uiPrefs, setUiPrefs] = useState<UiPrefsView>({ sessionSort: 'created', workspaceOrder: [], workspaceAliases: {}, themeMode: 'dark', fontSize: 'md', density: 'standard' })
   // 最近用过的工作目录：切过去但还没发过消息的工作区也要能在侧栏看到
@@ -77,6 +101,58 @@ export function App(): JSX.Element {
     applyAppearance(appearance)
     saveCachedAppearance(appearance)
   }, [uiPrefs.themeMode, uiPrefs.fontSize, uiPrefs.density])
+
+  // 拖出来的宽度写成根元素上的 CSS 变量：样式表里读这个变量的几处（侧栏宽、正文列宽、
+  // 正文两侧拖拽条的位置）一起跟着动，复位就是把行内值撤掉，让 `:root` 默认值回来。
+  useEffect(
+    () => setRootVar('--dsc-sidebar-w', sidebarWidth === null ? null : `${sidebarWidth}px`),
+    [sidebarWidth],
+  )
+  useEffect(
+    () => setRootVar('--dsc-thread-max', threadWidth === null ? null : `${threadWidth}px`),
+    [threadWidth],
+  )
+
+  // 快捷键处理器只挂一次，所以它从一个即时更新的 ref 里读当前状态，而不是从闭包里
+  // 读旧的 state：连着按两下 Ctrl+B 也不会第二下把第一下的结果覆盖回去。
+  const railRef = useRef(rail)
+  const toggleRail = useCallback((): void => {
+    const next = !railRef.current
+    railRef.current = next
+    setRail(next)
+    writeStoredFlag(PANEL_KEYS.sidebarRail, next)
+  }, [])
+
+  // Ctrl+B（macOS 上是 Cmd+B）收起/展开侧栏。主进程只建了托盘菜单，没占任何快捷键，
+  // 输入框里 Ctrl+B 也没有默认行为，这个键是空的。
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+      if (event.key.toLowerCase() !== 'b') return
+      event.preventDefault()
+      toggleRail()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [toggleRail])
+
+  /** 侧栏拖宽落盘（null = 双击复位成样式表默认宽）。 */
+  const resizeSidebar = (px: number | null): void => {
+    setSidebarWidth(px)
+    writeStoredPx(PANEL_KEYS.sidebarWidth, px)
+  }
+
+  /** 正文列拖宽落盘。 */
+  const resizeThread = (px: number): void => {
+    setThreadWidth(px)
+    writeStoredPx(PANEL_KEYS.threadWidth, px)
+  }
+
+  /** 正文列双击复位：删掉存档，回到 76ch。 */
+  const resetThread = (): void => {
+    setThreadWidth(null)
+    writeStoredPx(PANEL_KEYS.threadWidth, null)
+  }
 
   // 一次性反馈统一走右下角 Toast（components/toast.ts），这里不再有输入区上方的提示条。
 
@@ -293,6 +369,10 @@ export function App(): JSX.Element {
           setPeek(mate)
         }}
         peekFile={peek?.file ?? null}
+        rail={rail}
+        sidebarWidth={sidebarWidth}
+        onToggleRail={toggleRail}
+        onSidebarResize={resizeSidebar}
       />
 
       <div className="main">
@@ -339,51 +419,64 @@ export function App(): JSX.Element {
           </button>
         </div>
 
-            {peek !== null ? (
-              <TeammatePeek teammate={peek} entries={peekEntries} onClose={() => setPeek(null)} />
-            ) : tab === 'trace' ? (
-              <TraceView entries={snapshot.entries as TranscriptEntry[]} status={snapshot.status} />
-            ) : empty ? (
-              <Welcome systemEntries={snapshot.entries.filter((entry) => entry.kind === 'system')} />
-            ) : (
-              <ChatView entries={snapshot.entries as TranscriptEntry[]} turnState={snapshot.status.turnState} />
-            )}
-
-            <div className="composer-zone">
-              {snapshot.pendingApproval !== null && (
-                <ApprovalCard
-                  request={snapshot.pendingApproval}
-                  onAnswer={(answer) => proxy.answerApproval(answer)}
-                />
+            <div className="thread-zone" ref={zoneRef}>
+              {peek !== null ? (
+                <TeammatePeek teammate={peek} entries={peekEntries} onClose={() => setPeek(null)} />
+              ) : tab === 'trace' ? (
+                <TraceView entries={snapshot.entries as TranscriptEntry[]} status={snapshot.status} />
+              ) : empty ? (
+                <Welcome systemEntries={snapshot.entries.filter((entry) => entry.kind === 'system')} />
+              ) : (
+                <ChatView entries={snapshot.entries as TranscriptEntry[]} turnState={snapshot.status.turnState} />
               )}
-              {picker ? (
-                <SessionPicker
-                  sessions={snapshot.sessions}
-                  loading={snapshot.sessionsLoading}
-                  onPick={pickSession}
-                  onClose={() => setPicker(false)}
+
+              <div className="composer-zone">
+                {snapshot.pendingApproval !== null && (
+                  <ApprovalCard
+                    request={snapshot.pendingApproval}
+                    onAnswer={(answer) => proxy.answerApproval(answer)}
+                  />
+                )}
+                {picker ? (
+                  <SessionPicker
+                    sessions={snapshot.sessions}
+                    loading={snapshot.sessionsLoading}
+                    onPick={pickSession}
+                    onClose={() => setPicker(false)}
+                  />
+                ) : null}
+                {peek === null ? (
+                  <Composer
+                    disabled={snapshot.pendingApproval !== null}
+                    models={models}
+                    model={snapshot.status.model}
+                    effort={snapshot.status.effort}
+                    policy={snapshot.status.policy}
+                    working={snapshot.status.turnState !== 'idle'}
+                    onSubmit={handleSubmit}
+                    onInterrupt={() => proxy.interrupt()}
+                    onModelChange={(value) => void proxy.setModel(value)}
+                    onEffortChange={(value) => void proxy.setEffort(value)}
+                    onPolicyChange={(value) => proxy.setPolicy(value)}
+                  />
+                ) : (
+                  <div className="peek-lock">
+                    你在看队友 {peek.name} 的运行记录，这里不能发言。要给它的活得由派它的那一方用
+                    <code>subagent</code> 工具传话；你用自己的账号插手会打乱它的上下文。
+                  </div>
+                )}
+              </div>
+
+              {/* 正文两侧的拖拽条只在真正在读对话时出现：欢迎页、轨迹页、看队友记录都没有
+                  一列正文可以对齐。 */}
+              {tab === 'chat' && peek === null && !empty ? (
+                <ThreadResizer
+                  zoneRef={zoneRef}
+                  width={threadWidth}
+                  onCommit={resizeThread}
+                  onReset={resetThread}
                 />
               ) : null}
-              {peek === null ? (
-                <Composer
-                  disabled={snapshot.pendingApproval !== null}
-                  models={models}
-                  model={snapshot.status.model}
-                  effort={snapshot.status.effort}
-                  policy={snapshot.status.policy}
-                  working={snapshot.status.turnState !== 'idle'}
-                  onSubmit={handleSubmit}
-                  onInterrupt={() => proxy.interrupt()}
-                  onModelChange={(value) => void proxy.setModel(value)}
-                  onEffortChange={(value) => void proxy.setEffort(value)}
-                  onPolicyChange={(value) => proxy.setPolicy(value)}
-                />
-              ) : (
-                <div className="peek-lock">
-                  你在看队友 {peek.name} 的运行记录，这里不能发言。要给它的活得由派它的那一方用
-                  <code>subagent</code> 工具传话；你用自己的账号插手会打乱它的上下文。
-                </div>
-              )}
             </div>
 
             <StatusBar status={snapshot.status} />
