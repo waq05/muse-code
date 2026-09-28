@@ -13,6 +13,8 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type JSX, type KeyboardEvent } from 'react'
 import type { SessionSummary, SettingsMutation, TeammateView, TokenUsageView, UiPrefsView } from '@dsc/runtime/contract.js'
 import iconUrl from '../../build/icon.png'
+import { confirmAction } from './components/confirm.js'
+import { toastErr, toastOk } from './components/toast.js'
 import { dsc, type RuntimeProxy } from './bridge.js'
 import { moveToEnd, moveWithin } from './workspace-order.js'
 import {
@@ -37,6 +39,10 @@ import {
 /** 左栏页面（技能/插件各占一页，其余时间显示对话）。 */
 export type SidebarView = 'chat' | 'plugins' | 'skills'
 
+/** 归档确认框里那句后果说明：写清去向与「消息不删」，免得用户把归档当成删除。 */
+const ARCHIVE_DETAIL_ONE = '会话会离开侧栏，移进「设置 → 归档」的归档区；消息一个字不删，想回来去归档里点「恢复」。'
+const ARCHIVE_DETAIL_MANY = '这些会话会离开侧栏，移进「设置 → 归档」的归档区；消息一个字不删，想回来去归档里点「恢复」。'
+
 export function Sidebar(props: {
   sessions: SessionSummary[]
   activeSessionId: string | null
@@ -58,8 +64,6 @@ export function Sidebar(props: {
   onSwitchCwd(cwd: string): void
   /** 改界面偏好（会话排序、工作区顺序、显示名别名）：写盘与状态更新都在 App。 */
   onUiPrefs(patch: Partial<UiPrefsView>): void
-  /** 操作结果提示（顶到 App 的 notice 条）。 */
-  onNotice(text: string): void
   /** 点开一个队友的运行记录（只读查看）。 */
   onPeekTeammate(teammate: TeammateView): void
   /** 当前正看着哪个队友的运行记录（高亮那一行）。 */
@@ -104,18 +108,29 @@ export function Sidebar(props: {
   const order = props.uiPrefs.workspaceOrder
   const trimmed = query.trim().toLowerCase()
 
-  /** 跑一个会话库操作：把结果讲给用户，成功后刷新列表。 */
+  /** 跑一个会话库操作：结果用 Toast 回执，成功后刷新列表。 */
   const run = async (task: Promise<SettingsMutation>, then?: () => void): Promise<void> => {
     try {
       const result = await task
-      props.onNotice(result.ok ? (result.notice ?? '已完成') : `没做成：${result.error}`)
+      if (result.ok) toastOk(result.notice ?? '已完成')
+      else toastErr(`没做成：${result.error}`)
       if (result.ok) {
         await props.proxy.refreshSessions()
         then?.()
       }
     } catch (error) {
-      props.onNotice(`没做成：${error instanceof Error ? error.message : String(error)}`)
+      toastErr(`没做成：${error instanceof Error ? error.message : String(error)}`)
     }
+  }
+
+  /**
+   * 归档先弹确认框把去向说清楚（离开侧栏 → 归档区，找回要去设置），点了确认才动手；
+   * 执行结果的回执仍由 run() 统一发。可逆操作，主按钮不走红色危险档。
+   */
+  const archiveWithConfirm = (paths: string[], title: string, detail: string): void => {
+    void confirmAction({ title, detail, confirmLabel: '归档' }).then((yes) => {
+      if (yes) void run(props.proxy.archiveSessions(paths))
+    })
   }
 
   const sortedSessions = (list: SessionSummary[]): SessionSummary[] =>
@@ -234,7 +249,7 @@ export function Sidebar(props: {
     setMenu(null)
     const points = await props.proxy.listUserMessages(path)
     if (points.length < 2) {
-      props.onNotice('这个会话里可选的分叉位置少于两条用户消息')
+      toastErr('这个会话里可选的分叉位置少于两条用户消息')
       return
     }
     setFork({ path, points })
@@ -246,11 +261,11 @@ export function Sidebar(props: {
     setFork(null)
     const result = await props.proxy.forkSession(target, index)
     if (!result.ok) {
-      props.onNotice(`分叉失败：${result.error}`)
+      toastErr(`分叉失败：${result.error}`)
       return
     }
     await props.proxy.refreshSessions()
-    props.onNotice(`已分叉出新会话（到第 ${index + 1} 条消息为止）`)
+    toastOk(`已分叉出新会话（到第 ${index + 1} 条消息为止）`)
     props.onPick(result.path)
   }
 
@@ -264,7 +279,7 @@ export function Sidebar(props: {
   const reveal = (cwd: string): void => {
     setMenu(null)
     void dsc.openPath(cwd).then((problem) => {
-      if (problem !== '') props.onNotice(`打开失败：${problem}`)
+      if (problem !== '') toastErr(`打开失败：${problem}`)
     })
   }
 
@@ -291,7 +306,8 @@ export function Sidebar(props: {
     }
     if (kind === 'session' && event.ctrlKey && event.shiftKey && lower === 'a') {
       event.preventDefault()
-      void run(props.proxy.archiveSessions([key.slice(2)]))
+      const target = props.sessions.find((session) => session.id === key.slice(2))
+      archiveWithConfirm([key.slice(2)], `归档会话「${target?.title ?? '未命名会话'}」？`, ARCHIVE_DETAIL_ONE)
     }
   }
 
@@ -521,7 +537,11 @@ export function Sidebar(props: {
                       data-tip="归档这个工作区的全部会话"
                       onClick={(event) => {
                         event.stopPropagation()
-                        void run(props.proxy.archiveSessions(sessions.map((session) => session.id)))
+                        archiveWithConfirm(
+                          sessions.map((session) => session.id),
+                          `归档这 ${sessions.length} 个会话？`,
+                          ARCHIVE_DETAIL_MANY,
+                        )
                       }}
                     >
                       <IconArchive size={13} />
@@ -563,7 +583,11 @@ export function Sidebar(props: {
                             className="menu-item danger"
                             onClick={() => {
                               setMenu(null)
-                              void run(props.proxy.archiveSessions(sessions.map((session) => session.id)))
+                              archiveWithConfirm(
+                                sessions.map((session) => session.id),
+                                `归档这 ${sessions.length} 个会话？`,
+                                ARCHIVE_DETAIL_MANY,
+                              )
                             }}
                           >
                             <IconArchive size={14} /> 归档这 {sessions.length} 个会话
@@ -631,7 +655,11 @@ export function Sidebar(props: {
                         data-tip="归档会话"
                         onClick={(event) => {
                           event.stopPropagation()
-                          void run(props.proxy.archiveSessions([session.id]))
+                          archiveWithConfirm(
+                            [session.id],
+                            `归档会话「${session.title ?? '新会话'}」？`,
+                            ARCHIVE_DETAIL_ONE,
+                          )
                         }}
                       >
                         <IconArchive size={13} />
@@ -674,7 +702,11 @@ export function Sidebar(props: {
                             className="menu-item danger"
                             onClick={() => {
                               setMenu(null)
-                              void run(props.proxy.archiveSessions([session.id]))
+                              archiveWithConfirm(
+                                [session.id],
+                                `归档会话「${session.title ?? '新会话'}」？`,
+                                ARCHIVE_DETAIL_ONE,
+                              )
                             }}
                           >
                             <IconArchive size={14} /> 归档会话 <span className="menu-key">Ctrl+Shift+A</span>

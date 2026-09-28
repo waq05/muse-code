@@ -2,36 +2,21 @@
  * 归档会话管理（设置 → 归档）：按工作区分组列出已归档会话，支持恢复与永久删除。
  *
  * 归档件住在 `~/.dsc/sessions/.archived/<工作区目录>/<uuid>.jsonl`；点「永久删除」
- * 是把它移进 `~/.dsc/.trash/`，保留 30 天后由宿主自动清空，所以这里没有「立刻抹掉」。
+ * 会先弹确认框（components/confirm.ts），确认后把文件移进 `~/.dsc/.trash/`，
+ * 保留 30 天后由宿主自动清空，所以这里没有「立刻抹掉」。操作回执走全局 Toast。
  *
  * @module desktop/renderer/ArchivedView
  */
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useEffect, useMemo, useState, type JSX } from 'react'
 import type { ArchivedPage, ArchivedSessionView, SettingsMutation } from '@dsc/runtime/contract.js'
+import { confirmAction } from './components/confirm.js'
+import { toastErr, toastOk } from './components/toast.js'
 import { dsc, type RuntimeProxy } from './bridge.js'
 import { IconArchive, IconRefresh, IconRestart, IconTrash } from './icons.js'
-
-/** 面板内反馈：成功一句话自动消失，失败留着直到下次操作。 */
-interface Note {
-  kind: 'ok' | 'error'
-  text: string
-}
 
 export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
   const [page, setPage] = useState<ArchivedPage | null>(null)
   const [loadError, setLoadError] = useState('')
-  const [note, setNote] = useState<Note | null>(null)
-  /** 等待二次确认的会话路径（点一次「永久删除」先变成「确认删除」）。 */
-  const [confirm, setConfirm] = useState<string | null>(null)
-  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const show = (next: Note | null): void => {
-    setNote(next)
-    if (noteTimer.current !== null) clearTimeout(noteTimer.current)
-    if (next !== null && next.kind === 'ok') {
-      noteTimer.current = setTimeout(() => setNote(null), 5000)
-    }
-  }
 
   const reload = (): void => {
     void props.proxy
@@ -44,18 +29,18 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
   }
   useEffect(reload, [])
 
-  /** 执行一次归档区操作，成功后重取列表（文件已被挪走）。 */
-  const write = (task: Promise<SettingsMutation>): void => {
+  /** 执行一次归档区操作，成功 Toast 回执并重取列表（文件已被挪走）。 */
+  const write = (task: Promise<SettingsMutation>, fallbackNotice: string): void => {
     void task
       .then((result) => {
         if (!result.ok) {
-          show({ kind: 'error', text: result.error })
+          toastErr(`没做成：${result.error}`)
           return
         }
-        show(result.notice === undefined ? null : { kind: 'ok', text: result.notice })
+        toastOk(result.notice ?? fallbackNotice)
         reload()
       })
-      .catch((error: unknown) => show({ kind: 'error', text: text(error) }))
+      .catch((error: unknown) => toastErr(`没做成：${text(error)}`))
   }
 
   const groups = useMemo(() => groupByWorkspace(page?.items ?? []), [page])
@@ -66,8 +51,6 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
 
   return (
     <div className="settings-fields archived">
-      {note !== null && <div className={`settings-note ${note.kind}`}>{note.text}</div>}
-
       <div className="arch-head">
         <span>
           已归档会话 <span className="count">{page.items.length}</span> 个
@@ -94,7 +77,12 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
             <button
               className="text-btn"
               data-tip={`恢复这个工作区里的 ${group.items.length} 个会话`}
-              onClick={() => write(props.proxy.restoreSessions(group.items.map((item) => item.path)))}
+              onClick={() =>
+                write(
+                  props.proxy.restoreSessions(group.items.map((item) => item.path)),
+                  `已恢复这个工作区的 ${group.items.length} 个会话`,
+                )
+              }
             >
               <IconRestart size={13} /> 全部恢复
             </button>
@@ -109,32 +97,28 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
                 <button
                   className="text-btn"
                   data-tip="放回会话列表（回到原来的工作区）"
-                  onClick={() => {
-                    setConfirm(null)
-                    write(props.proxy.restoreSessions([item.path]))
-                  }}
+                  onClick={() => write(props.proxy.restoreSessions([item.path]), '已恢复到会话列表')}
                 >
                   <IconRestart size={13} /> 恢复
                 </button>
-                {confirm === item.path ? (
-                  <button
-                    className="text-btn danger"
-                    onClick={() => {
-                      setConfirm(null)
-                      write(props.proxy.purgeSessions([item.path]))
-                    }}
-                  >
-                    确认永久删除
-                  </button>
-                ) : (
-                  <button
-                    className="text-btn danger"
-                    data-tip="移进回收站，30 天后自动清空"
-                    onClick={() => setConfirm(item.path)}
-                  >
-                    <IconTrash size={13} /> 永久删除
-                  </button>
-                )}
+                {/* 不可逆操作先弹确认框说清后果，点了确认才移进回收站（主按钮走红色危险档）。 */}
+                <button
+                  className="text-btn danger"
+                  data-tip="移进回收站，30 天后自动清空"
+                  onClick={() => {
+                    const trash = page.trashDir
+                    void confirmAction({
+                      title: `永久删除会话「${item.title ?? '未命名会话'}」？`,
+                      detail: `这会把它从归档区移进回收站（${trash}），回收站的文件保留 30 天后自动清空，清空后无法找回。`,
+                      confirmLabel: '永久删除',
+                      danger: true,
+                    }).then((yes) => {
+                      if (yes) write(props.proxy.purgeSessions([item.path]), '已移进回收站')
+                    })
+                  }}
+                >
+                  <IconTrash size={13} /> 永久删除
+                </button>
               </span>
             </div>
           ))}
@@ -151,7 +135,7 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
           data-tip="在文件管理器里打开回收站"
           onClick={() => {
             void dsc.openPath(page.trashDir).then((problem) => {
-              if (problem !== '') show({ kind: 'error', text: `打开失败：${problem}` })
+              if (problem !== '') toastErr(`打开失败：${problem}`)
             })
           }}
         >

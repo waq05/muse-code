@@ -28,6 +28,8 @@ import type {
 } from '@dsc/runtime/contract.js'
 import { dsc, type RuntimeProxy } from './bridge.js'
 import { ArchivedView } from './ArchivedView.js'
+import { confirmAction } from './components/confirm.js'
+import { toastErr, toastOk } from './components/toast.js'
 import { SkillsView } from './SkillsView.js'
 import {
   IconArchive,
@@ -50,12 +52,6 @@ function sectionIcon(id: string): JSX.Element {
   if (id === 'archive') return <IconArchive size={size} />
   if (id === 'about') return <IconInfo size={size} />
   return <IconGear size={size} />
-}
-
-/** 面板内的操作反馈（成功一句话 / 失败原因），不用全局提示条。 */
-interface Note {
-  kind: 'ok' | 'error'
-  text: string
 }
 
 export function SettingsModal(props: {
@@ -164,7 +160,7 @@ export function SettingsModal(props: {
   )
 }
 
-/** 把声明的控件画出来，改动即时写回宿主；失败原因留在出错的分区面板里。 */
+/** 把声明的控件画出来，改动即时写回宿主；成功回执与失败原因都走全局 Toast。 */
 function GenericFields(props: {
   section: SettingsSectionView
   proxy: RuntimeProxy
@@ -173,23 +169,13 @@ function GenericFields(props: {
 }): JSX.Element {
   const [values, setValues] = useState<SettingsValues>({})
   const [draft, setDraft] = useState<Record<string, string>>({})
-  const [note, setNote] = useState<Note | null>(null)
-  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const show = (next: Note | null): void => {
-    setNote(next)
-    if (noteTimer.current !== null) clearTimeout(noteTimer.current)
-    if (next !== null && next.kind === 'ok') {
-      noteTimer.current = setTimeout(() => setNote(null), 5000)
-    }
-  }
 
   useEffect(() => {
     setDraft({})
     void props.proxy
       .getSectionValues(props.section.id)
       .then(setValues)
-      .catch((error: unknown) => show({ kind: 'error', text: String(error instanceof Error ? error.message : error) }))
+      .catch((error: unknown) => toastErr(`读取设置失败：${text(error)}`))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.section.id])
 
@@ -198,21 +184,21 @@ function GenericFields(props: {
       .setSettingValue(props.section.id, key, value)
       .then((result) => {
         if (!result.ok) {
-          show({ kind: 'error', text: result.error })
+          toastErr(`没改成：${result.error}`)
           return
         }
-        show(result.notice === undefined ? null : { kind: 'ok', text: result.notice })
+        if (result.notice !== undefined) toastOk(result.notice)
         // 值可能被宿主改写（例如非法值被夹取），回读一次
         void props.proxy.getSectionValues(props.section.id).then(setValues).catch(() => {})
       })
-      .catch((error: unknown) => show({ kind: 'error', text: String(error instanceof Error ? error.message : error) }))
+      .catch((error: unknown) => toastErr(`没改成：${text(error)}`))
   }
 
   const act = (action: string): void => {
     void props.proxy
       .runSettingAction(props.section.id, action)
-      .then((result) => apply(result, show))
-      .catch((error: unknown) => show({ kind: 'error', text: String(error instanceof Error ? error.message : error) }))
+      .then((result) => apply(result))
+      .catch((error: unknown) => toastErr(`操作失败：${text(error)}`))
   }
 
   const render = (field: SettingsField, index: number): JSX.Element => {
@@ -228,8 +214,8 @@ function GenericFields(props: {
                   className="text-btn"
                   onClick={() => {
                     void navigator.clipboard.writeText(field.text).then(
-                      () => show({ kind: 'ok', text: '已复制' }),
-                      () => show({ kind: 'error', text: '复制失败，请手动选中' }),
+                      () => toastOk('已复制'),
+                      () => toastErr('复制失败，请手动选中'),
                     )
                   }}
                 >
@@ -240,7 +226,7 @@ function GenericFields(props: {
                   data-tip="在文件管理器里打开"
                   onClick={() => {
                     void dsc.openPath(field.text).then((problem) => {
-                      if (problem !== '') show({ kind: 'error', text: `打开失败：${problem}` })
+                      if (problem !== '') toastErr(`打开失败：${problem}`)
                     })
                   }}
                 >
@@ -341,7 +327,6 @@ function GenericFields(props: {
 
   return (
     <div className="settings-fields">
-      {note !== null && <div className={`settings-note ${note.kind}`}>{note.text}</div>}
       {props.section.fields.length === 0 && (
         <div className="settings-empty">这个分区没有可配置的项。</div>
       )}
@@ -440,13 +425,18 @@ function Segments<T extends string>(props: {
   )
 }
 
-/** 结果 → 反馈：失败保住当前数据，只说清原因。 */
-function apply(result: SettingsMutation, show: (note: Note | null) => void): void {
+/** 结果 → Toast 回执：失败说清原因，成功有回执就报一句。 */
+function apply(result: SettingsMutation): void {
   if (!result.ok) {
-    show({ kind: 'error', text: result.error })
+    toastErr(`没做成：${result.error}`)
     return
   }
-  show(result.notice === undefined ? null : { kind: 'ok', text: result.notice })
+  if (result.notice !== undefined) toastOk(result.notice)
+}
+
+/** 把抛出来的东西压成一句话。 */
+function text(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 /** 模型分区：端点增删改、API key 写入、默认模型。 */
@@ -455,36 +445,36 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
   const [draft, setDraft] = useState<ProviderDraft | null>(null)
   const [keyFor, setKeyFor] = useState<ProviderView | null>(null)
   const [keyValue, setKeyValue] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState('')
-  const [note, setNote] = useState<Note | null>(null)
 
-  const show = (next: Note | null): void => setNote(next)
+  /** 拉一次模型配置；失败说清原因，保留上一次读到的数据。 */
   const reload = (): void => {
     void props.proxy
       .getModelConfig()
       .then(setConfig)
-      .catch((error: unknown) => show({ kind: 'error', text: String(error instanceof Error ? error.message : error) }))
+      .catch((error: unknown) => toastErr(`读取模型配置失败：${text(error)}`))
   }
   useEffect(reload, [])
 
   if (config === null) return <div className="settings-empty">正在读取模型配置…</div>
 
-  /** 写一次，结果留在面板里；成功后重取（配置文件可能已被外部改过）。 */
-  const write = (task: Promise<SettingsMutation>): void => {
+  /** 写一次，回执走 Toast；成功后重取（配置文件可能已被外部改过）。 */
+  const write = (task: Promise<SettingsMutation>, okText?: string): void => {
     task
       .then((result) => {
-        apply(result, show)
-        if (result.ok) reload()
+        if (!result.ok) {
+          toastErr(`没做成：${result.error}`)
+          return
+        }
+        toastOk(result.notice ?? okText ?? '已保存')
+        reload()
       })
-      .catch((error: unknown) => show({ kind: 'error', text: String(error instanceof Error ? error.message : error) }))
+      .catch((error: unknown) => toastErr(`没做成：${text(error)}`))
   }
 
   const defaultProvider = config.providers.find((entry) => entry.name === config.defaultProvider)
 
   return (
     <div className="settings-fields models">
-      {note !== null && <div className={`settings-note ${note.kind}`}>{note.text}</div>}
-
       <div className="setting-row">
         <div className="setting-label">默认模型</div>
         <div className="setting-control">
@@ -582,31 +572,32 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                     baseUrl: provider.baseUrl,
                     models: provider.models,
                   })
-                  setNote(null)
                 }}
               >
                 <IconEdit size={13} /> 编辑
               </button>
-              {confirmDelete === provider.name ? (
-                <button
+              {/* 删端点是破坏性操作：先弹确认框说清后果（含默认端点改指），确认后才写。 */}
+              <button
                 className="text-btn danger"
+                data-tip="删除这个端点"
                 onClick={() => {
-                  write(props.proxy.removeProvider(provider.name))
-                  setConfirmDelete('')
-                  setDraft(null)
+                  const isDefault = config.defaultProvider === provider.name
+                  void confirmAction({
+                    title: `删除端点「${provider.displayName || provider.name}」？`,
+                    detail:
+                      `这会从 ${config.configFile} 删掉这个端点，用它的会话要到下次请求才发现用不了；` +
+                      `它的 API key 仍留在凭据库里，重加同名端点还能用。${isDefault ? '它是当前默认端点，删掉后默认会自动改指第一个可用端点。' : ''}`,
+                    confirmLabel: '删除端点',
+                    danger: true,
+                  }).then((yes) => {
+                    if (!yes) return
+                    write(props.proxy.removeProvider(provider.name), `已删除端点「${provider.displayName || provider.name}」`)
+                    if (draft !== null && draft.oldName === provider.name) setDraft(null)
+                  })
                 }}
               >
-                确认删除
+                <IconTrash size={13} /> 删除
               </button>
-              ) : (
-                <button
-                  className="text-btn danger"
-                  data-tip="删除这个端点"
-                  onClick={() => setConfirmDelete(provider.name)}
-                >
-                  <IconTrash size={13} /> 删除
-                </button>
-              )}
             </div>
           </div>
 
@@ -621,7 +612,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                 onChange={(event) => setKeyValue(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && keyValue.trim() !== '') {
-                    write(props.proxy.setProviderKey(provider.name, keyValue.trim()))
+                    write(props.proxy.setProviderKey(provider.name, keyValue.trim()), 'API key 已写进凭据库')
                     setKeyFor(null)
                   }
                 }}
@@ -630,7 +621,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                 className="btn-primary"
                 disabled={keyValue.trim() === ''}
                 onClick={() => {
-                  write(props.proxy.setProviderKey(provider.name, keyValue.trim()))
+                  write(props.proxy.setProviderKey(provider.name, keyValue.trim()), 'API key 已写进凭据库')
                   setKeyFor(null)
                 }}
               >
@@ -641,7 +632,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                   className="btn-ghost"
                   data-tip="从凭据库里删掉这个 key"
                   onClick={() => {
-                    write(props.proxy.setProviderKey(provider.name, null))
+                    write(props.proxy.setProviderKey(provider.name, null), 'API key 已从凭据库移除')
                     setKeyFor(null)
                   }}
                 >
@@ -682,11 +673,13 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
           onChange={setDraft}
           onCancel={() => setDraft(null)}
           onDone={(result) => {
-            apply(result, show)
-            if (result.ok) {
-              setDraft(null)
-              reload()
+            if (!result.ok) {
+              toastErr(`保存失败：${result.error}`)
+              return
             }
+            toastOk(result.notice ?? '端点已保存')
+            setDraft(null)
+            reload()
           }}
         />
       )}

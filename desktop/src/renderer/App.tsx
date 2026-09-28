@@ -4,9 +4,10 @@
  *
  * @module desktop/renderer/App
  */
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { useEffect, useMemo, useState, type JSX } from 'react'
 import type { ModelChoiceView, PluginInfoView, RuntimeSnapshot, TeammateView, TranscriptEntry, UiPrefsView } from '@dsc/runtime/contract.js'
 import { applyAppearance, saveCachedAppearance } from './appearance.js'
+import { toastErr, toastOk } from './components/toast.js'
 import { dsc, createRuntimeProxy, type RuntimeProxy } from './bridge.js'
 import { ApprovalCard } from './ApprovalCard.js'
 import { ChatView } from './ChatView.js'
@@ -27,7 +28,6 @@ export function App(): JSX.Element {
   const [cwd, setCwd] = useState('')
   const [hostDown, setHostDown] = useState<{ code: number | null } | null>(null)
   const [picker, setPicker] = useState(false)
-  const [notice, setNotice] = useState<string | null>(null)
   const [models, setModels] = useState<ModelChoiceView[]>([])
   const [plugins, setPlugins] = useState<PluginInfoView[]>([])
   const [tab, setTab] = useState<'chat' | 'trace'>('chat')
@@ -44,7 +44,6 @@ export function App(): JSX.Element {
     return Number.isFinite(saved) && saved >= 300 && saved <= 820 ? saved : 420
   })
   const proxy: RuntimeProxy = useMemo(createRuntimeProxy, [])
-  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 侧栏界面偏好（排序方式、工作区顺序与别名、外观三项），存在宿主的 ~/.dsc/settings.json
   const [uiPrefs, setUiPrefs] = useState<UiPrefsView>({ sessionSort: 'created', workspaceOrder: [], workspaceAliases: {}, themeMode: 'dark', fontSize: 'md', density: 'standard' })
   // 最近用过的工作目录：切过去但还没发过消息的工作区也要能在侧栏看到
@@ -79,11 +78,7 @@ export function App(): JSX.Element {
     saveCachedAppearance(appearance)
   }, [uiPrefs.themeMode, uiPrefs.fontSize, uiPrefs.density])
 
-  const showNotice = (text: string): void => {
-    setNotice(text)
-    if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
-    noticeTimer.current = setTimeout(() => setNotice(null), 6000)
-  }
+  // 一次性反馈统一走右下角 Toast（components/toast.ts），这里不再有输入区上方的提示条。
 
   // demo 模式（?demo=1，自动化验证用）：切到可用端点并自动发起一轮真实对话
   const demo = new URLSearchParams(location.search).has('demo')
@@ -170,20 +165,20 @@ export function App(): JSX.Element {
   const togglePlugin = (file: string, next: boolean): void => {
     setPlugins((current) => current.map((p) => (p.file === file ? { ...p, enabled: next } : p)))
     proxy.setPluginEnabled(file, next)
-    showNotice(`已${next ? '启用' : '停用'}插件 ${file}（即时生效）`)
+    toastOk(`已${next ? '启用' : '停用'}插件 ${file}（即时生效）`)
     // 热挂载的结果（成功/回滚）随 system 条目与下一次清单刷新回来
     setTimeout(refreshPlugins, 600)
   }
   const installPlugin = (): void => {
     void dsc.installPlugin().then((installed) => {
       if (installed.length === 0) return
-      showNotice(`已安装 ${installed.join('、')}（即时生效）`)
+      toastOk(`已安装 ${installed.join('、')}（即时生效）`)
       setTimeout(refreshPlugins, 600)
     })
   }
   const restartHost = (): void => {
     void dsc.restartHost().then(() => {
-      showNotice('宿主已重启')
+      toastOk('宿主已重启')
       refreshPlugins()
     })
   }
@@ -192,7 +187,7 @@ export function App(): JSX.Element {
   const switchCwd = (dir: string): void => {
     void dsc.switchCwd(dir).then((outcome) => {
       if (!outcome.ok) {
-        showNotice(`切不过去：${outcome.error}`)
+        toastErr(`切不过去：${outcome.error}`)
         return
       }
       setCwd(outcome.cwd)
@@ -200,7 +195,7 @@ export function App(): JSX.Element {
       setView('chat')
       // 宿主刚换过进程，会话清单要从新宿主重新读一遍
       void proxy.refreshSessions()
-      showNotice(`已切到 ${outcome.cwd}`)
+      toastOk(`已切到 ${outcome.cwd}`)
     })
   }
 
@@ -208,20 +203,19 @@ export function App(): JSX.Element {
   const saveUiPrefs = (patch: Partial<UiPrefsView>): void => {
     void proxy.setUiPrefs(patch).then((result) => {
       if (!result.ok) {
-        showNotice(`没改成：${result.error}`)
+        toastErr(`没改成：${result.error}`)
         return
       }
-      if (result.notice !== undefined) showNotice(result.notice)
+      if (result.notice !== undefined) toastOk(result.notice)
       void proxy.getUiPrefs().then(setUiPrefs)
     })
   }
 
   const handleSubmit = (text: string): void => {
-    setNotice(null)
     setTab('chat')
     if (text.startsWith('/')) {
       // / 命令统一派发到宿主命令注册表（内置 + 外部插件命令）；
-      // notice 反馈经 transcript 条目、openPicker 经 dsc:ui 事件回到本组件。
+      // 命令的反馈经 transcript 条目、openPicker 经 dsc:ui 事件回到本组件。
       void proxy.runCommand(text)
       return
     }
@@ -293,7 +287,6 @@ export function App(): JSX.Element {
         proxy={proxy}
         onSwitchCwd={switchCwd}
         onUiPrefs={saveUiPrefs}
-        onNotice={showNotice}
         onPeekTeammate={(mate) => {
           setView('chat')
           setTab('chat')
@@ -307,7 +300,6 @@ export function App(): JSX.Element {
           <>
             <PluginsView
               plugins={plugins}
-              notice={notice}
               onToggle={togglePlugin}
               onRefresh={refreshPlugins}
               onInstall={installPlugin}
@@ -358,7 +350,6 @@ export function App(): JSX.Element {
             )}
 
             <div className="composer-zone">
-              {notice !== null && <div className="notice">{notice}</div>}
               {snapshot.pendingApproval !== null && (
                 <ApprovalCard
                   request={snapshot.pendingApproval}

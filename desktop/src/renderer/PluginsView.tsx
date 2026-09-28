@@ -73,7 +73,6 @@ const KERNEL_PREVIEW = 3
 
 export function PluginsView(props: {
   plugins: PluginInfoView[]
-  notice: string | null
   onToggle(file: string, next: boolean): void
   onRefresh(): void
   onInstall(): void
@@ -108,7 +107,7 @@ export function PluginsView(props: {
           </div>
         </div>
 
-        {props.notice !== null && <div className="notice">{props.notice}</div>}
+        {/* 启停/安装/重启的回执统一走右下角 Toast（components/toast.ts） */}
 
         <div className="plugin-group-label">
           <IconPuzzle size={13} /> 自定义 <span className="count">{custom.length}</span>

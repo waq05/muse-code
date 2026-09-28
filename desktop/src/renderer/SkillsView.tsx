@@ -18,6 +18,7 @@ import type {
   SkillInfoView,
 } from '@dsc/runtime/contract.js'
 import { dsc, type RuntimeProxy } from './bridge.js'
+import { toastErr, toastOk } from './components/toast.js'
 import { IconBolt, IconFolder, IconPlus, IconRefresh, IconSearch, IconStore } from './icons.js'
 
 /** 来源徽章（用户主目录最常见，不显示；其余说明技能从哪来）。 */
@@ -26,12 +27,6 @@ const SOURCE_LABELS: Record<string, string> = {
   'project-agents': '本项目 .agents/skills',
   custom: '自定义目录',
   'user-dsc': '',
-}
-
-/** 面板内反馈：成功一句话自动消失，失败留着直到下次操作。 */
-interface Note {
-  kind: 'ok' | 'error'
-  text: string
 }
 
 export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): JSX.Element {
@@ -43,7 +38,6 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
   const [skillsError, setSkillsError] = useState('')
   const [query, setQuery] = useState('')
   const [detail, setDetail] = useState<SkillDetail | null>(null)
-  const [note, setNote] = useState<Note | null>(null)
   const [market, setMarket] = useState<MarketBrowseResult | null>(null)
   const [marketSource, setMarketSource] = useState('')
   const [marketLoading, setMarketLoading] = useState(false)
@@ -51,7 +45,6 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
   const [sourcesEditing, setSourcesEditing] = useState(false)
   const [sourcesText, setSourcesText] = useState('')
 
-  const show = (next: Note | null): void => setNote(next)
   const embedded = props.embedded === true
 
   const reloadSkills = (): void => {
@@ -71,12 +64,13 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
       .then((result) => {
         setMarket(result)
         setMarketSource(result.source)
-        // 浏览失败同时是刷新失败：把原因挂在源上显示
-        if (result.error !== undefined) show({ kind: 'error', text: result.error })
-        else if (refresh) show({ kind: 'ok', text: `已从 ${result.source} 取回 ${result.items.length} 个技能` })
+        // 抓取失败的原因挂在面板里（带重试按钮）；手动刷新额外补一条 Toast 回执
+        if (result.error !== undefined) {
+          if (refresh) toastErr(`抓取失败：${result.error}`)
+        } else if (refresh) toastOk(`已从 ${result.source} 取回 ${result.items.length} 个技能`)
         else maybeAutoInstall()
       })
-      .catch((error: unknown) => show({ kind: 'error', text: text(error) }))
+      .catch((error: unknown) => toastErr(`抓取失败：${text(error)}`))
       .finally(() => setMarketLoading(false))
   }
 
@@ -115,12 +109,12 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
     void props.proxy
       .setSkillEnabled(skill.name, next)
       .then((result) => {
-        if (!result.ok) show({ kind: 'error', text: result.error })
-        else show(result.notice === undefined ? null : { kind: 'ok', text: result.notice })
+        if (!result.ok) toastErr(`没改成：${result.error}`)
+        else if (result.notice !== undefined) toastOk(result.notice)
         reloadSkills()
       })
       .catch((error: unknown) => {
-        show({ kind: 'error', text: text(error) })
+        toastErr(`没改成：${text(error)}`)
         reloadSkills()
       })
   }
@@ -133,16 +127,16 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
     void props.proxy
       .readSkill(skill.name)
       .then((result) => {
-        if (!result.ok) show({ kind: 'error', text: result.error })
+        if (!result.ok) toastErr(`读不出正文：${result.error}`)
         else setDetail(result.skill)
       })
-      .catch((error: unknown) => show({ kind: 'error', text: text(error) }))
+      .catch((error: unknown) => toastErr(`读不出正文：${text(error)}`))
   }
 
   const importSkill = (): void => {
     void dsc.installSkill().then((names) => {
       if (names.length === 0) return
-      show({ kind: 'ok', text: `已导入 ${names.join('、')}` })
+      toastOk(`已导入 ${names.join('、')}`)
       reloadSkills()
     })
   }
@@ -152,9 +146,9 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
     void props.proxy
       .installMarketSkill(item.source, item.name)
       .then((result) => {
-        if (!result.ok) show({ kind: 'error', text: result.error })
+        if (!result.ok) toastErr(`安装失败：${result.error}`)
         else {
-          show({ kind: 'ok', text: result.notice ?? `已安装 ${item.name}` })
+          toastOk(result.notice ?? `已安装 ${item.name}`)
           reloadSkills()
           setMarket((current) =>
             current === null
@@ -168,7 +162,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
           )
         }
       })
-      .catch((error: unknown) => show({ kind: 'error', text: text(error) }))
+      .catch((error: unknown) => toastErr(`安装失败：${text(error)}`))
       .finally(() => setInstalling(''))
   }
 
@@ -186,10 +180,11 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
     void props.proxy
       .installMarketSkill(source, name)
       .then((result) => {
-        show(result.ok ? { kind: 'ok', text: result.notice ?? `已安装 ${name}` } : { kind: 'error', text: result.error })
+        if (result.ok) toastOk(result.notice ?? `已安装 ${name}`)
+        else toastErr(`安装失败：${result.error}`)
         reloadSkills()
       })
-      .catch((error: unknown) => show({ kind: 'error', text: text(error) }))
+      .catch((error: unknown) => toastErr(`安装失败：${text(error)}`))
       .finally(() => setInstalling(''))
   }
 
@@ -204,21 +199,21 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
       })
       .filter((source) => source.name !== '' && source.url !== '')
     if (sources.length === 0) {
-      show({ kind: 'error', text: '至少写一行：源名, 仓库地址' })
+      toastErr('至少写一行：源名, 仓库地址')
       return
     }
     void props.proxy
       .setMarketSources(sources)
       .then((result) => {
-        if (!result.ok) show({ kind: 'error', text: result.error })
+        if (!result.ok) toastErr(`没保存：${result.error}`)
         else {
-          show({ kind: 'ok', text: result.notice ?? '市场源已保存' })
+          toastOk(result.notice ?? '市场源已保存')
           setSourcesEditing(false)
           setMarket(null)
           browse(sources[0]?.name ?? '', false)
         }
       })
-      .catch((error: unknown) => show({ kind: 'error', text: text(error) }))
+      .catch((error: unknown) => toastErr(`没保存：${text(error)}`))
   }
 
   const installedNames = new Set(skills.map((skill) => skill.name))
@@ -263,7 +258,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
         </div>
       </div>
 
-      {note !== null && <div className={`settings-note ${note.kind}`}>{note.text}</div>}
+      {/* 操作回执走右下角 Toast；下面只留「扫描失败/抓取失败」这种常驻错误横幅。 */}
 
       {tab === 'installed' ? (
         <div className="skills-list">
@@ -305,7 +300,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
                         data-tip={skill.path}
                         onClick={() => {
                           void dsc.openPath(skill.path ?? '').then((problem) => {
-                            if (problem !== '') show({ kind: 'error', text: `打开失败：${problem}` })
+                            if (problem !== '') toastErr(`打开失败：${problem}`)
                           })
                         }}
                       >

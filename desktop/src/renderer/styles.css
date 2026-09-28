@@ -2789,6 +2789,8 @@ body.dock-resizing iframe {
   text-align: center;
 }
 
+/* 面板内常驻错误横幅（技能扫描失败、市场抓取失败带重试）。
+ * 一次性回执已统一走右下角 Toast，这里只剩「错误一直在」的常驻态，故只留 error 档。 */
 .settings-note {
   align-items: center;
   border-radius: var(--dsc-r-block);
@@ -2798,11 +2800,6 @@ body.dock-resizing iframe {
   line-height: 1.5;
   margin-bottom: 14px;
   padding: 7px 10px;
-}
-
-.settings-note.ok {
-  background: color-mix(in srgb, var(--dsc-green) 12%, transparent);
-  color: var(--dsc-green);
 }
 
 .settings-note.error {

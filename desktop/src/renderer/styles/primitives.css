@@ -676,6 +676,37 @@ textarea.ctl {
   width: min(var(--card-w, 32rem), calc(100vw - 32px));
 }
 
+/* 确认框的内部结构：标题 + 一句后果说明 + 右对齐按钮行。
+ * 行为在 components/confirm.ts，这里只有皮；卡片宽度由调用方压到 24rem。 */
+.dsc-confirm .dsc-overlay__card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+}
+
+.dsc-confirm__title {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-ui-lg);
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.dsc-confirm__detail {
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.55;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.dsc-confirm__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 /* ══════════════════ 悬浮提示 ══════════════════
  * 替掉原来 71 处原生 title=：原生提示由系统绘制，还要等 500ms，颜色跟主题脱节。
  *
@@ -808,11 +839,52 @@ textarea.ctl {
   padding: 8px 12px;
   pointer-events: auto;
 }
+.dsc-toast > svg {
+  flex: none;
+  height: 14px;
+  width: 14px;
+}
 .dsc-toast[data-tone='danger'] {
   border-color: color-mix(in srgb, var(--dsc-red) 40%, transparent);
 }
 .dsc-toast[data-tone='success'] {
   border-color: color-mix(in srgb, var(--dsc-green) 40%, transparent);
+}
+.dsc-toast[data-tone='success'] svg {
+  color: var(--dsc-green);
+}
+.dsc-toast[data-tone='danger'] svg {
+  color: var(--dsc-red);
+}
+.dsc-toast__text {
+  overflow-wrap: anywhere;
+}
+/* 失败那条带关闭按钮：命中区 26×26，不靠图标本身的大小。 */
+.dsc-toast__close {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  height: 26px;
+  justify-content: center;
+  margin: -4px -6px -4px 0;
+  padding: 0;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+  width: 26px;
+}
+.dsc-toast__close:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+.dsc-toast__close svg {
+  height: 12px;
+  width: 12px;
 }
 @keyframes dsc-toast-in {
   from {
