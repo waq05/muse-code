@@ -1,7 +1,7 @@
 /**
  * dsc 外部插件：Computer Use——让模型「看到并操作」这台 Windows 桌面。
  *
- * 能力（单工具 computer，action 分发；对齐 Claude/zcode 的 computer-use 形态）：
+ * 能力（单工具 computer_demo，action 分发；对齐 Claude/zcode 的 computer-use 形态）：
  *   screenshot   全屏截图（返回图像，模型据此定位坐标；需要支持视觉的模型）
  *   click        移动鼠标并单击/双击/右键（坐标 = 截图像素坐标）
  *   type         输入文本（经剪贴板粘贴；会覆盖当前剪贴板内容）
@@ -14,8 +14,13 @@
  * 坐标系 = 虚拟屏幕物理像素（进程内 SetProcessDPIAware，与截图 1:1）。
  *
  * 安装：复制到 ~/.dsc/plugins/，宿主热挂载。apiVersion 1。
+ *
+ * 注意：新版 dsc 已经把这套能力做成了随包的官方插件「电脑操作」（插件中心里默认关，
+ * 打开就多出 computer / computer_look 两个工具，并带应用白名单、危险键拦截、
+ * 每轮动作上限这些护栏）。这份示例留着是给人看「外部插件怎么写」的参考，
+ * 所以工具改叫 computer_demo——跟内置的那个同名会撞车。
  */
-export const name = 'Computer Use'
+export const name = 'Computer Use（示例）'
 export const description = '桌面操控：截图/点击/输入/滚动/按键/窗口列表（Windows）'
 export const apiVersion = 1
 export const inject = ['tools']
@@ -107,7 +112,7 @@ const ACTIONS = ['screenshot', 'click', 'type', 'key', 'scroll', 'cursor', 'wind
 
 export function apply(ctx) {
   const off = ctx.tools.register({
-    name: 'computer',
+    name: 'computer_demo',
     description:
       '操控这台 Windows 电脑：截屏查看（screenshot，返回图像，需视觉模型）、点击（click，坐标为截图像素坐标）、' +
       '输入文本（type，经剪贴板粘贴）、按键（key，如 enter / ctrl+s）、滚动（scroll）、查询鼠标（cursor）、' +
