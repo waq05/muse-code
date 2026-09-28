@@ -15,19 +15,6 @@ const STATUS_TEXT: Record<ToolCallView['status'], string> = {
 
 const ARG_PREVIEW_LIMIT = 120
 
-/**
- * 宿主 loop.ts:204 拒绝时写死的回执文案。会话从磁盘重开时看不到拒绝状态——
- * session.ts:183 落盘不存 error 字段，重放（transcript.ts:105）会把这类工具当成
- * 「完成」——所以这里用同一句话反推。宿主把 status 持久化进日志后可删这段。
- */
-const REJECTED_RESULT = '用户拒绝了这次工具调用。'
-
-/** 卡片该显示的状态：直播流里宿主直接给 'rejected'；重开旧会话靠结果文案兜底。 */
-function displayStatus(call: ToolCallView): ToolCallView['status'] {
-  if (call.status === 'done' && call.resultText === REJECTED_RESULT) return 'rejected'
-  return call.status
-}
-
 function prettyArgs(argsText: string): string {
   try {
     return JSON.stringify(JSON.parse(argsText), null, 2)
@@ -37,7 +24,7 @@ function prettyArgs(argsText: string): string {
 }
 
 export function ToolCard({ call, defaultOpen = false }: { call: ToolCallView; defaultOpen?: boolean }): JSX.Element {
-  const status = displayStatus(call)
+  const status = call.status
   const [open, setOpen] = useState(defaultOpen || status === 'running')
   const preview = call.argsText.replace(/\s+/g, ' ').slice(0, ARG_PREVIEW_LIMIT)
 

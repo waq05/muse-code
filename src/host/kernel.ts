@@ -181,7 +181,7 @@ export function emitStartupNotes(
   if (root.session.startupNote !== null) root.transcript.system(root.session.startupNote)
   if (root.session.resumedStartup) {
     // 启动恢复了历史会话：重放历史到条目（与 dsc/session-open 的行为一致）
-    root.transcript.replayHistory(root.session.current().messages)
+    root.transcript.replayHistory(root.session.current().messages, root.session.current().toolErrors)
   }
   root.transcript.system(
     `会话 ${root.session.current().meta.id.slice(0, 8)} · 模型 ${root.llm.provider}/${root.llm.model}`,

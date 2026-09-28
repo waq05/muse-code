@@ -206,9 +206,13 @@ export const myPlugin: Plugin.Object = {
 meta     { cwd, createdAt, ... }        第一行，重写时保留
 user     { text }
 assistant{ text, reasoning, toolCalls? }
-tool     { callId, name, text, images?, error? }
+tool     { callId, name, text, images?, error? }   error = rejected | tool-error
 summary  { text }                       压缩产生的摘要
 ```
+
+`tool` 的 `error` 只影响界面（工具卡显示「已拒绝」还是「完成」），不进 OpenAI 协议消息，
+所以它存在 jsonl 里、由 `Session.toolErrors` 在重放时单独递给 transcript；
+早于这个字段的老日志没有它，读的时候按固定拒绝文案补判一次（`src/core/session.ts` 的 `REJECTED_TOOL_TEXT`）。
 
 **内核事件**（`src/core/loop.ts` 发出，`src/adapter/transcript.ts` 折叠成快照）：
 `user` / `turn/start` / `turn/end{completed|aborted|error}` / `error` /

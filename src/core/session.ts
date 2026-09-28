@@ -30,6 +30,16 @@ type SessionRecord =
   | { type: 'tool'; callId: string; name: string; text: string; images?: string[]; error?: string }
   | { type: 'summary'; text: string }
 
+/**
+ * 用户拒绝某次工具调用时，写进那条工具结果的固定回执文案（由 loop 的拒绝分支产出）。
+ * 2026-02 之前的日志没有单独记 `error` 字段，{@link Session.load} 靠这句话把
+ * 「已拒绝」的状态补回来；之后的日志直接读 `error`，这句话只用来兜老数据。
+ */
+export const REJECTED_TOOL_TEXT = '用户拒绝了这次工具调用。'
+
+/** 工具结果的异常标记：`rejected` = 用户拒绝，`tool-error` = 工具执行报错（loop 写入）。 */
+const REJECTED_TOOL_ERROR = 'rejected'
+
 /** 压缩 cwd 为目录名：`C:\Users\waq` → `C-Users-waq`。 */
 export function slugCwd(cwd: string): string {
   return cwd.replace(/[\\/:]+/g, '-')
@@ -49,6 +59,12 @@ export class Session {
   private stream: ReturnType<typeof createWriteStream> | null = null
   /** meta 首行是否已经写进磁盘。 */
   private metaWritten: boolean
+  /**
+   * 工具调用的异常标记（callId → `rejected` / `tool-error`）。
+   * OpenAI 协议里没有这个概念，所以它不挂在 `messages` 上（否则会被发进请求体），
+   * 只在 jsonl 的 tool 记录里存一份，重放历史时单独交给 transcript 决定卡片状态。
+   */
+  readonly toolErrors = new Map<string, string>()
 
   private constructor(meta: SessionMeta, file: string, initialMessages: ChatMessage[] = [], restored = false) {
     this.meta = meta
@@ -76,6 +92,7 @@ export class Session {
     const lines = readFileSync(file, 'utf8').split(/\r?\n/).filter((line) => line !== '')
     let meta: SessionMeta | undefined
     const messages: ChatMessage[] = []
+    const toolErrors = new Map<string, string>()
     for (const line of lines) {
       let record: SessionRecord
       try {
@@ -116,6 +133,9 @@ export class Session {
                 ]
               : record.text
           messages.push({ role: 'tool', content, tool_call_id: record.callId })
+          // 状态取自 error 字段；早于该字段的老日志按固定回执文案把「已拒绝」补回来
+          const error = record.error ?? (record.text === REJECTED_TOOL_TEXT ? REJECTED_TOOL_ERROR : undefined)
+          if (error !== undefined) toolErrors.set(record.callId, error)
           break
         }
         case 'summary':
@@ -124,12 +144,14 @@ export class Session {
       }
     }
     if (meta === undefined) throw new Error(`会话文件缺少 meta 行：${file}`)
-    return new Session(
+    const session = new Session(
       meta,
       keepPath ? file : join(sessionsRoot(), slugCwd(meta.cwd), `${meta.id}.jsonl`),
       messages,
       true,
     )
+    for (const [callId, error] of toolErrors) session.toolErrors.set(callId, error)
+    return session
   }
 
   appendUser(text: string): void {
@@ -163,6 +185,8 @@ export class Session {
   /**
    * 追加工具结果。output 为对象时支持附带图像（data URL），消息以多模态
    * content 数组落库（需端点支持视觉；JSONL 记录 text + images 两字段）。
+   * error 是展示状态标记（`rejected` / `tool-error`），随 jsonl 一起落盘，
+   * 但不进协议消息——重放历史时由 {@link Session.toolErrors} 提供给界面。
    */
   appendTool(
     callId: string,
@@ -180,7 +204,15 @@ export class Session {
           ]
         : text
     this.messages.push({ role: 'tool', content, tool_call_id: callId })
-    this.write({ type: 'tool', callId, name, text, ...(images !== undefined && images.length > 0 ? { images } : {}) })
+    if (error !== undefined) this.toolErrors.set(callId, error)
+    this.write({
+      type: 'tool',
+      callId,
+      name,
+      text,
+      ...(images !== undefined && images.length > 0 ? { images } : {}),
+      ...(error !== undefined ? { error } : {}),
+    })
   }
 
   /** 压缩落库：替换内存历史并写 summary 标记（磁盘历史保留原文，重放时同样被折叠）。 */

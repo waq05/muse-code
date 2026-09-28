@@ -467,7 +467,7 @@ ${body}
         // 只读：载入内存重放，不往那个文件写任何东西
         const session = Session.load(resolved, true)
         const replay = new Transcript()
-        replay.replayHistory(session.messages)
+        replay.replayHistory(session.messages, session.toolErrors)
         return [...replay.entries, ...replay.liveEntries()]
       },
     })

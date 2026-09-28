@@ -208,8 +208,12 @@ export interface TranscriptService {
   emit(event: CoreEvent): void
   /** 追加一条 system 条目。 */
   system(text: string): void
-  /** 恢复会话时把历史消息重放为条目（启动恢复/session-open 场景）。 */
-  replayHistory(messages: readonly ChatMessage[]): boolean
+  /**
+   * 恢复会话时把历史消息重放为条目（启动恢复/session-open 场景）。
+   * @param toolErrors 会话日志记的工具异常标记（`Session.toolErrors`），
+   *                   决定了重放出来的工具卡是「已拒绝」「失败」还是「完成」。
+   */
+  replayHistory(messages: readonly ChatMessage[], toolErrors?: ReadonlyMap<string, string>): boolean
   subscribe(listener: () => void): () => void
   getSnapshot(): RuntimeSnapshot
   /** 手动失效快照缓存并通知订阅者。 */

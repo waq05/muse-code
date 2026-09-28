@@ -37,7 +37,7 @@ export const transcriptPlugin: Plugin.Object = {
       transcript.clear()
       if (filePath !== undefined) {
         // 恢复会话：历史消息重放进条目（桌面端/TUI 点历史会话要能回看内容）
-        transcript.replayHistory(ctx.session.current().messages)
+        transcript.replayHistory(ctx.session.current().messages, ctx.session.current().toolErrors)
         transcript.system(`已恢复会话 ${ctx.session.current().meta.id.slice(0, 8)}`)
       } else {
         transcript.system(
@@ -55,8 +55,8 @@ export const transcriptPlugin: Plugin.Object = {
         transcript.system(text)
         invalidate()
       },
-      replayHistory(messages) {
-        const changed = transcript.replayHistory(messages)
+      replayHistory(messages, toolErrors) {
+        const changed = transcript.replayHistory(messages, toolErrors)
         if (changed) invalidate()
         return changed
       },

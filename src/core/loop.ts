@@ -16,6 +16,7 @@ import type { ChatMessage, StreamResult, ToolSchema } from './llm.js'
 import { LlmError, streamChat } from './llm.js'
 import type { CoreEvent } from './events.js'
 import type { Session } from './session.js'
+import { REJECTED_TOOL_TEXT } from './session.js'
 import type { ApprovalHandler } from './approval.js'
 import type { ToolEntry } from './tools.js'
 
@@ -201,9 +202,8 @@ export class MiniAgent {
             signal,
           )
           if (decision === 'reject') {
-            const text = '用户拒绝了这次工具调用。'
-            this.session.appendTool(call.id, call.name, text, 'rejected')
-            this.deps.emit({ type: 'tool/result', callId: call.id, text, error: 'rejected' })
+            this.session.appendTool(call.id, call.name, REJECTED_TOOL_TEXT, 'rejected')
+            this.deps.emit({ type: 'tool/result', callId: call.id, text: REJECTED_TOOL_TEXT, error: 'rejected' })
             continue
           }
         }

@@ -77,8 +77,10 @@ export class Transcript {
   /**
    * 恢复会话时把历史消息折叠为条目（合成为事件流走 reduce，复用配对逻辑）。
    * usage 不重放（历史 token 已计入模型侧缓存，快照从 0 起算当前会话增量）。
+   * @param toolErrors 日志里记下的工具异常标记（callId → `rejected` / `tool-error`）。
+   *                   OpenAI 协议消息不带这个信息，缺省时工具一律折成「完成」。
    */
-  replayHistory(messages: readonly ChatMessage[]): boolean {
+  replayHistory(messages: readonly ChatMessage[], toolErrors?: ReadonlyMap<string, string>): boolean {
     let changed = false
     for (const message of messages) {
       switch (message.role) {
@@ -102,14 +104,18 @@ export class Transcript {
               }) || changed
           }
           break
-        case 'tool':
+        case 'tool': {
+          const callId = message.tool_call_id ?? ''
+          const error = toolErrors?.get(callId)
           changed =
             this.reduce({
               type: 'tool/result',
-              callId: message.tool_call_id ?? '',
+              callId,
               text: contentText(message.content),
+              ...(error !== undefined ? { error } : {}),
             }) || changed
           break
+        }
       }
     }
     // 工具卡配对完成后不留在执行态（reduce 的 tool/call 会置 working）
