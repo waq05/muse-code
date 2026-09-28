@@ -62,7 +62,7 @@ dsc config show              # 查看当前生效的端点/模型/key 来源（�
 
 ```
 bin/dsc.js          启动器（零依赖）：--resume / config 子命令 → spawn node lib/boot.js
-src/boot.ts         进程入口：迁移检查 → 读配置 → createCoreRuntime → render(<App/>)
+src/boot.ts         进程入口：迁移检查 → 读配置 → createKernel()（cordis 装配）→ 装 UI 插件
 src/tools/config-cli.ts  dsc config migrate|show
 src/core/           自研引擎（零 UI 依赖、零 dsh 依赖）
   config.ts         读 ~/.dsc/config.yaml + key 来源链（env→dsc 凭据→dsh 回退）
@@ -75,17 +75,19 @@ src/core/           自研引擎（零 UI 依赖、零 dsh 依赖）
   compact.ts        保头折尾摘要压缩                             ↔ dsh-compaction
 src/adapter/        core 事件 → 快照投影（transcript 折叠 + core-runtime）
 src/contract.ts     UI ⇄ 运行时 的中性契约（DscRuntime）
+src/host/kernel.ts  内核装配顺序 + 三档插件清单（运行内核 / 官方可开关 / 自定义）
+src/plugins/        每个服务一个 cordis 插件（含两个默认关的官方插件：子智能体团队、电脑操作）
 src/app/            ink UI（App/ChatView/Composer/ToolCard/ApprovalCard/SessionPicker/StatusBar）
-src/commands.ts     斜杠命令（补全元数据、模型候选匹配、唯一前缀展开）
+desktop/            Electron 桌面端：主进程 + 独立运行时子进程 + React renderer
 scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scripts/composer-test.mjs，16 项断言）
 ```
 
-与 dsh 的取舍：复用其**设计**（turn 语义、事件流、审批分级、JSONL 落盘、压缩），不复用其**实现**（无沙箱、无子代理、无检查点修复、无投影/ignorable 事件语义——个人版不需要）。
+与 dsh 的取舍：复用其**设计**（turn 语义、事件流、审批分级、JSONL 落盘、压缩），不复用其**实现**（无沙箱、无检查点修复、无投影事件语义——个人版不需要）。子代理与桌面操作这两个能力做成了**默认关掉的官方插件**，在插件中心里手动打开。
 
 ## 已知限制
 
 - 无沙箱：bash/写文件全权限，靠审批卡兜底，只在个人机器上用。
-- 插件无法注入自定义 UI（扩展面 = 工具 / 命令 / 事件）；外部插件没有独立配置段。
+- 插件能加工具、命令、事件监听、设置分区和技能来源，但拿不到 DOM：界面扩展只接受可 JSON 序列化的控件声明。
 - Windows 中文输入法可能拦截审批卡的 y/n 键（输入法切英文即可）。
 - 跨进程的路由状态（当前模型/思考强度）不落盘，重启宿主后回到配置默认值。
 
@@ -94,3 +96,11 @@ scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scrip
 外部插件 = 单个 ESM `.js` 文件放进 `~/.dsc/plugins/`，可注册工具、命令、监听事件，
 桌面端「插件」页可视化管理。完整 API 与开发规范见 **[docs/plugin-development.md](docs/plugin-development.md)**
 （面向 AI 编程助手编写，人类可直接跳到示例部分）；可运行示例见 `examples/plugins/ping.js`。
+
+## 文档
+
+| 文档 | 讲什么 |
+| --- | --- |
+| [docs/development.md](docs/development.md) | 开发手册：运行时结构、三条启动链路、进程间协议、`~/.dsc` 数据面、扩展点清单、自检与打包、代码约定、排错与关键数值 |
+| [docs/development-log.md](docs/development-log.md) | 开发记录：九个阶段各自引入了什么、决策台账、真 bug 台账、还欠什么 |
+| [docs/plugin-development.md](docs/plugin-development.md) | 插件 API 与开发规范 |
