@@ -1,0 +1,56 @@
+/**
+ * headless 宿主入口解析：dev 用源仓库编译产物（../lib/headless.js，模块解析
+ * 直接走 D:\dsc\node_modules）；打包后用 extraResources 携带的 dsc-core 副本
+ * （process.resourcesPath/dsc-core/lib/headless.js，由 scripts/prepare-runtime.mjs 组装）。
+ *
+ * @module desktop/main/dsc-core
+ */
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { app } from 'electron'
+
+export function resolveHeadlessEntry(): string {
+  // CJS shim（bin/headless.cjs）：utilityProcess 只加载 CJS，shim 同步保活并
+  // 动态 import ESM 产物 lib/headless.js
+  const packaged = join(process.resourcesPath, 'dsc-core', 'bin', 'headless.cjs')
+  if (app.isPackaged) {
+    if (!existsSync(packaged)) throw new Error(`打包产物缺少宿主入口：${packaged}`)
+    return packaged
+  }
+  // dev：__dirname = desktop/out/main → 上三级是 dsc 根；cwd 兜底（electron-vite dev 与
+  // 直接 electron out/main/index.js 的工作目录都是 desktop/）
+  const candidates = [
+    join(__dirname, '..', '..', '..', 'bin', 'headless.cjs'),
+    join(process.cwd(), '..', 'bin', 'headless.cjs'),
+  ]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+  throw new Error(`未找到 dsc 宿主入口（${candidates.join(' 或 ')}）；先在 dsc 根目录运行 pnpm build`)
+}
+
+/** 工作目录记忆文件（~/.dsc/desktop.json）。 */
+export interface DesktopState {
+  lastCwd?: string
+}
+
+export function statePath(): string {
+  return join(app.getPath('home'), '.dsc', 'desktop.json')
+}
+
+export function readState(): DesktopState {
+  try {
+    return JSON.parse(readFileSync(statePath(), 'utf8')) as DesktopState
+  } catch {
+    return {}
+  }
+}
+
+export function writeState(state: DesktopState): void {
+  try {
+    mkdirSync(join(app.getPath('home'), '.dsc'), { recursive: true })
+    writeFileSync(statePath(), JSON.stringify(state, null, 2))
+  } catch {
+    // 记忆失败不致命
+  }
+}

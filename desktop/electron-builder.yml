@@ -1,0 +1,24 @@
+appId: io.dsc.desktop
+productName: dsc
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: runtime-staging/dsc-core
+    to: dsc-core
+afterPack: scripts/after-pack.cjs
+asar: true
+win:
+  target:
+    - target: nsis
+    - target: portable
+  icon: build/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: dsc-desktop-setup-${version}.${ext}
+portable:
+  artifactName: dsc-desktop-portable-${version}.${ext}

@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "useUnknownInCatchVariables": true,
+    "noEmit": true,
+    "paths": {
+      "@dsc/runtime/*": ["../lib/*"],
+      "@dsc/runtime": ["../lib/index.js"]
+    }
+  },
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx"]
+}

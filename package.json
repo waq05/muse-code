@@ -1,0 +1,35 @@
+{
+  "name": "dsc-tui",
+  "version": "0.2.0",
+  "private": true,
+  "description": "dsc — 独立的终端 AI harness（自研 ReAct loop + ink TUI）",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "bin": {
+    "dsc": "./bin/dsc.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/cordis-plugin-loader": "^1.0.5",
+    "ink": "^6.0.0",
+    "react": "^19.2.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.9.0"
+  }
+}
