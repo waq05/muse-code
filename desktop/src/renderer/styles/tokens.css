@@ -52,6 +52,8 @@
   --dsc-bg-page: color-mix(in srgb, var(--dsc-seed-page) var(--dsc-mix-page), var(--dsc-neutral-page));
   --dsc-bg-side: color-mix(in srgb, var(--dsc-seed-side) var(--dsc-mix-side), var(--dsc-neutral-side));
   --dsc-bg-card: color-mix(in srgb, var(--dsc-seed-card) var(--dsc-mix-card), var(--dsc-neutral-card));
+  /* 输入容器的填充：卡片色透出页面底色一档，比卡片轻、比页面重。 */
+  --dsc-composer-fill: color-mix(in srgb, var(--dsc-bg-card) 88%, transparent);
   --dsc-bg-raised: color-mix(in srgb, var(--dsc-seed-card) 46%, var(--dsc-neutral-card));
   /* 弹层底色比卡片再亮一点，浮起来的层次靠它 + --dsc-shadow-float 撑。 */
   --dsc-bg-popover: color-mix(in srgb, var(--dsc-bg-raised) 96%, transparent);
@@ -166,6 +168,8 @@
   --dsc-r-icon: 4px;
   --dsc-r-block: 5px;
   --dsc-r-overlay: 8px;
+  /* 输入容器是全局唯一放宽的一档：比卡片圆，但远不到胶囊。 */
+  --dsc-r-composer: 8px;
   --dsc-r-pill: 999px;
 
   /* ── 字号阶梯（可被 --dsc-font-scale 整体缩放）── */

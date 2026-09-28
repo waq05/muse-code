@@ -619,12 +619,12 @@
 }
 
 .topbar {
-  display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 0 16px 0 20px;
-  height: 44px;
+  display: flex;
   flex-shrink: 0;
+  gap: 14px;
+  height: var(--dsc-titlebar-h);
+  padding: 0 12px 0 16px;
   -webkit-app-region: drag;
 }
 
@@ -637,47 +637,48 @@
 }
 
 .topbar .title {
+  font-size: var(--dsc-fs-ui-lg);
+  font-weight: 600;
   max-width: 340px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
-  font-weight: 600;
 }
 
 .topbar .tabs {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   -webkit-app-region: no-drag;
 }
 
+/* 选中的页签不加重字重：加粗会把旁边页签推来推去，只靠下划线和品牌色区分。 */
 .topbar .tabs button {
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-body);
+  padding: 4px 8px;
   position: relative;
-  padding: 6px 2px;
-  color: var(--text-faint);
-  font-size: 13.5px;
-  transition: color 0.12s;
+  transition: color var(--dsc-dur) var(--dsc-ease);
 }
 
 .topbar .tabs button:hover {
-  color: var(--text-dim);
+  color: var(--dsc-text-secondary);
 }
 
 .topbar .tabs button.on {
-  color: var(--text);
-  font-weight: 600;
+  color: var(--dsc-text-primary);
 }
 
 .topbar .tabs button.on::after {
+  background: var(--dsc-accent);
+  border-radius: var(--dsc-r-pill);
+  bottom: 0;
   content: '';
-  position: absolute;
+  height: 2px;
   left: 50%;
-  bottom: -2px;
-  width: 22px;
-  height: 2.5px;
-  border-radius: 2px;
-  background: var(--accent);
+  position: absolute;
   transform: translateX(-50%);
+  width: 18px;
 }
 
 /* ══════════ 欢迎态 ══════════ */
@@ -1291,35 +1292,35 @@
   color: var(--accent-text);
 }
 
-/* 大圆角输入容器 */
+/* 输入容器：靠描边分界，不靠阴影；圆角 8px，不再是 20px 胶囊。 */
 .composer {
+  background: var(--dsc-composer-fill);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-composer);
   position: relative;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-input);
-  transition: border-color 0.15s;
+  transition: border-color var(--dsc-dur) var(--dsc-ease);
 }
 
 .composer:focus-within {
-  border-color: rgb(255 255 255 / 18%);
+  border-color: var(--dsc-stroke-1);
 }
 
 .composer textarea {
-  display: block;
-  width: 100%;
-  resize: none;
-  border: none;
-  outline: none;
   background: none;
-  color: var(--text);
-  font-size: 14.5px;
-  line-height: 1.65;
-  padding: 14px 18px 4px;
-  max-height: 200px;
+  border: none;
+  color: var(--dsc-text-primary);
+  display: block;
+  font-size: var(--dsc-fs-body);
+  line-height: var(--dsc-lh-body);
+  max-height: var(--dsc-input-max-h);
+  outline: none;
+  padding: 10px 12px 2px;
+  resize: none;
+  width: 100%;
 }
 
 .composer textarea::placeholder {
-  color: var(--text-mute);
+  color: var(--dsc-text-tertiary);
 }
 
 .composer textarea:disabled {
@@ -1327,10 +1328,10 @@
 }
 
 .composer-bar {
-  display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 2px 10px 10px 12px;
+  display: flex;
+  gap: 6px;
+  padding: 2px 8px 8px;
 }
 
 .composer-bar .bar-left {
@@ -1369,22 +1370,26 @@
   position: relative;
 }
 
+/* 模型与权限两颗 chip：24px 高，和 composer 里的图标按钮同高。 */
 .model-btn {
-  display: flex;
   align-items: center;
-  gap: 6px;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  display: flex;
+  font-size: var(--dsc-fs-ui);
+  gap: 5px;
   max-width: 280px;
-  padding: 5px 10px;
-  border-radius: var(--radius-sm);
-  color: var(--text-faint);
-  font-size: 12.5px;
-  transition: background 0.15s, color 0.15s;
+  min-height: var(--dsc-ctl);
+  padding: 0 8px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .model-btn:hover,
 .model-btn.open {
-  background: var(--bg-hover);
-  color: var(--text-dim);
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
 }
 
 .model-btn .model-name {
@@ -1516,20 +1521,25 @@
   color: var(--accent-text);
 }
 
+/* 发送键用前景实心（hermes 的主行动）：深色主题是亮底暗箭头，浅色相反。
+ * 比品牌蓝更像「就是这一下」，而且不会和强调色的其它用法抢注意力。 */
 .send-btn {
-  display: flex;
   align-items: center;
+  background: var(--dsc-text-primary);
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-bg-page);
+  display: flex;
+  height: var(--dsc-send);
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  transition: background 0.15s, transform 0.1s, opacity 0.15s;
+  width: var(--dsc-send);
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    opacity var(--dsc-dur) var(--dsc-ease),
+    transform 0.1s var(--dsc-ease);
 }
 
 .send-btn:hover {
-  background: var(--accent-hover);
+  background: color-mix(in srgb, var(--dsc-text-primary) 86%, var(--dsc-accent));
 }
 
 .send-btn:active {
@@ -1537,12 +1547,12 @@
 }
 
 .send-btn:disabled {
-  opacity: 0.35;
   cursor: default;
+  opacity: 0.35;
 }
 
 .send-btn.stop {
-  background: var(--bg-active);
+  background: var(--dsc-control-active-bg);
   color: var(--err);
 }
 
@@ -3168,28 +3178,33 @@ body.dock-resizing iframe {
 
 /* ══════════ 队友（子智能体团队）：侧栏列表 + 只读查看 ══════════ */
 
-/* 侧栏顶部「会话 | 队友」这一档 */
+/* 侧栏顶部「会话 | 队友」这一档：与设置里的分段选择器共用几何。 */
 .side-tabs {
+  background: var(--dsc-fill-quaternary);
+  border-radius: var(--dsc-r-control);
   display: inline-flex;
-  gap: 2px;
+  gap: 1px;
   padding: 2px;
-  border-radius: 8px;
-  background: var(--code-bg);
 }
 
 .side-tab {
-  padding: 3px 10px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-mute);
-  font-size: 12.5px;
-  font-weight: 600;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
+  font-weight: 500;
+  padding: 2px 8px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.side-tab:hover {
+  color: var(--dsc-text-secondary);
 }
 
 .side-tab.on {
-  background: var(--bg-active);
-  color: var(--text);
+  background: var(--dsc-control-active-bg);
+  color: var(--dsc-text-primary);
 }
 
 /* 侧栏里的一个队友行 */
