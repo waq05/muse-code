@@ -466,7 +466,7 @@
   gap: 8px;
   width: 100%;
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--dsc-r-row);
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
   text-align: left;
@@ -537,7 +537,7 @@
   align-items: baseline;
   gap: 8px;
   padding: 5px 8px;
-  border-radius: 6px;
+  border-radius: var(--dsc-r-row);
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
   text-align: left;
@@ -698,6 +698,7 @@
   height: 52px;
   display: grid;
   place-items: center;
+  /* 品牌方块是首屏的固定视觉锚点：圆角与字号按 52px 方块定死，不随字号/密度缩放，故不入阶梯。 */
   border-radius: 16px;
   background: linear-gradient(135deg, #4d6bfe, #7a5cff);
   color: #fff;
@@ -913,7 +914,7 @@
   margin: 0 auto 14px;
   padding: 6px 14px;
   border: 1px solid var(--dsc-stroke-4);
-  border-radius: 10px;
+  border-radius: var(--dsc-r-card);
   background: rgb(255 255 255 / 2%);
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-caption);
@@ -989,7 +990,7 @@
 .step-thinking {
   padding: 8px 12px;
   border: 1px solid var(--dsc-stroke-4);
-  border-radius: 10px;
+  border-radius: var(--dsc-r-card);
   background: rgb(255 255 255 / 1.5%);
   color: var(--dsc-text-tertiary);
   font-size: var(--dsc-fs-body);
@@ -1437,6 +1438,7 @@
   flex-direction: column;
   padding: 12px;
   border: 1px solid var(--dsc-stroke-2);
+  /* 320px 宽的模型浮层独有的大圆角，全站就这一处，属一次性几何值，不入阶梯。 */
   border-radius: 14px;
   background: #1d1d22;
   box-shadow: 0 12px 40px rgb(0 0 0 / 55%);

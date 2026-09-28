@@ -162,12 +162,16 @@
   --dsc-scrollbar-thumb-hover: color-mix(in srgb, var(--dsc-base) 24%, transparent);
 
   /* ── 圆角：贴 hermes 的近直角。控件 2.5px、徽标 3px、图标按钮 4px、
-     展开块与气泡 5px；只有对话框这类大面积才用 8px。── */
+     展开块与气泡 5px、浮层里的可点行 6px；对话框这类大面积用 8px，
+     轨迹页的小信息卡（统计条、思考块）10px。── */
   --dsc-r-control: 2.5px;
   --dsc-r-badge: 3px;
   --dsc-r-icon: 4px;
   --dsc-r-block: 5px;
+  /* 菜单项、分叉选择这类浮层里带 hover 底色的可点行。 */
+  --dsc-r-row: 6px;
   --dsc-r-overlay: 8px;
+  --dsc-r-card: 10px;
   /* 输入容器是全局唯一放宽的一档：比卡片圆，但远不到胶囊。 */
   --dsc-r-composer: 8px;
   --dsc-r-pill: 999px;
