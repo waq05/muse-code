@@ -19,6 +19,27 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
     // 'default' = 不发 thinking 字段（跟随端点默认行为）
     let currentEffort: EffortLevel = 'default'
 
+    /**
+     * 按给定的端点/模型/档位组一份请求路由，不动当前选择。
+     * 子智能体拿它跑角色自己指定的模型，父会话不受影响。
+     */
+    function routeFor(providerName: string, modelName: string, effort: EffortLevel): LlmRoute {
+      const provider = config.providers[providerName]
+      if (provider === undefined) {
+        throw new Error(
+          `没有名为 ${providerName} 的模型端点（检查 ~/.dsc/config.yaml 的 providers 段与对应 API key 环境变量）`,
+        )
+      }
+      return {
+        baseUrl: provider.baseUrl,
+        apiKey: provider.apiKey,
+        model: modelName,
+        maxTokens: provider.models.find((model) => model.id === modelName)?.maxTokens,
+        temperature: config.temperature,
+        thinking: effort === 'default' ? undefined : effort === 'off' ? 'disabled' : 'enabled',
+      }
+    }
+
     const service: LlmService = {
       get provider() {
         return currentProvider
@@ -36,25 +57,10 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
         )
       },
       route(): LlmRoute {
-        const provider = config.providers[currentProvider]
-        if (provider === undefined) {
-          throw new Error(
-            `没有可用的模型端点（检查 ~/.dsc/config.yaml 的 providers 段与对应 API key 环境变量）`,
-          )
-        }
-        return {
-          baseUrl: provider.baseUrl,
-          apiKey: provider.apiKey,
-          model: currentModel,
-          maxTokens: provider.models.find((model) => model.id === currentModel)?.maxTokens,
-          temperature: config.temperature,
-          thinking:
-            currentEffort === 'default'
-              ? undefined
-              : currentEffort === 'off'
-                ? 'disabled'
-                : 'enabled',
-        }
+        return routeFor(currentProvider, currentModel, currentEffort)
+      },
+      routeTo(provider, model, effort): LlmRoute {
+        return routeFor(provider, model, effort)
       },
       setEffort(effort) {
         currentEffort = effort
