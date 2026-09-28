@@ -1121,7 +1121,7 @@
   border-left-color: var(--dsc-red);
 }
 .tool-card.status-rejected {
-  border-left-color: var(--dsc-stroke-1);
+  border-left-color: var(--dsc-yellow);
 }
 
 .tool-head {
