@@ -10,6 +10,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { dsc, type RuntimeProxy } from './bridge.js'
+import { readTerminalFontSize, readTerminalTheme, watchAppearance } from './components/terminalTheme.js'
 import { IconChevronDown, IconChevronRight, IconRefresh } from './icons.js'
 
 type DockTab = 'terminal' | 'browser' | 'files' | 'git'
@@ -120,16 +121,26 @@ function TerminalPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX
   useEffect(() => {
     if (cwd === '') return
     const term = new Terminal({
-      fontSize: 12.5,
+      fontSize: readTerminalFontSize(),
       fontFamily: 'Consolas, "Courier New", monospace',
       cursorBlink: true,
-      theme: { background: '#101013', foreground: '#cfd3d6', cursor: '#8ea1ff', selectionBackground: 'rgba(77,107,254,0.3)' },
+      theme: readTerminalTheme(),
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
     if (host.current === null) return
     term.open(host.current)
     fit.fit()
+    // 外观偏好变了就照令牌重算并推给 xterm：appearance.ts 把三项写在 <html> 的
+    // data-theme、data-density 与内联 --dsc-font-scale 上，这里只跟着读，不另起一套状态。
+    // theme 每轮都得是新对象（xterm 对 theme 按引用比较，同对象赋值会被忽略）。
+    const offAppearance = watchAppearance(() => {
+      term.options.theme = readTerminalTheme()
+      const size = readTerminalFontSize()
+      if (size === term.options.fontSize) return
+      term.options.fontSize = size
+      fit.fit()
+    })
     term.writeln(`\x1b[90m${shellMeta.label} · 管道模式：输入命令回车执行（不支持交互式全屏程序）\x1b[0m\r\n`)
 
     let disposed = false
@@ -212,6 +223,7 @@ function TerminalPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX
 
     return () => {
       disposed = true
+      offAppearance()
       dataHandler.dispose()
       offData()
       if (currentId !== '') void proxy.dock('term-kill', { id: currentId }).catch(() => {})
