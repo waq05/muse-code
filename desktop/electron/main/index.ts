@@ -26,8 +26,12 @@ let hostCwd = ''
 
 /** 原生窗口控件区的高度：renderer 顶栏是 36px，多给 2px 让按钮命中区不裁边。 */
 const CAPTION_HEIGHT = 38
-/** 深色主题的窗口底色与控件区配色；浅色主题由 renderer 在外观生效时推过来覆盖。 */
-const DARK_CHROME = { bar: '#0d0d0f', symbol: '#9a9aa2' }
+/**
+ * 深色主题的窗口底色与控件区配色，取自深色主题下这两个令牌算出来的实际值，
+ * 这样选深色时开窗到首帧之间不会看见颜色跳一下。浅色主题由 renderer 在外观
+ * 生效时推过来覆盖。
+ */
+const DARK_CHROME = { bar: '#111421', symbol: '#b7babf' }
 
 /** 能否交给系统给窗口控件着色：只收 #rrggbb，半透明颜色到了那侧会被丢掉。 */
 function isChromeColor(value: unknown): value is string {
@@ -275,6 +279,9 @@ function registerIpc(): void {
   // 切换时由 renderer 把两个颜色报上来。只收 #rrggbb：带 alpha 的颜色到了系统
   // 那侧会被丢掉，宁可拒收也不要在浅色主题下留一块错色的条。
   ipcMain.on('dsc:set-window-chrome', (event, bar: unknown, symbol: unknown) => {
+    if (process.env.DSC_DESKTOP_SHOT !== undefined && process.env.DSC_DESKTOP_SHOT !== '') {
+      process.stderr.write(`[selfcheck] 控件条颜色 ${String(bar)} ${String(symbol)}，发来自当前窗口=${event.sender === mainWindow?.webContents}\n`)
+    }
     if (event.sender !== mainWindow?.webContents) return
     if (!isChromeColor(bar) || !isChromeColor(symbol) || !mainWindow) return
     mainWindow.setTitleBarOverlay({ color: bar, symbolColor: symbol, height: CAPTION_HEIGHT })
@@ -316,9 +323,11 @@ function createWindow(): void {
   const shotPath = process.env.DSC_DESKTOP_SHOT
   if (shotPath !== undefined && shotPath !== '') {
     // 原生窗口控件区不进 capturePage，只能整屏抓；抓屏时窗口要盖在别的窗口之上，
-    // 所以 DSC_DESKTOP_SHOT_TOPMOST=1 时把它钉在最上层。
+    // 所以 DSC_DESKTOP_SHOT_TOPMOST=1 时把它钉在最上层。show() 是被动的：自检常由
+    // 脚本启动 exe，脚本给的 STARTUPINFO 里带 SW_HIDE 时窗口会开成隐藏的。
     if (process.env.DSC_DESKTOP_SHOT_TOPMOST === '1') {
       mainWindow.setAlwaysOnTop(true, 'screen-saver')
+      mainWindow.show()
       mainWindow.focus()
     }
     const wait = Number.parseInt(process.env.DSC_DESKTOP_SHOT_DELAY ?? '4000', 10)
@@ -471,7 +480,7 @@ async function captureCaptionStrip(stripPath: string): Promise<void> {
     }
   }
   process.stderr.write(
-    `[selfcheck] 控件条 ${width}x${height} 像素已写出 ${stripPath}；顶行主色 ${bar[0]}（${bar[1]}/${width / 2} 点），最暗像素 ${darkest}\n`,
+    `[selfcheck] 控件条 ${width}x${height} 像素已写出 ${stripPath}；窗口可见=${win.isVisible()} 最小化=${win.isMinimized()} 位置=${bounds.x},${bounds.y} ${bounds.width}x${bounds.height} 缩放=${scale}；顶行主色 ${bar[0]}（${bar[1]}/${width / 2} 点），最暗像素 ${darkest}\n`,
   )
 }
 

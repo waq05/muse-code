@@ -448,10 +448,16 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
    底色就是顶栏透出来的 `--dsc-bg-page`，图标色把顶栏图标用的那 74% 次要文字色压平到页面
    底色上（系统那侧不接受 alpha，半透明颜色交过去会被压成错色）。
 2. `appearance.ts` 的 `applyAppearance` 每次落完 `data-theme` 就调一次 `pushWindowChrome()`：
-   用一个隐藏探针让浏览器把 `var(--dsc-chrome-*)` 算成 `rgb()`，转成 `#rrggbb` 后经
-   `dsc:set-window-chrome` 发给主进程；同一次外观里两个值没变就不重发。
+   用一个隐藏探针让浏览器把 `var(--dsc-chrome-*)` 算成实际颜色（同一份 `color-mix()`，内核会
+   写成 `rgb()` 或 `color(srgb …)`，两种都要认），转成 `#rrggbb` 后经 `dsc:set-window-chrome`
+   发给主进程；同一次外观里两个值没变就不重发。
 3. 主进程收到后调 `setTitleBarOverlay` 改控件条、`setBackgroundColor` 改窗口底色。
    只收 `#rrggbb`，其它格式直接拒收，窗口留着深色默认值。
+
+窗口从创建到第一帧外观生效之间有一小段空白，主进程按 `DARK_CHROME` 上色，这两个值取自深色主题
+下同名令牌算出来的实际颜色，选深色时看不见跳色。选浅色的这段时间靠 localStorage 镜像顶着：
+`main.tsx` 首帧和 `App.tsx` 的 `uiPrefs` 初值都读同一份镜像，否则宿主返回真实设置之前会先按写死
+的深色上一遍色，连控件条都会被推成深色，每次启动黑闪一下。
 
 顺带一条颜色纪律：`styles.css` 里不再出现颜色字面量，只剩 6 行是故意留的（品牌渐变 logo
 和它的白字、彩底上的白色图标、开关的白滑块、两处深色遮罩）。要更重或更轻的语义色就用

@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import type { ModelChoiceView, PluginInfoView, RuntimeSnapshot, TeammateView, TranscriptEntry, UiPrefsView } from '@dsc/runtime/contract.js'
-import { applyAppearance, saveCachedAppearance } from './appearance.js'
+import { applyAppearance, loadCachedAppearance, saveCachedAppearance } from './appearance.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { dsc, createRuntimeProxy, type RuntimeProxy } from './bridge.js'
 import { ApprovalCard } from './ApprovalCard.js'
@@ -69,7 +69,14 @@ export function App(): JSX.Element {
   // 正文那一层（含输入区）：拖拽条定位在它里面，夹宽度也要量它的实际宽。
   const zoneRef = useRef<HTMLDivElement | null>(null)
   // 侧栏界面偏好（排序方式、工作区顺序与别名、外观三项），存在宿主的 ~/.dsc/settings.json
-  const [uiPrefs, setUiPrefs] = useState<UiPrefsView>({ sessionSort: 'created', workspaceOrder: [], workspaceAliases: {}, themeMode: 'dark', fontSize: 'md', density: 'standard' })
+  // 首帧的外观三项用 localStorage 镜像打底：等宿主返回真实设置的这段时间里，
+  // 若按写死的深色上色，每次冷启动都会先闪一下深色，连窗口控件条都会被推成深色。
+  const [uiPrefs, setUiPrefs] = useState<UiPrefsView>(() => ({
+    sessionSort: 'created',
+    workspaceOrder: [],
+    workspaceAliases: {},
+    ...loadCachedAppearance(),
+  }))
   // 最近用过的工作目录：切过去但还没发过消息的工作区也要能在侧栏看到
   const [recentCwds, setRecentCwds] = useState<string[]>([])
 
