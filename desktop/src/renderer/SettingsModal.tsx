@@ -366,44 +366,52 @@ function AppearanceRows(props: {
   return (
     <div className="settings-appearance">
       <div className="settings-group-title">外观</div>
+      {/* 一行两列：标签在左，控件与说明包在 setting-control 里靠右。
+          少了这层包装，说明会被网格排到左列标签下面。 */}
       <div className="setting-row">
         <div className="setting-label">主题</div>
-        <Segments
-          value={props.uiPrefs.themeMode}
-          options={[
-            { value: 'dark', label: '深色' },
-            { value: 'light', label: '浅色' },
-            { value: 'system', label: '跟随系统' },
-          ]}
-          onPick={(value) => props.onUiPrefs({ themeMode: value })}
-        />
-        <div className="setting-help">深浅两套配色都是完整的；选「跟随系统」会跟着 Windows 的浅色设置随时切换。</div>
+        <div className="setting-control">
+          <Segments
+            value={props.uiPrefs.themeMode}
+            options={[
+              { value: 'dark', label: '深色' },
+              { value: 'light', label: '浅色' },
+              { value: 'system', label: '跟随系统' },
+            ]}
+            onPick={(value) => props.onUiPrefs({ themeMode: value })}
+          />
+          <div className="setting-help">深浅两套配色都是完整的；选「跟随系统」会跟着 Windows 的浅色设置随时切换。</div>
+        </div>
       </div>
       <div className="setting-row">
         <div className="setting-label">字号</div>
-        <Segments
-          value={props.uiPrefs.fontSize}
-          options={[
-            { value: 'sm', label: '小' },
-            { value: 'md', label: '标准' },
-            { value: 'lg', label: '大' },
-          ]}
-          onPick={(value) => props.onUiPrefs({ fontSize: value })}
-        />
-        <div className="setting-help">标准档正文 13px，小档 92%、大档 112%，代码块跟着一起缩放。</div>
+        <div className="setting-control">
+          <Segments
+            value={props.uiPrefs.fontSize}
+            options={[
+              { value: 'sm', label: '小' },
+              { value: 'md', label: '标准' },
+              { value: 'lg', label: '大' },
+            ]}
+            onPick={(value) => props.onUiPrefs({ fontSize: value })}
+          />
+          <div className="setting-help">标准档正文 13px，小档 92%、大档 112%，代码块跟着一起缩放。</div>
+        </div>
       </div>
       <div className="setting-row">
         <div className="setting-label">密度</div>
-        <Segments
-          value={props.uiPrefs.density}
-          options={[
-            { value: 'compact', label: '紧凑' },
-            { value: 'standard', label: '标准' },
-            { value: 'roomy', label: '宽松' },
-          ]}
-          onPick={(value) => props.onUiPrefs({ density: value })}
-        />
-        <div className="setting-help">只改行高与纵向内距（紧凑 90%、宽松 115%），一屏能看到的会话数会跟着变。</div>
+        <div className="setting-control">
+          <Segments
+            value={props.uiPrefs.density}
+            options={[
+              { value: 'compact', label: '紧凑' },
+              { value: 'standard', label: '标准' },
+              { value: 'roomy', label: '宽松' },
+            ]}
+            onPick={(value) => props.onUiPrefs({ density: value })}
+          />
+          <div className="setting-help">只改行高与纵向内距（紧凑 90%、宽松 115%），一屏能看到的会话数会跟着变。</div>
+        </div>
       </div>
     </div>
   )
