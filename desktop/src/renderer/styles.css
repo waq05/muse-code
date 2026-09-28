@@ -434,7 +434,7 @@
   height: 20px;
   padding: 0 4px;
   border: 1px solid var(--dsc-accent);
-  border-radius: 4px;
+  border-radius: var(--dsc-r-icon);
   background: var(--dsc-fill-quaternary);
   color: var(--dsc-text-primary);
   font-size: var(--dsc-fs-caption);
@@ -444,14 +444,14 @@
 .menu-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: var(--dsc-z-menu);
 }
 
 .row-menu {
   position: absolute;
   top: calc(100% - 2px);
   right: 4px;
-  z-index: 41;
+  z-index: var(--dsc-z-menu);
   min-width: 190px;
   padding: 4px;
   border: 1px solid var(--dsc-stroke-2);
@@ -504,7 +504,7 @@
   position: fixed;
   top: 50%;
   left: 50%;
-  z-index: 45;
+  z-index: var(--dsc-z-modal);
   display: flex;
   flex-direction: column;
   width: 380px;
@@ -709,7 +709,7 @@
 
 .welcome h1 {
   margin: 0;
-  font-size: 21px;
+  font-size: var(--dsc-fs-hero);
   font-weight: 600;
   color: var(--dsc-text-primary);
 }
@@ -724,7 +724,7 @@
   font-family: var(--dsc-font-mono);
   font-size: var(--dsc-fs-caption);
   background: var(--dsc-inline-code-bg);
-  border-radius: 5px;
+  border-radius: var(--dsc-r-block);
   padding: 1px 6px;
 }
 
@@ -1371,7 +1371,7 @@
   margin-left: 8px;
   padding: 0 6px;
   border: 1px solid var(--dsc-stroke-2);
-  border-radius: 5px;
+  border-radius: var(--dsc-r-block);
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-label);
   font-weight: 400;
@@ -1424,7 +1424,7 @@
 .pop-mask {
   position: fixed;
   inset: 0;
-  z-index: 8;
+  z-index: var(--dsc-z-menu);
 }
 
 .model-pop {
@@ -1440,7 +1440,7 @@
   border-radius: 14px;
   background: #1d1d22;
   box-shadow: 0 12px 40px rgb(0 0 0 / 55%);
-  z-index: 9;
+  z-index: var(--dsc-z-menu);
 }
 
 .pop-label {
@@ -1474,7 +1474,7 @@
   border: 1px solid var(--dsc-stroke-2);
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
-  transition: all 0.12s;
+  transition: all var(--dsc-dur) var(--dsc-ease);
 }
 
 .effort-btn:hover {
@@ -1511,7 +1511,7 @@
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-body);
   text-align: left;
-  transition: background 0.12s;
+  transition: background var(--dsc-dur) var(--dsc-ease);
 }
 
 .pop-item:hover {
@@ -1558,7 +1558,7 @@
   transition:
     background var(--dsc-dur) var(--dsc-ease),
     opacity var(--dsc-dur) var(--dsc-ease),
-    transform 0.1s var(--dsc-ease);
+    transform var(--dsc-dur) var(--dsc-ease);
 }
 
 .send-btn:hover {
@@ -1709,9 +1709,9 @@
   flex-shrink: 0;
   width: 40px;
   height: 22px;
-  border-radius: 11px;
+  border-radius: var(--dsc-r-pill);
   background: var(--dsc-row-active-bg);
-  transition: background 0.15s;
+  transition: background var(--dsc-dur) var(--dsc-ease);
 }
 
 .switch::after {
@@ -1723,7 +1723,7 @@
   height: 18px;
   border-radius: 50%;
   background: #fff;
-  transition: transform 0.15s;
+  transition: transform var(--dsc-dur) var(--dsc-ease);
 }
 
 .switch.on {
@@ -1750,7 +1750,7 @@
   font-family: var(--dsc-font-mono);
   font-size: var(--dsc-fs-caption);
   background: var(--dsc-inline-code-bg);
-  border-radius: 5px;
+  border-radius: var(--dsc-r-block);
   padding: 1px 6px;
 }
 
@@ -1758,7 +1758,7 @@
 .plugin-config {
   flex-shrink: 0;
   padding: 5px 11px;
-  border-radius: 8px;
+  border-radius: var(--dsc-r-block);
   border: 1px solid var(--dsc-stroke-2);
   background: transparent;
   color: var(--dsc-text-quaternary);
@@ -1775,7 +1775,7 @@
 .plugin-more {
   margin: 4px 0 0 14px;
   padding: 6px 12px;
-  border-radius: 8px;
+  border-radius: var(--dsc-r-block);
   border: none;
   background: transparent;
   color: var(--dsc-text-quaternary);
@@ -2394,7 +2394,7 @@ body.dock-resizing iframe {
 
 .skills-head-note code {
   padding: 1px 6px;
-  border-radius: 5px;
+  border-radius: var(--dsc-r-block);
   background: var(--dsc-inline-code-bg);
   font-family: var(--dsc-font-mono);
   font-size: var(--dsc-fs-caption);
@@ -2461,7 +2461,7 @@ body.dock-resizing iframe {
   margin-left: auto;
   padding: 5px 12px;
   border: 1px solid var(--dsc-stroke-2);
-  border-radius: 999px;
+  border-radius: var(--dsc-r-pill);
   background: var(--dsc-fill-quaternary);
   color: var(--dsc-text-quaternary);
 }
@@ -2607,7 +2607,7 @@ body.dock-resizing iframe {
 .source-chip {
   padding: 4px 11px;
   border: 1px solid var(--dsc-stroke-4);
-  border-radius: 999px;
+  border-radius: var(--dsc-r-pill);
   background: var(--dsc-fill-quaternary);
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
@@ -2662,7 +2662,7 @@ body.dock-resizing iframe {
 .settings-mask {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--dsc-z-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2725,7 +2725,7 @@ body.dock-resizing iframe {
   margin-left: auto;
   padding: 1px 6px;
   border: 1px solid var(--dsc-stroke-2);
-  border-radius: 999px;
+  border-radius: var(--dsc-r-pill);
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-label);
 }
@@ -3030,7 +3030,7 @@ body.dock-resizing iframe {
   gap: 6px;
   padding: 3px 10px;
   border: 1px solid var(--dsc-stroke-4);
-  border-radius: 999px;
+  border-radius: var(--dsc-r-pill);
   background: var(--dsc-fill-quaternary);
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
@@ -3324,7 +3324,7 @@ body.dock-resizing iframe {
 
 .tm-role {
   padding: 1px 6px;
-  border-radius: 5px;
+  border-radius: var(--dsc-r-block);
   background: var(--dsc-inline-code-bg);
   color: var(--dsc-text-tertiary);
   font-family: var(--dsc-font-mono);
@@ -3406,6 +3406,6 @@ body.dock-resizing iframe {
   font-family: var(--dsc-font-mono);
   font-size: var(--dsc-fs-tool);
   background: var(--dsc-inline-code-bg);
-  border-radius: 5px;
+  border-radius: var(--dsc-r-block);
   padding: 1px 5px;
 }
