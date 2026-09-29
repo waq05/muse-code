@@ -363,3 +363,5 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | 内核 API 升到 v5，但只加一条缝 + 一个可选服务 | `ctx.get('sandbox')` 是唯一的新插件可见能力；命令执行器缝只开给随包发布的内置插件。五插件各自一个独立目录（`src/core/{sandbox,schedule,lsp,cdp,learnings}/`），互不 import |
 
 验收：五个单元自检全绿（sandbox 193 / schedule 207 / lsp 167 / browser 210 / self-improve 181，全部 0 FAIL，跑在临时 HOME 上），两份集成自检全绿（既有 95 条 + 新增 m5：起四次真内核验登记/挂载/热卸载/沙箱不误伤），全套既有回归 15 个脚本 0 FAIL。过程中自检真实逮到并修掉的实现 bug：LSP 的 pending 结账先清表后 settle（挂着的请求永不落地、进程 exit 13）、启动失败不透传 stderr 尾巴、PATHEXT 候选顺序错；self-improve 的 store 重复声明会话状态键（项目编译失败）；沙箱可写根误用挂载 cwd。
+
+阶段 13 补记（交接时容易漏的三件小事）：内核侧除执行器缝与 `sandbox` 服务外，`SessionStateMap` 也加了一个 `learnings` 键——形状故意留 `unknown`，core 层不认识插件层类型，读回一律过 `normalizeLearningsState` 收口；plugin-development 的内核 API 版本表原先只写到 v2，v3/v4 两行一直只在 `src/core/plugin-registry.ts` 的注释里，这次连同 v5 一起补全；两个被自检逼出来的架构事实进了 development.md §4——命令补全面（`src/plugins/commands.ts` 的模块级 `extraSpecs`）是进程级共享，同进程起多个内核验「热卸载无残留」必须先 `await ctx.fiber.dispose()`（cordis 的 `Context` 本身没有 dispose，fiber 在 `ctx.fiber` 上）。

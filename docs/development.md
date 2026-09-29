@@ -222,13 +222,13 @@ export const myPlugin: Plugin.Object = {
 | `sandbox/tmp/<会话或工作区哈希>/` | sandbox 插件 | 沙箱私有临时目录：`TMP`/`TEMP`/`HOME` 在工具执行期间被重定向到这里，按会话×工作区隔离 |
 | `schedule/` | schedule 插件 | `tasks.json` 任务定义（tmp+rename 原子替换）+ `runs.jsonl` 执行台账 + `.lock` 单实例互斥（pid + 启动时间指纹） |
 | `learnings/<工作区哈希>/candidates.jsonl` | self-improve 插件 | 纠正/失败候选（`dsc/turn-end` 落一条），**不进系统提示**，`/learnings promote` 才生效 |
-| `skills/.ledger.jsonl` 与 `skills/.archive/` | self-improve 插件 | 技能变更台账（前后 hash，`/skills-ledger rollback <id>` 可回滚）与归档区（只搬不删） |
+| `skills/.ledger.jsonl`、`skills/.usage.json`、`skills/.archive/` | self-improve 插件 | 技能变更台账（前后 hash，`/skills-ledger rollback <id>` 可回滚；patch 前另有 `SKILL.md.bak.<秒级时间戳>` 漂移备份）、命中计数与老化（active → stale 14 天 → archived 30 天，pin 挡自动改写）、归档区（只搬不删） |
 
 技能发现的优先级（rank 小的赢，`src/core/skills.ts:64-71`）：当前目录 `.dsc/skills` →
 当前目录 `.agents/skills` → `config.yaml` 的 `skills` 段自定义目录 → `~/.dsc/skills`。
 **插件自己的可调值统一存 `plugins.json` 条目里那份 `config`**：设置分区点「保存」走
 `writePluginConfig` 写它，插件取值走 `resolvePluginConfig(file, passed)`
-（`src/core/plugin-registry.ts:165`）——装配时传进来的那份作底，磁盘上那份覆盖它，
+（`src/core/plugin-registry.ts:168`）——装配时传进来的那份作底，磁盘上那份覆盖它，
 插件每次用值时现调这个函数，所以改完不必重启宿主。
 界面上就能改的：`compact`（压缩保留条数、自动压缩触发线、锚点索引与用户原话两个字符预算）、`goal`（缺省轮次、一次加几轮）、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`subagent`、`computer-use`、`web-search`——插件贡献的分区都排在**插件中心**那个插件的详情页里（内置插件要在内核清单里声明 `settingsSection`，见 `src/host/kernel.ts` 的 `BUILTIN_PLUGINS` 与 `OFFICIAL_PLUGINS`），设置面板只列内核自己的六个分区。
 只能手写这个文件的：`approval.approvalTimeoutMs`（每次弹卡现读，改完下一张卡生效）、
@@ -375,6 +375,12 @@ exe 当**桌面端**跑的时候才要清掉它。
 | 重新打开会话后上下文又变长了 | 不该再出现：`Session.load` 读到 `summary` 记录时把之前累积的消息换成「摘要 + 末尾 `keep` 条」（`src/core/session.ts` 的 `case 'summary'`）。老日志没有 `keep` 字段时只接回摘要之后的记录，摘要之前的原文一样不读回来 |
 | 网络断了却不重试 | 连接失败（`LlmError.retryable`，`src/core/llm.ts:199-205`）与 429 / 5xx 都会退避重试 2 次，判定在 `src/core/llm.ts:162-166`；流已开始或用户已取消则不重试 |
 | 截图后 token 暴涨 | 看是否启用了旧截图裁剪（`computer-use` 插件的 `transformMessages`） |
+| 写工作区外的文件被拒（沙箱） | 拒因里带当前档位与可写根清单；确有必要就在**同一次调用**里成对带上 `sandbox_permissions` 与 `justification`（照常弹审批卡），或把目录加进「设置 → 沙箱」的附加可写根 |
+| 命令被沙箱当场拒 | 拒因写明命中规则（forbidden 前缀 / 网络开关关 / 越界写目标）；`/sandbox` 能看档位、强制执行等级与最近 3 次拒绝 |
+| 定时任务没触发 | 宿主不常驻就不触发（重启后补投最近一次错过的）；`/schedule list` 看任务是否 enabled、`lastError` 写了什么、是否标了 blocked |
+| `lsp` 工具回「没有数据」 | 按返回里的原因装对应语言服务器（typescript-language-server / pyright / rust-analyzer 等）；设置分区的状态按钮能看每个服务器的起停与 stderr 尾巴 |
+| 浏览器起不来 | 「设置 → 浏览器」的 executablePath 填本机 Chrome/Edge 路径；必须用自建 profile（用户默认 profile 会被 Chrome 136+ 静默忽略调试端口），看当前标签页与关闭两个按钮可以直接验进程 |
+| 模型新建的技能没进目录 | self-improve 产的草稿**默认停用**，去「技能」页手动启用；`/skills-ledger` 查每次变更，`rollback <id>` 可退回 |
 
 ## 12. 关键取值速查
 
@@ -430,6 +436,16 @@ exe 当**桌面端**跑的时候才要清掉它。
 | 最近工作目录记忆条数 | 12 | `desktop/electron/main/index.ts:146` |
 | 技能市场清单缓存 | 1 小时，落在 `~/.dsc/cache/` | `src/core/market.ts:10` |
 | 截图识别标记 | 工具结果文字里含「屏幕物理分辨率」才认定是自己截的图，不误伤别的插件带的图 | `src/plugins/computer-use.ts:72` |
+| 沙箱默认档 | workspace-write：可写根 = 会话 cwd + 沙箱私有临时目录，附加根默认空、网络默认关 | `src/core/sandbox/policy.ts:54-55` |
+| 沙箱一次性升权 | `sandbox_permissions` + `justification` 必须成对，只对本次调用生效 | `src/core/tools/sandbox-args.ts` |
+| schedule 最小间隔 | `every` 下限 60 秒 | `src/core/schedule/rule.ts:26` |
+| schedule catch-up 窗口 | 一次性 120 秒；循环取半周期夹在 120 秒 ~ 2 小时，超窗只跑一次不补积压 | `src/core/schedule/rule.ts:29-35` |
+| lsp idle 回收 | 600 秒（设置可调，下限 30 秒） | `src/core/lsp/client.ts:22` |
+| lsp 结果上限 | 默认 100 条（可配 1~1000）+ 16000 字符双上限 | `src/plugins/lsp.ts:71-76` |
+| browser 快照与缓冲 | 快照默认 15000 字符按行截断（不切碎元素）；控制台环形 200 条 | `src/plugins/browser.ts:79,84` |
+| browser profile 清理 | 整树 taskkill 后等 300ms 再删自建 profile | `src/core/cdp/launch.ts:288,444` |
+| self-improve 复盘触发 | 本轮工具迭代数 ≥ 12（对齐 hermes 用迭代数不用轮数） | `src/plugins/self-improve.ts:115` |
+| self-improve 技能草稿 | description ≤60 字符（超了拒收不截断）；老化 14 天 stale / 30 天归档 | `src/core/learnings/skill-write.ts:61,866` |
 
 **写/执行类不留持久授权**：一次审批只管这一次，`approval` 服务不跨回合记住「上次同意过」。
 
@@ -440,6 +456,8 @@ exe 当**桌面端**跑的时候才要清掉它。
 `createKernel()` 依次挂 25 个内核插件：`llm` → `session` → 三个扩展点（`guards` / `surfaces` / `waiting`）→ `approval` → `tools` → `tools-default` → `transcript` → `commands` → `skills` → `prompt` → `mode` → `settings` → `hooks` → `compact` → `todo` → `plan` → `ask` → `agent` → `goal` → `memory` → `runtime` → `desktop-dock` → `plugin-manager`；末尾把十四个官方可开关插件登记进热挂载表（`registerBuiltinMount`），再按 `plugins.json` 的条目决定本次挂不挂（`src/host/kernel.ts`）。
 这个顺序里有两处是必须的，不只是好看：`approval` 早于 `mode`，因为换档广播 `dsc/mode-changed` 而审批要听（审批卡上得写当前档位）；`transcript` 早于 `plan`，因为恢复会话时要先把会话流清空，计划卡那条条目才不会被清掉。
 官方可开关插件之间还有一条硬约束：`tool-search` 必须排在 `mcp` 之后，否则它 apply 时 `ctx.get('mcp')` 是 `undefined`，MCP 工具的 schema 永远不会被撤下。
+
+**自检脚本同进程起多个内核时要先停再验**：命令补全面（`src/plugins/commands.ts` 的模块级 `extraSpecs`）与插件元数据一样是进程级共享——不先停掉前面的内核，后起内核的 `specs()` 会看见前几份注册，验「关掉后消失」全是假阳性。cordis 的 `Context` 本身没有 dispose，fiber 在 `ctx.fiber` 上，停整棵内核是 `await ctx.fiber.dispose()`（m5 集成自检踩过这个坑）。
 注意 `desktop-dock` 与 `plugin-manager` 不显示在插件中心的「运行内核」清单里。
 把 `tools-default` 剔掉就得到一个只有对话、没有工具的 harness（`src/plugins/tools-default.ts:3`）。
 
@@ -459,6 +477,13 @@ exe 当**桌面端**跑的时候才要清掉它。
 | `compact-anchors.ts` | 摘要的机械加固件：锚点索引（正则抽 PR 号 / commit / 分支 / 文件 / 报错 / 链接）、用户原话逐字引用、细节找回指针。全是纯函数，可以脱离模型单独断言 |
 | `approval-floor.ts` | 灾难地板的判定：结构不可验证 → 灾难命令 → 用户 deny 黑名单 → 危险模式 → 命令白名单 → 无人值守，逐层给结论。配置读不通时守卫照样挂载却一律拒（挂不上等于链上没有地板，是 fail-open）。**只判「拒」或「不拒」**：命中白名单也只 `defer`，由 `approvalFloor` 服务把结论交给审批层免卡放行——地板自己 `pass` 会把 order 20 / 25 的安全钩子一并跳掉 |
 | `spill.ts` | 溢出落盘：建文件（目录 0700、文件 0600）、按整行截断并在文件末尾写明第几行没落盘、生成预览与续读写法、按 mtime 与目录总量扫目录 |
+| `sandbox/` | 沙箱纯逻辑：`policy`（路径规范化 + 可写根/受保护名/NT 前缀判定，**按每次调用的 cwd 算根**，解析失败保守拒）、`execpolicy`（命令前缀 allow/prompt/forbidden，写目标与网络命令识别，内层脚本再拆一层）、`backends`（docker 探测与执行体替换） |
+| `schedule/` | 定时任务：`rule`（六种选择器 + 时区/DST）、`store`（tasks.json 原子替换 + runs.jsonl 台账 + pendingSlot）、`runner`（自重排 setTimeout + catch-up + pre-dispatch 校验）。**先落盘推进 nextRunAt 再投递** |
+| `lsp/` | 语言服务器客户端：`framing`（Content-Length 分帧，别照抄 mcp.ts 的换行分帧）、`uri`（先解码成路径再比内外）、`servers`（内置表 + marker 找根 + PATHEXT）、`client`（握手/串行队列/idle 回收/破键退避）。挂着的请求结算用本地 settled 闸门——先清表再 settle 会让请求永不落地 |
+| `cdp/` | 浏览器 CDP 底座：`transport`（id 配对 + **按 sessionId 路由** + 事件订阅）、`launch`（探测/参数串/DevToolsActivePort/整树 taskkill）、`snapshot`（无障碍树文本化 + ref 代际）、`actions`（Input/DOM/Runtime 动作） |
+| `learnings/` | 自我改进：`store`（候选 jsonl 状态机）、`ledger`（技能变更台账与回滚）、`skill-write`（SKILL.md 硬校验 + 威胁扫描 + read-before-write + 老化）。读会话状态一律过 `normalizeLearningsState` 收口 |
+| `tools/command-runner.ts` | 命令执行器缝：bash 在 spawn 前问注册表，容器后端换执行体用；无注册者时行为不变 |
+| `tools/sandbox-args.ts` | 一次性升权参数的 schema 与解析：`sandbox_permissions` + `justification` 必须成对，只给半截按拒处理 |
 | `session-index.ts` | 会话检索的旁路倒排索引：中文按 1-gram + 2-gram（所以「内存」这种 2 字词能命中），英文按整词小写；按 mtime + size 增量维护，落 `cache/session-index.json`，版本对不上就整表重建 |
 | `mcp.ts` | MCP 客户端底座：stdio 与 streamable-http 两种传输上的 JSON-RPC、`mcp__服务器__工具` 命名、子进程环境白名单筛选、Windows 上按 PATH + PATHEXT 解析启动命令 |
 | `tool-search.ts` | 工具渐进披露的纯逻辑：分词（中文按相邻两字）、手写 BM25 索引、延后判定（read 一律不许撤）、配置校验 |

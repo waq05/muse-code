@@ -68,7 +68,7 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 
 - `disabled`：停用开关（桌面端「插件」页切换的就是它）；不在 entries 里的文件默认启用。
 - `config`：**透传给 `apply(ctx, config)` 第二参**——插件用它读自己的配置，不必再自建
-  配置文件。取值统一走 `resolvePluginConfig('<file>', passed)`（`src/core/plugin-registry.ts:165`）：
+  配置文件。取值统一走 `resolvePluginConfig('<file>', passed)`（`src/core/plugin-registry.ts:168`）：
   装配时那份作底，磁盘上这份覆盖它，所以设置分区保存后正在跑的插件下一次用值就是新值，不用重启宿主。
   读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；十四个官方可开关插件（`subagent`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`sandbox`、`schedule`、`lsp`、`browser`、`self-improve`）也各读这一份，并把可调值挂进自己的设置分区。
 - **启停热生效**：切换开关 → 内核卸载（调用 disposer）或重新挂载插件，无需重启宿主；
@@ -86,6 +86,8 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 |---|---|
 | 1 | 初始版本：工具、命令、事件、全部内核服务 |
 | 2 | 新增 `settings` 与 `skills` 服务：设置分区、技能来源、市场源三个扩展点；桌面端设置面板与技能中心 |
+| 3 | 新增请求组装扩展点：`ctx.prompt.register`（附加系统提示，带 order 刻度）与 `ctx.prompt.transformMessages`（改写发出去的请求体）；外部插件可用 `export const settingsSection` 声明自己的设置分区 id |
+| 4 | 新增三个内核扩展点：工具守卫链（`ctx.guards.register` / `registerObserver`）、快照片段（`ctx.surfaces.register`）、等人登记（`ctx.waiting.register`）；会话记录多一对按 id 存取的状态（`ctx.session.appendState` / `session.state`） |
 | 5 | 新增一个可选服务 `sandbox`（当前档位、强制执行等级、可写根与路径判定；读它要用 `ctx.get('sandbox')`），并把「命令执行器缝」（`src/core/tools/command-runner.ts`，沙箱的容器后端换执行体用）开给随包发布的内置插件 |
 
 `apiVersion = 1` 的旧插件在 v2 内核上照常挂载（判定只拒绝**高于**内核的声明），不用改代码；
