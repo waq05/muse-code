@@ -6,3 +6,6 @@ shots/
 # 本机运行产物：工具链的事件账本、沙箱 ACL 诊断报告
 .mimosa/
 .acl-report/
+
+# pnpm pack 产物（打包验证用，不入库）
+*.tgz

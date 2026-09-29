@@ -382,3 +382,25 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | secrets 超 4MB 跳遮红改按行分段，不做偏移量拼接 | 密钥形状（sk-、JWT）不跨行、PEM 整块夹在相邻换行之间——切点落在换行上就不会把真密钥切成两半，比正则命中收集+绝对坐标替换的方案少一整类 bug |
 
 改动落在 `src/core/command-policy.ts`、`src/core/path-policy.ts`、`src/core/loop.ts`、`src/core/compact.ts`、`src/core/prompt.ts`、`src/core/llm.ts`、`src/core/tools/bash.ts`、`src/core/session.ts`、`src/core/secrets.ts`、`src/core/cdp/launch.ts`、`src/plugins/{compact,agent,desktop-dock}.ts`、`src/services/types.ts`。自检断言同步：modes-security 新增 17 条回归（切段、替换段、控制文件必问），browser-check 2.5 翻转为「不放开 --remote-allow-origins」。验收：全量回归 23 个脚本 0 FAIL（含 approval-floor 95、browser 210、sandbox 193、schedule 207、lsp 167、self-improve 181、compact 53）。
+
+---
+
+## 阶段 15：Windows 强制沙箱（受限令牌 + 专用账号网络第二级）
+
+推翻阶段 13「受限令牌后端不做」的旧决定（用户拍板引入 koffi 换真隔离），两个并行子智能体（DeepSeek V41 Flash）分别交付 FS 强制层与网络第二级，主控做接缝、账号分支与集成。分两批落库：FS 层 `ddc0aa7`、网络层 `2ee5f6f`。
+
+| 决策 | 理由 |
+| --- | --- |
+| 隔离执行体用「runner 子进程」而不是宿主内直调 CreateProcessAsUserW | koffi 传显式环境块必报 ERROR_INVALID_PARAMETER——子进程环境只能靠继承；TMP/TEMP 重定向要在不污染宿主的前提下生效，只能由短命进程改自己再 spawn。runner 顺带解决 CTRL+C 回收（SetConsoleCtrlHandler 忽略）与退出码全宽镜像；宿主 taskkill 杀 runner = 作业句柄随进程关闭，内核按 KILL_ON_JOB_CLOSE 收掉整棵受限子树 |
+| 受限令牌 restricting 列表 = [logon SID, Everyone, …可写根能力 SID]，保活组绝不能省 | CNG 密钥隔离文件与每登录会话目录只授给登录会话 SID，缺保活组 DLL 初始化直接 0xC0000142（pwsh 0xE0434352）；完整性与默认 DACL（能力 SID 全权 ACE，否则沙箱进程建管道时被 pass-2 拦死自己）照 dsh 的实证配方 |
+| WRITE_RESTRICTED 的「读不受限」是结构性缺口，如实报 partial 而不是装 full | pass-2 交集只对写生效；配合的读限制要换专用账号才有（pass-1 普通 ACL），那是网络第二级的事。诚实上报正是当年「半可靠比明说 partial 更危险」顾虑的解法 |
+| ACL 只授可写根三件套（能力 SID Allow + Deny Everyone 删子项仅 CI + Low 标签），按路径幂等跳过整树重传播 | Deny 挂 OI\|CI 会把 FILE_DELETE_CHILD 落到每个文件、拒掉所有 FullControl 打开；幂等跳过是「大树首次传播几十秒」的唯一缓解；temp 授权可回收、工作区常驻；**read-only 档零授权**——该档令牌本无能力 SID，授权纯属永久改用户 ACL 的副作用 |
+| 网络两级：一级软墙（codex env.rs 同款），二级 = 专用离线账号 + WFP 12 条持久 filter + 防火墙 5 规则 + 本地白名单代理 | WFP 的 ALE_USER_ID 条件按账号 SID 限定——当前用户的进程不受影响，只有跑在专用账号里的沙箱命令被断网到只剩回环代理口；代理按 CONNECT 域名判定、TLS 原样中继：对「管控」与 codex 的 MITM 等价（没进清单的字节都出不去），省掉 CA 私钥落盘与证书固定两类新攻击面 |
+| 账号分支：账号令牌**照样受限化**（pass-2 照旧），另补账号 SID 的读写执行 ACE | 假能力 SID 三件套只解决 pass-2；专用账号没有当前用户权限，pass-1 连仓库都读不了，必须补账号 ACE（掩码=读+执行+写删，仍不含 WRITE_DAC/OWNER）。代理端口与防火墙的环回补集一致（3128 → 1-3127,3129-65535）；代理起不来 = 账号出网全被 WFP 拦死等于离线——fail-closed，绝不静默放开 |
+| doctor 的 WFP 探测降为提示项（不计 tier） | 非提权会话看不到 WFP 对象是 Windows 权限行为（engine 打得开、查询必被拒）；setup 脚本「首错即停」且账本写在 WFP 安装成功之后，②-⑤ 全绿已蕴含布防在位。不降级会让非提权环境永远 partial 假阴性 |
+| 执行缝加可选自定义 spawn，本次实际没用上 | 起初以为受限令牌需要自定义 ChildProcess，runner 子进程方案让 SpawnPlan 用普通 `node runner.js … -- 原 argv` 就表达得下；缝留下（容器运行时 API 类计划用得上），bash 默认路径零改动 |
+
+真机冒烟与自检逮掉的坑（每一处都有复现证据）：koffi 对超安全整数的 uintptr_t 回 **BigInt**（INVALID_HANDLE_VALUE 判 `===0` 会漏）；`byteArea().bytes()` 是 decode **副本**，当出参写不进原生内存（CreateWellKnownSid 回 122）；`Buffer.from` 小块切 **8KB 共享池**，`DataView(buf.buffer)` 从池原点读直接越界；JS 位运算 int32 符号坑（`0xC0000007 & 0xC0000000` 为负，保活组判定全跳过）；`CopySid` 返回 BOOL 被拿去跟字节长度比；**parseRunnerArgs 漏把 account 放进返回值**——账号分支被「静默跳过」，命令照常以当前用户跑且退出码一切正常（最危险的一类失败，靠真机探针逮住）。C 侧自检还抓到 LocalFree 误绑 advapi32（实际在 kernel32）且炸在 finally 释放路径上。
+
+验收：FS 冒烟 19/19（越界写/删拒、读放行=文档化缺口、temp 重定向子进程可见、杀树内核收尾、降级、幂等、dispose 回收留标签）；网络自检 160/160（PS 5.1 parser 整份 719 行脚本只解析不执行、内嵌 C# Add-Type 真编译并跑结构体布局自检、DPAPI 往返含篡改必抛、PS 5.1 真写账本 → TS 真读的跨语言契约、WFP 探测三类返回不抛）；net-proxy 探针 4/4（白名单域真实建连、域外 403、总开关关全拒、日志对账）；全量回归 23 脚本 0 FAIL + sandbox 193/0 不回归。诚实边界：提权 setup 的端到端（UAC 那一下之后的 WFP 事务、防火墙规则接受性、DPAPI 跨提权解密）只能由用户点一次 UAC 实测，已写进 development-log 与设置页说明。
+
