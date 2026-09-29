@@ -14,7 +14,7 @@
  * @module dsc/core/prompt
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { userHome } from './path-policy.js'
 import { wrapUntrusted } from './untrusted.js'
@@ -107,12 +107,8 @@ function instructionsText(cwd: string, budget: number): string {
   let used = 0
   for (const file of files) {
     if (used >= budget) break
-    let raw: string
-    try {
-      raw = readFileSync(file, 'utf8')
-    } catch {
-      continue // 读不到就跳过：说明书缺失不该让这一轮请求失败
-    }
+    const raw = instructionFileBody(file)
+    if (raw === null) continue // 读不到就跳过：说明书缺失不该让这一轮请求失败
     const room = budget - used
     let body = raw.trim()
     if (body.length > room) {
@@ -130,6 +126,27 @@ function instructionsText(cwd: string, budget: number): string {
   )
 }
 
+/**
+ * 指令文件正文缓存（2026-09-29）：buildSystemPrompt 每轮请求都会走到这里，
+ * 不能每次都把 AGENTS.md 全量读一遍。mtime 变了才重读，改完立刻生效。
+ */
+const instructionCache = new Map<string, { mtimeMs: number; raw: string }>()
+
+function instructionFileBody(file: string): string | null {
+  try {
+    const mtimeMs = statSync(file).mtimeMs
+    const cached = instructionCache.get(file)
+    if (cached !== undefined && cached.mtimeMs === mtimeMs) return cached.raw
+    const raw = readFileSync(file, 'utf8')
+    if (instructionCache.size > 32) instructionCache.clear()
+    instructionCache.set(file, { mtimeMs, raw })
+    return raw
+  } catch {
+    instructionCache.delete(file)
+    return null
+  }
+}
+
 /** 跑一条 git 命令拿一行输出（失败返回 null：不是 git 仓库是常态，不是错误）。 */
 function gitLine(cwd: string, args: string[]): string | null {
   try {
@@ -140,8 +157,19 @@ function gitLine(cwd: string, args: string[]): string | null {
   }
 }
 
-/** 环境事实段（每天、每次 cd 都会变，所以垫在整个提示的最后，保护前面的缓存前缀）。 */
+/**
+ * 环境事实段（每天、每次 cd 都会变，所以垫在整个提示的最后，保护前面的缓存前缀）。
+ *
+ * git 子进程是同步跑的（大仓库 `status --porcelain` 秒级，还会冻结事件循环），
+ * 所以按 cwd 做 30 秒 TTL 缓存（2026-09-29）：最坏情况分支/脏标晚半分钟更新，
+ * 换来每轮请求不再白跑两次 git。
+ */
+const ENV_TTL_MS = 30_000
+const envCache = new Map<string, { text: string; expires: number }>()
+
 function environmentText(cwd: string): string {
+  const cached = envCache.get(cwd)
+  if (cached !== undefined && cached.expires > Date.now()) return cached.text
   const now = new Date()
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   const branch = gitLine(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
@@ -153,7 +181,10 @@ function environmentText(cwd: string): string {
     `- 工作目录：${cwd}`,
     ...(branch === null ? [] : [`- git 分支：${branch}${dirty ? '（工作区有未提交改动）' : '（工作区干净）'}`]),
   ]
-  return lines.join('\n')
+  const text = lines.join('\n')
+  if (envCache.size > 8) envCache.clear()
+  envCache.set(cwd, { text, expires: Date.now() + ENV_TTL_MS })
+  return text
 }
 
 /** buildSystemPrompt 的可选输入。 */
