@@ -71,6 +71,13 @@ export interface SessionStateMap {
   plan: PlanView
   /** 会话目标快照（goal 插件写）。 */
   goal: GoalSnapshot
+  /**
+   * 自我改进的记账（self-improve 插件写）：本轮复盘到哪个轮次、本会话读过哪些技能。
+   *
+   * 形状故意留成 `unknown`：core 层不该认识插件层的类型（依赖方向反过来就成环），
+   * 读回来时由 `core/learnings/store.ts` 的 `normalizeLearningsState` 兜底。
+   */
+  learnings: unknown
 }
 
 /**

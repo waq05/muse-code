@@ -55,6 +55,11 @@ import { sessionSearchPlugin } from '../plugins/session-search.js'
 import { lifecycleHooksPlugin } from '../plugins/lifecycle-hooks.js'
 import { mcpPlugin } from '../plugins/mcp.js'
 import { toolSearchPlugin } from '../plugins/tool-search.js'
+import { sandboxPlugin } from '../plugins/sandbox.js'
+import { schedulePlugin } from '../plugins/schedule.js'
+import { lspPlugin } from '../plugins/lsp.js'
+import { browserPlugin } from '../plugins/browser.js'
+import { selfImprovePlugin } from '../plugins/self-improve.js'
 
 const err = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -134,6 +139,48 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
     defaultDisabled: true,
     settingsSection: 'tool-search',
   },
+  // 第二批官方可开关插件。默认开关同一条规矩，沙箱是唯一例外：
+  // 它默认开——不配就没有外部进程、没有外部服务器，开着的收益（越界写入当场拒）大于打扰，
+  // 且默认档 workspace-write 不挡正常的工作区读写。
+  {
+    file: 'sandbox',
+    name: '沙箱',
+    description: '三档模式 + 可写根白名单 + 受保护路径 + 命令前缀策略 + 一次性升权，容器后端可换真隔离',
+    toggleable: true,
+    settingsSection: 'sandbox',
+  },
+  {
+    file: 'schedule',
+    name: '定时任务',
+    description: 'after / at / every / daily / weekly / cron 六种选择器，到点把提醒投回原会话',
+    toggleable: true,
+    defaultDisabled: true,
+    settingsSection: 'schedule',
+  },
+  {
+    file: 'lsp',
+    name: 'LSP 代码智能',
+    description: '连语言服务器查定义与引用，并把本次编辑新引入的报错附在写入结果里',
+    toggleable: true,
+    defaultDisabled: true,
+    settingsSection: 'lsp',
+  },
+  {
+    file: 'browser',
+    name: '浏览器自动化',
+    description: 'DOM 级控制浏览器：无障碍快照 + ref 定位点击输入，不是截图比坐标',
+    toggleable: true,
+    defaultDisabled: true,
+    settingsSection: 'browser',
+  },
+  {
+    file: 'self-improve',
+    name: '自我改进',
+    description: '从纠正与复盘里沉淀经验：候选清单、技能草稿、技能自修与审计回滚',
+    toggleable: true,
+    defaultDisabled: true,
+    settingsSection: 'self-improve',
+  },
 ]
 
 /** 官方可开关插件的插件对象（开关键 → 对象）。 */
@@ -147,6 +194,11 @@ const OFFICIAL_OBJECTS: Readonly<Record<string, Plugin.Object>> = {
   'lifecycle-hooks': lifecycleHooksPlugin,
   mcp: mcpPlugin,
   'tool-search': toolSearchPlugin,
+  sandbox: sandboxPlugin,
+  schedule: schedulePlugin,
+  lsp: lspPlugin,
+  browser: browserPlugin,
+  'self-improve': selfImprovePlugin,
 }
 
 export interface KernelOptions {
