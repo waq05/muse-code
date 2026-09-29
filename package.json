@@ -1,15 +1,15 @@
 {
-  "name": "dsc-tui",
+  "name": "muse-code",
   "version": "0.2.0",
   "private": true,
-  "description": "dsc — 独立的终端 AI harness（自研 ReAct loop + ink TUI）",
+  "description": "Muse Code（msc）— 独立的终端 AI harness（自研 ReAct loop + ink TUI）",
   "type": "module",
   "license": "MIT",
   "engines": {
     "node": ">=22.19"
   },
   "bin": {
-    "dsc": "./bin/dsc.js"
+    "msc": "./bin/dsc.js"
   },
   "files": [
     "bin",

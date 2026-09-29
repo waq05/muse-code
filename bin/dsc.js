@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * dsc — 独立 TUI harness 的瘦启动器（零依赖）。
+ * Muse Code（msc）— 独立 TUI harness 的瘦启动器（零依赖）。
  *
- * v2 起 dsc 不再经过 dsh：本文件只做参数翻译，然后 spawn
+ * v2 起 msc 不再经过 dsh：本文件只做参数翻译，然后 spawn
  * `node <本包>/lib/boot.js`（编译产物）。保持零 lib 依赖，全局
- * `npm i -g file:D:\dsc` 得到的 dsc 命令开箱即跑。
+ * `npm i -g file:D:\dsc` 得到的 msc 命令开箱即跑。
+ * （文件名沿用 dsc.js：bin 命令名由 package.json 的 bin 键决定，与文件名无关。）
  *
  * `--resume [path]` / `-c` / `--continue`：无 path 时恢复上次会话
  * （~/.dsc/.last-session 指针），有 path 时恢复指定会话 jsonl；
@@ -19,7 +20,7 @@ const PKG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const BOOT = join(PKG_ROOT, 'lib', 'boot.js')
 
 function fail(message) {
-  console.error(`[dsc] ${message}`)
+  console.error(`[msc] ${message}`)
   process.exit(1)
 }
 
@@ -30,20 +31,20 @@ if (first === '--version' || first === '-v') {
   try {
     version = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8')).version ?? version
   } catch {}
-  console.log(`dsc ${version}（独立 harness）`)
+  console.log(`Muse Code msc ${version}`)
   process.exit(0)
 }
 if (first === '--help' || first === '-h') {
   console.log(
-    '用法：dsc [选项] | dsc config <子命令>\n' +
+    '用法：msc [选项] | msc config <子命令>\n' +
       '\n' +
       '选项：\n' +
-      '  --resume [path]   恢复上次（或指定 jsonl 的）会话\n' +
+      '  --resume [path]   恢复上次会话，或恢复指定 jsonl 的会话\n' +
       '  -c, --continue    同 --resume\n' +
       '\n' +
       '配置：\n' +
-      '  dsc config migrate [--force]   从 dsh 迁移模型配置到 ~/.dsc/config.yaml\n' +
-      '  dsc config show                显示当前生效的端点/模型/key 来源\n',
+      '  msc config migrate [--force]   从 dsh 迁移模型配置到 ~/.dsc/config.yaml\n' +
+      '  msc config show                显示当前生效的端点/模型/key 来源\n',
   )
   process.exit(0)
 }
