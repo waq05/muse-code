@@ -391,7 +391,13 @@ export class Session {
   private streamFor(): ReturnType<typeof createWriteStream> {
     if (this.stream === null) {
       mkdirSync(dirname(this.file), { recursive: true })
-      this.stream = createWriteStream(this.file, { flags: 'a', encoding: 'utf8' })
+      const stream = createWriteStream(this.file, { flags: 'a', encoding: 'utf8' })
+      // 磁盘满/权限错的 error 事件没人接会让进程以未捕获异常崩掉（2026-09-29）：
+      // 丢掉这条流，下一条日志重新开——丢一条记录好过崩掉整个宿主。
+      stream.on('error', () => {
+        if (this.stream === stream) this.stream = null
+      })
+      this.stream = stream
     }
     return this.stream
   }

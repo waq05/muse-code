@@ -49,7 +49,13 @@ export interface RedactResult {
  * 关闭开关只影响这一层（`DSC_REDACT=0`），不影响下面的环境脱敏。
  */
 export function redactText(input: string): RedactResult {
-  if (!REDACT_ENABLED || input === '' || input.length > 4_000_000) return { text: input, replaced: 0, kinds: [] }
+  if (!REDACT_ENABLED || input === '') return { text: input, replaced: 0, kinds: [] }
+  if (input.length > 4_000_000) return redactLong(input)
+  return redactDirect(input)
+}
+
+/** 4MB 以内的快路径：整段逐规则替换。 */
+function redactDirect(input: string): RedactResult {
   let text = input
   let replaced = 0
   const kinds: string[] = []
@@ -66,6 +72,32 @@ export function redactText(input: string): RedactResult {
     })
   }
   return { text, replaced, kinds }
+}
+
+/**
+ * 超长输入按行分段遮红（2026-09-29）：原来超过 4MB 整段跳过，密钥形状字符串
+ * 会原样落盘进上下文。切点取在换行上——sk-、JWT 这类密钥不跨行，PEM 整块
+ * 夹在相邻换行之间，按行切不会把真实密钥切成两半；单行就超 1MB 的（压缩过的
+ * 产物）才可能漏掉骑在切点上的那一个，属于可接受的残余风险。
+ */
+function redactLong(input: string): RedactResult {
+  let out = ''
+  let replaced = 0
+  const kinds: string[] = []
+  let from = 0
+  while (from < input.length) {
+    let to = Math.min(from + 1_000_000, input.length)
+    if (to < input.length) {
+      const newline = input.lastIndexOf('\n', to)
+      if (newline > from) to = newline + 1
+    }
+    const part = redactDirect(input.slice(from, to))
+    out += part.text
+    replaced += part.replaced
+    for (const kind of part.kinds) if (!kinds.includes(kind)) kinds.push(kind)
+    from = to
+  }
+  return { text: out, replaced, kinds }
 }
 
 /** 只要遮红后的文本（大多数调用方不关心命中数）。 */

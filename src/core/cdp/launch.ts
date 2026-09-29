@@ -111,7 +111,8 @@ export function buildLaunchArgs(config: BrowserLaunchConfig, profileDir: string)
   return [
     '--remote-debugging-port=0',
     `--user-data-dir=${profileDir}`,
-    '--remote-allow-origins=*',
+    // 不加 --remote-allow-origins：dsc 自己的客户端（Node）发 WebSocket 不带 Origin 头，
+    // Chrome 只拦「带 Origin 且不在白名单」的连接——恶意页面扫到端口也握不上手（2026-09-29 审查）。
     '--no-first-run',
     '--no-default-browser-check',
     ...(config.headless ? ['--headless=new'] : []),

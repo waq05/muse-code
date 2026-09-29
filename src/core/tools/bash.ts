@@ -13,12 +13,16 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import type { ToolEntry } from '../tools.js'
 import { classifyCommand } from '../command-policy.js'
 import { redact, scrubChildEnv } from '../secrets.js'
+import { wrapUntrusted } from '../untrusted.js'
 import { finishCommand, planCommand, type SpawnPlan } from './command-runner.js'
 import { sandboxPermissionProperties } from './sandbox-args.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const MAX_TIMEOUT_MS = 120_000
 const OUTPUT_LIMIT = 8000
+
+/** 会从网上拉内容的命令：输出是外部数据，进对话前必须过围栏（网页里的「指令」不是给你的）。 */
+const NETWORK_FETCH_RE = /\b(curl|wget|invoke-webrequest|invoke-restmethod|iwr|irm)(\.exe)?\b/i
 
 const isWin = process.platform === 'win32'
 
@@ -136,6 +140,9 @@ export const bashTool: ToolEntry = {
     if (verdict.decision === 'deny') throw new Error(`命令被安全策略拒绝执行：${verdict.reason}`)
     const requested = typeof args.timeoutMs === 'number' ? Math.floor(args.timeoutMs) : DEFAULT_TIMEOUT_MS
     const timeoutMs = Math.min(Math.max(requested, 1000), MAX_TIMEOUT_MS)
-    return runShell(args.command, ctx.cwd, timeoutMs, ctx.signal)
+    const output = await runShell(args.command, ctx.cwd, timeoutMs, ctx.signal)
+    // 下载类命令的输出是外部内容：包裹围栏再进对话（先遮红后包裹，遮红在 spawnShell 里已完成）。
+    if (NETWORK_FETCH_RE.test(args.command)) return wrapUntrusted('bash', output)
+    return output
   },
 }

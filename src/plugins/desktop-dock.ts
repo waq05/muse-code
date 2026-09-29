@@ -13,18 +13,23 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { ChildProcess } from 'node:child_process'
 
-/** 受控执行 git（固定首参字面量 + 参数数组；无 shell）。 */
+/** 受控执行 git（固定首参字面量 + 参数数组；无 shell）。超时由 execFile 自己收进程。 */
 function git(cwd: string, args: string[], timeoutMs = 15000): Promise<string> {
   return new Promise((resolveDone, rejectDone) => {
-    const timer = setTimeout(() => rejectDone(new Error('git 执行超时')), timeoutMs)
-    execFile('git', args, { cwd, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
-      clearTimeout(timer)
-      if (error !== undefined && error !== null) {
-        rejectDone(new Error(String(stderr || error.message).slice(0, 800)))
-      } else {
-        resolveDone(String(stdout))
-      }
-    })
+    execFile(
+      'git',
+      args,
+      // timeout 原来只在自己这层 reject，git 进程继续跑（2026-09-29 审查）：
+      // 交给 execFile 的 timeout + killSignal，超时连进程一起收掉。
+      { cwd, maxBuffer: 8 * 1024 * 1024, windowsHide: true, timeout: timeoutMs, killSignal: 'SIGKILL' },
+      (error, stdout, stderr) => {
+        if (error !== undefined && error !== null) {
+          rejectDone(new Error(String(stderr || error.message).slice(0, 800)))
+        } else {
+          resolveDone(String(stdout))
+        }
+      },
+    )
   })
 }
 
@@ -178,6 +183,17 @@ export const desktopDockPlugin: Plugin.Object = {
     }
 
     ctx.provide('dock', { handle })
+    // 热卸载必须收干净（2026-09-29 审查）：终端子进程不杀会继续往 dsc/dock-data 吐输出。
+    return () => {
+      for (const child of terms.values()) {
+        try {
+          child.kill()
+        } catch {
+          // 已退出的进程 kill 会报错：忽略，目的已达到
+        }
+      }
+      terms.clear()
+    }
   },
 }
 
