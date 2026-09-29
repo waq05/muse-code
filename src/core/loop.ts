@@ -12,7 +12,7 @@
  *
  * @module dsc/core/loop
  */
-import type { ChatMessage, StreamResult, ToolSchema } from './llm.js'
+import type { ChatMessage, StreamResult, ToolCall, ToolSchema } from './llm.js'
 import { LlmError, streamChat } from './llm.js'
 import type { CoreEvent } from './events.js'
 import type { Session } from './session.js'
@@ -180,30 +180,56 @@ export class MiniAgent {
     return result
   }
 
-  /** 执行（或拒绝）本轮全部工具调用，append 对应 tool 消息。 */
+  /**
+   * 执行（或拒绝）本轮全部工具调用，append 对应 tool 消息。
+   *
+   * 并行策略（2026-09-29）：守卫链与审批卡必须串行问（一次只能弹一张卡），
+   * 但「只读且放行」的调用不必等前一个跑完——先起飞，等撞上第一个写/执行调用
+   * 或本轮收尾时一起收割；结果永远按模型给的顺序落库，协议形状不变。
+   */
   private async executeToolCalls(result: StreamResult, signal: AbortSignal): Promise<void> {
     const registry = new Map(this.deps.tools().map((tool) => [tool.name, tool]))
+    /** 已起飞还没落库的只读调用。 */
+    let flying: Array<{ call: ToolCall; outcome: Promise<ToolOutcome> }> = []
+    const flushFlying = async (): Promise<void> => {
+      const batch = flying
+      flying = []
+      const outcomes = await Promise.all(batch.map((item) => item.outcome))
+      for (const [index, outcome] of outcomes.entries()) {
+        this.finishCall(batch[index]!.call, outcome)
+      }
+    }
     for (const call of result.toolCalls) {
-      if (signal.aborted) return
+      // 已打断：在飞的收尾，之后每一条没开始的调用都补一条合成结果——
+      // 协议要求 assistant 的每个 tool_call 都有对应 tool 消息，缺一条下轮请求就 400。
+      if (signal.aborted) {
+        await flushFlying()
+        for (const rest of result.toolCalls.slice(result.toolCalls.indexOf(call))) {
+          this.finishCall(rest, { text: '用户取消，调用未执行', stored: '用户取消，调用未执行', error: 'tool-error' })
+        }
+        return
+      }
       this.deps.emit({ type: 'tool/call', callId: call.id, name: call.name, args: call.arguments })
       const tool = registry.get(call.name)
-      const fail = (text: string): void => {
-        this.session.appendTool(call.id, call.name, text, 'tool-error')
-        this.deps.emit({ type: 'tool/result', callId: call.id, text, error: 'tool-error' })
-      }
       if (tool === undefined) {
-        fail(`未知工具：${call.name}`)
+        await flushFlying()
+        this.finishCall(call, { text: `未知工具：${call.name}`, stored: `未知工具：${call.name}`, error: 'tool-error' })
         continue
       }
       let args: Record<string, unknown>
       try {
         args = JSON.parse(call.arguments) as Record<string, unknown>
       } catch {
-        fail(`参数不是合法 JSON：${summarizeArgs(call.arguments)}`)
+        await flushFlying()
+        this.finishCall(call, {
+          text: `参数不是合法 JSON：${summarizeArgs(call.arguments)}`,
+          stored: `参数不是合法 JSON：${summarizeArgs(call.arguments)}`,
+          error: 'tool-error',
+        })
         continue
       }
       // 一次调用动手之前先问守卫链：模式档不许改文件、免打扰档不许弹卡、审批卡等人点头，
-      // 这些都是链上的人自己说的，循环不知道也不该知道是谁。
+      // 这些都是链上的人自己说的，循环不知道也不该知道是谁。守卫（含审批卡）必须串行问。
       const verdict = await this.deps.guards.gate({
         toolName: call.name,
         risk: tool.risk,
@@ -213,26 +239,65 @@ export class MiniAgent {
         ...callFacts(args, this.cwd),
       })
       if (verdict.action === 'deny') {
-        this.session.appendTool(call.id, call.name, verdict.reason, 'rejected')
-        this.deps.emit({ type: 'tool/result', callId: call.id, text: verdict.reason, error: 'rejected' })
+        await flushFlying()
+        this.finishCall(call, { text: verdict.reason, stored: verdict.reason, error: 'rejected' })
         continue
       }
-      try {
-        const output = await tool.run(args, { cwd: this.cwd, signal })
-        const rawText = typeof output === 'string' ? output : output.text
-        // 工具结果里的密钥形状字符串不进会话日志，也不回显给模型（遮红挂在观察者链上）。
-        const text = this.deps.guards.observe(call.name, rawText)
-        const images = typeof output === 'string' ? undefined : output.images
-        const stored: string | { text: string; images?: string[] } =
-          text === rawText ? output : images !== undefined && images.length > 0 ? { text, images } : text
-        const imageNote = images !== undefined && images.length > 0 ? `\n[附 ${images.length} 张截图]` : ''
-        this.session.appendTool(call.id, call.name, stored)
-        this.deps.emit({ type: 'tool/result', callId: call.id, text: text + imageNote })
-      } catch (error) {
-        fail(errText(error))
+      if (tool.risk === 'read') {
+        // 只读且放行：起飞不阻塞；落库顺序由 flushFlying 保证。
+        flying.push({ call, outcome: this.runTool(call, tool, args, signal) })
+        continue
       }
+      // 写与执行不和在飞的只读并发：先把它们收干净再动手。
+      await flushFlying()
+      this.finishCall(call, await this.runTool(call, tool, args, signal))
     }
+    await flushFlying()
+  }
+
+  /** 跑一个工具调用并把异常折进结果里（永不 reject），正文先过遮红观察者链。 */
+  private async runTool(
+    call: ToolCall,
+    tool: ToolEntry,
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<ToolOutcome> {
+    try {
+      const output = await tool.run(args, { cwd: this.cwd, signal })
+      const rawText = typeof output === 'string' ? output : output.text
+      // 工具结果里的密钥形状字符串不进会话日志，也不回显给模型（遮红挂在观察者链上）。
+      const text = this.deps.guards.observe(call.name, rawText)
+      const images = typeof output === 'string' ? undefined : output.images
+      const stored: string | { text: string; images?: string[] } =
+        text === rawText ? output : images !== undefined && images.length > 0 ? { text, images } : text
+      const imageNote = images !== undefined && images.length > 0 ? `\n[附 ${images.length} 张截图]` : ''
+      return { text: text + imageNote, stored }
+    } catch (error) {
+      const message = errText(error)
+      return { text: message, stored: message, error: 'tool-error' }
+    }
+  }
+
+  /** 落库一条 tool 消息并广播结果事件。 */
+  private finishCall(call: ToolCall, outcome: ToolOutcome): void {
+    this.session.appendTool(call.id, call.name, outcome.stored, outcome.error)
+    this.deps.emit({
+      type: 'tool/result',
+      callId: call.id,
+      text: outcome.text,
+      ...(outcome.error !== undefined ? { error: outcome.error } : {}),
+    })
   }
 }
 
 export { LlmError }
+
+/** 一次工具调用的落库与广播产物（runTool 保证永不 reject）。 */
+type ToolOutcome = {
+  /** 发给界面与模型的文本（已过遮红；带图时附截图说明）。 */
+  text: string
+  /** 落进会话日志的形状（带图时是对象）。 */
+  stored: string | { text: string; images?: string[] }
+  /** undefined = 成功；tool-error = 执行失败；rejected = 被守卫拒绝。 */
+  error?: 'tool-error' | 'rejected'
+}
