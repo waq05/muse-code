@@ -82,6 +82,11 @@ const PROTECTED_INSTRUCTION_BASENAMES = new Set([
   'config.yml',
   'settings.json',
   'policy.rules',
+  // dsc 自己的控制文件：插件注册表（LSP/MCP/browser 的可执行配置都在里面）、
+  // 钩子配置与钩子脚本的批准名单——改批准名单等于自己给自己盖章（2026-09-29 审查补）。
+  'plugins.json',
+  'hooks.json',
+  'hooks-trusted.json',
 ])
 
 /** 判定结果：null = 允许；字符串 = 拒绝原因（会原样进工具结果，模型看得见）。 */
@@ -162,7 +167,12 @@ export function writeHardBlockReason(target: string): PathVerdict {
 export function isProtectedInstruction(target: string, cwd: string): PathVerdict {
   const name = basename(target).toLowerCase()
   if (PROTECTED_INSTRUCTION_BASENAMES.has(name)) {
-    if (normalizeKey(target) === normalizeKey(joinHomeAbsolute('.dsc', 'settings.json'))) return null
+    // dsc 自己目录下的控制文件不豁免：它们就是权限体系本身，模型改它们等于自己给自己改权限
+    // （2026-09-29 审查发现原来的豁免让 ~/.dsc/settings.json 与 plugins.json 免卡可写）。
+    if (normalizeKey(target).startsWith(normalizeKey(DSC_HOME))) {
+      return `${name} 是 dsc 的控制文件，改动它必须用户当面确认一次。`
+    }
+    // 工作区外的 settings.json 多半是别的软件的（VS Code 用户设置这类），不归这层管。
     if (name === 'settings.json' && !isInsideCwd(cwd, target)) return null
     return `${name} 是给 agent 看的说明书或 dsc 的配置，改动它必须用户当面确认一次。`
   }
