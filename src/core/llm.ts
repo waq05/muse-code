@@ -6,7 +6,9 @@
  * `reasoning_content`。
  *
  * 重试策略：连接/HTTP 失败在**尚未收到任何流数据**前指数退避重试 2 次；
- * 流已开始则不重试（半截回复交给上层当错误处理）。
+ * 流已开始则不重试（半截回复交给上层当错误处理）。可重试的两类：fetch 抛出的
+ * 连接失败（`LlmError.retryable`）、以及带 429 或 5xx 状态码的 HTTP 响应。
+ * 用户取消（signal 已 abort）不重试。
  *
  * @module dsc/core/llm
  */
@@ -47,6 +49,8 @@ export interface StreamRequest {
   temperature?: number
   /** 思考开关（DeepSeek/GLM 系 `thinking` 参数）；undefined = 不注入，走端点默认。 */
   thinking?: 'enabled' | 'disabled'
+  /** OpenAI 系 `reasoning_effort` 的线上值；undefined = 不注入。与 thinking 二选一，由模型声明决定。 */
+  reasoningEffort?: string
   signal?: AbortSignal
 }
 
@@ -57,11 +61,63 @@ export function contentText(content: string | null | ChatContentPart[]): string 
   return content.map((part) => (part.type === 'text' ? part.text : '')).join('')
 }
 
+/** 取消息里的图像清单（data URL；给界面渲染缩略图用）。 */
+export function contentImages(content: string | null | ChatContentPart[]): string[] {
+  if (typeof content === 'string' || content === null) return []
+  return content.flatMap((part) => (part.type === 'image_url' ? [part.image_url.url] : []))
+}
+
 /** 粗估消息的字符量（图像每张按 4000 字符 ≈ 1000 token 估算，供压缩阈值用）。 */
 export function contentChars(content: string | null | ChatContentPart[]): number {
   if (content === null) return 0
   if (typeof content === 'string') return content.length
   return content.reduce((sum, part) => sum + (part.type === 'text' ? part.text.length : 4000), 0)
+}
+
+/**
+ * 把散落在历史里的 system 消息全部并进开头那条系统提示。
+ *
+ * 为什么要合并：不少 OpenAI 兼容网关（litellm 系的 hy3-a 就是）只认「第一条可以是
+ * system」，历史中间再冒一条 system 就直接 HTTP 400 `System message must be at the
+ * beginning`。外部插件（例如装进 ~/.dsc/plugins 的长期记忆插件）习惯用
+ * `transformMessages` 往末尾补一条 system，内容本身是有用的，所以不能丢——
+ * 并进头部既保住内容，也让任何插件都没法再把请求结构弄坏。
+ *
+ * @param messages - 组装好的请求消息；原数组不动。
+ * @returns 至多一条 system、且它排在最前的消息数组。
+ */
+export function foldSystemMessages(messages: ChatMessage[]): ChatMessage[] {
+  let head: ChatMessage | undefined
+  const rest: ChatMessage[] = []
+  for (const message of messages) {
+    if (message.role !== 'system') {
+      rest.push(message)
+      continue
+    }
+    const text = contentText(message.content)
+    if (head === undefined) {
+      head = text === '' ? { ...message, content: '' } : message
+      continue
+    }
+    if (text === '') continue
+    head = { ...head, content: `${contentText(head.content)}\n\n${text}` }
+  }
+  return head === undefined ? messages : [head, ...rest]
+}
+
+/**
+ * 把消息里的图像全部换成一句说明（当前模型没声明照片输入时用）。
+ * 整条删掉会让工具结果读起来缺一块，所以把原因留在正文里，模型知道自己是"没看到图"。
+ * @param messages - 组装好的请求消息；原数组不动。
+ * @param note - 替换进去的说明文字。
+ */
+export function dropImageParts(messages: ChatMessage[], note: string): ChatMessage[] {
+  return messages.map((message) => {
+    if (typeof message.content !== 'object' || message.content === null) return message
+    if (!message.content.some((part) => part.type === 'image_url')) return message
+    const text = contentText(message.content)
+    return { ...message, content: [{ type: 'text' as const, text: text === '' ? note : `${text}\n${note}` }] }
+  })
 }
 
 export interface StreamHandlers {
@@ -78,11 +134,18 @@ export interface StreamResult {
 }
 
 export class LlmError extends Error {
+  /** HTTP 状态码；fetch 自己抛的异常（连不上、DNS 失败、连接被切断）没有这个值。 */
   readonly status?: number
-  constructor(message: string, status?: number) {
+  /**
+   * 是否值得重试。true 只有一种情况：请求还没连上就失败（`streamOnce` 里 fetch 的 catch），
+   * 此时一个字节都没收到，重发是安全的。HTTP 429 / 5xx 由 `status` 判定，不看这个标记。
+   */
+  readonly retryable: boolean
+  constructor(message: string, status?: number, retryable = false) {
     super(message)
     this.name = 'LlmError'
     this.status = status
+    this.retryable = retryable
   }
 }
 
@@ -98,9 +161,9 @@ export async function streamChat(request: StreamRequest, handlers: StreamHandler
     } catch (error) {
       const retryable =
         attempt < MAX_ATTEMPTS &&
+        request.signal?.aborted !== true &&
         error instanceof LlmError &&
-        error.status !== undefined &&
-        (error.status === 429 || error.status >= 500)
+        (error.retryable || (error.status !== undefined && (error.status === 429 || error.status >= 500)))
       if (!retryable) throw error
       await delay(500 * 2 ** (attempt - 1), request.signal)
     }
@@ -110,7 +173,7 @@ export async function streamChat(request: StreamRequest, handlers: StreamHandler
 async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult> {
   const body: Record<string, unknown> = {
     model: request.model,
-    messages: serializeMessages(request.messages),
+    messages: serializeMessages(foldSystemMessages(request.messages)),
     stream: true,
     stream_options: { include_usage: true },
   }
@@ -123,6 +186,7 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
   if (request.maxTokens !== undefined) body.max_tokens = request.maxTokens
   if (request.temperature !== undefined) body.temperature = request.temperature
   if (request.thinking !== undefined) body.thinking = { type: request.thinking }
+  if (request.reasoningEffort !== undefined) body.reasoning_effort = request.reasoningEffort
 
   const response = await fetch(`${request.baseUrl}/chat/completions`, {
     method: 'POST',
@@ -133,7 +197,11 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
     body: JSON.stringify(body),
     signal: request.signal,
   }).catch((error: unknown) => {
-    throw new LlmError(`连接失败：${error instanceof Error ? error.message : String(error)}`)
+    throw new LlmError(
+      `连接失败：${error instanceof Error ? error.message : String(error)}`,
+      undefined,
+      true,
+    )
   })
 
   if (!response.ok || response.body === null) {

@@ -11,6 +11,8 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ChatContentPart, ChatMessage, ToolCall } from './llm.js'
+import type { CollaborationMode, PlanView, TodoItemView } from '../contract.js'
+import type { GoalSnapshot } from './goal.js'
 import { dropSessionMeta, patchSessionMeta, readSessionMeta } from './session-meta.js'
 import type { SessionMetaRecord } from './session-meta.js'
 
@@ -25,10 +27,51 @@ export interface SessionMeta {
 
 type SessionRecord =
   | ({ type: 'meta' } & SessionMeta)
-  | { type: 'user'; text: string }
+  | { type: 'user'; text: string; images?: string[] }
   | { type: 'assistant'; text: string; reasoning: string; toolCalls?: ToolCall[] }
   | { type: 'tool'; callId: string; name: string; text: string; images?: string[]; error?: string }
-  | { type: 'summary'; text: string }
+  | {
+      type: 'summary'
+      text: string
+      /**
+       * 摘要之外保留了尾部多少条消息（内存里的 `kept.length - 1`）。
+       * 磁盘是 append-only，摘要之前的原始记录一条都没删，重放时只能靠这个数字
+       * 知道该从末尾留下多少条（{@link Session.load} 的 `case 'summary'`）。
+       * 老日志没有这个字段，按 0 处理。
+       */
+      keep?: number
+    }
+  /**
+   * 会话状态（模式、清单、计划、目标……）：一条记录一个条目，谁的功能谁自己写。
+   * 存储层不认识具体功能，`id` 与负载类型见 {@link SessionStateMap}。
+   */
+  | { type: 'state'; id: string; payload: unknown }
+  /**
+   * 下面四种是早先「一种功能一条记录」的写法，已经不再写入，
+   * 只为读得回老会话日志而留着（{@link Session.load} 的兼容分支）。
+   */
+  | { type: 'mode'; mode: CollaborationMode }
+  | { type: 'todo'; items: TodoItemView[] }
+  | { type: 'plan'; plan: PlanView }
+  | { type: 'goal'; goal: GoalSnapshot }
+
+/**
+ * 会话日志里的「状态」条目表：id → 那个功能点存的负载。
+ *
+ * 这些内容不发进请求体（协议里没有它们的位置），但恢复历史会话时必须在场。
+ * 功能点想加自己的状态就用声明合并加一行，不必回来改存储层：
+ * `declare module '../core/session.js' { interface SessionStateMap { memory: MyRecord } }`。
+ */
+export interface SessionStateMap {
+  /** 协作模式（mode 插件写）。 */
+  mode: CollaborationMode
+  /** 任务清单整表，最后一条生效（todo 插件写）。 */
+  todos: TodoItemView[]
+  /** 最近一份计划及其评审结果（plan 插件写）。 */
+  plan: PlanView
+  /** 会话目标快照（goal 插件写）。 */
+  goal: GoalSnapshot
+}
 
 /**
  * 用户拒绝某次工具调用时，写进那条工具结果的固定回执文案（由 loop 的拒绝分支产出）。
@@ -65,12 +108,24 @@ export class Session {
    * 只在 jsonl 的 tool 记录里存一份，重放历史时单独交给 transcript 决定卡片状态。
    */
   readonly toolErrors = new Map<string, string>()
+  /**
+   * 会话状态条目（见 {@link SessionStateMap}）。
+   * 不发进请求体，恢复历史会话时由 {@link Session.load} 逐行填回来。
+   */
+  private readonly stateById = new Map<string, unknown>()
 
-  private constructor(meta: SessionMeta, file: string, initialMessages: ChatMessage[] = [], restored = false) {
+  private constructor(
+    meta: SessionMeta,
+    file: string,
+    initialMessages: ChatMessage[] = [],
+    restored = false,
+    state?: ReadonlyMap<string, unknown>,
+  ) {
     this.meta = meta
     this.file = file
     this.messages.push(...initialMessages)
     this.metaWritten = restored
+    if (state !== undefined) for (const [id, payload] of state) this.stateById.set(id, payload)
   }
 
   /**
@@ -93,6 +148,7 @@ export class Session {
     let meta: SessionMeta | undefined
     const messages: ChatMessage[] = []
     const toolErrors = new Map<string, string>()
+    const state = new Map<string, unknown>()
     for (const line of lines) {
       let record: SessionRecord
       try {
@@ -105,7 +161,16 @@ export class Session {
           meta = { id: record.id, cwd: record.cwd, createdAt: record.createdAt }
           break
         case 'user':
-          messages.push({ role: 'user', content: record.text })
+          messages.push({
+            role: 'user',
+            content:
+              record.images !== undefined && record.images.length > 0
+                ? [
+                    { type: 'text', text: record.text },
+                    ...record.images.map((url): ChatContentPart => ({ type: 'image_url', image_url: { url } })),
+                  ]
+                : record.text,
+          })
           break
         case 'assistant': {
           messages.push({
@@ -138,8 +203,33 @@ export class Session {
           if (error !== undefined) toolErrors.set(record.callId, error)
           break
         }
-        case 'summary':
+        case 'summary': {
+          // 摘要之前的原始记录还留在磁盘上（append-only），逐条读回来等于这次压缩白做；
+          // 所以这里把已经读到的消息换成「摘要 + 末尾 keep 条」。尾部必须在清空之前取。
+          // 老日志没有 keep 字段，按 0 走：结果是「摘要 + 摘要之后的记录」。这是刻意的向后兼容，
+          // 比把摘要之前的原文整段读回来（压缩等于没压）好得多。
+          const keep = record.keep ?? 0
+          const tail = keep > 0 ? messages.slice(-keep) : []
+          messages.length = 0
           messages.push({ role: 'user', content: record.text })
+          messages.push(...tail)
+          break
+        }
+        case 'state':
+          state.set(record.id, record.payload)
+          break
+        // ↓ 老会话日志的兼容分支（这四种记录已不再写入），按现在的条目名归位
+        case 'mode':
+          state.set('mode', record.mode)
+          break
+        case 'todo':
+          state.set('todos', record.items)
+          break
+        case 'plan':
+          state.set('plan', record.plan)
+          break
+        case 'goal':
+          state.set('goal', record.goal)
           break
       }
     }
@@ -149,14 +239,28 @@ export class Session {
       keepPath ? file : join(sessionsRoot(), slugCwd(meta.cwd), `${meta.id}.jsonl`),
       messages,
       true,
+      state,
     )
     for (const [callId, error] of toolErrors) session.toolErrors.set(callId, error)
     return session
   }
 
-  appendUser(text: string): void {
-    this.messages.push({ role: 'user', content: text })
-    this.write({ type: 'user', text })
+  /**
+   * 追加用户消息。带图时消息以多模态 content 数组落库（要模型声明了照片输入才发得出去；
+   * JSONL 记 text + images 两个字段，跟工具结果带图的写法一致）。
+   */
+  appendUser(text: string, images?: string[]): void {
+    const withImages = images !== undefined && images.length > 0
+    this.messages.push({
+      role: 'user',
+      content: withImages
+        ? [
+            { type: 'text', text },
+            ...images.map((url): ChatContentPart => ({ type: 'image_url', image_url: { url } })),
+          ]
+        : text,
+    })
+    this.write({ type: 'user', text, ...(withImages ? { images } : {}) })
   }
 
   appendAssistant(text: string, reasoning: string, toolCalls: ToolCall[]): void {
@@ -215,11 +319,42 @@ export class Session {
     })
   }
 
-  /** 压缩落库：替换内存历史并写 summary 标记（磁盘历史保留原文，重放时同样被折叠）。 */
+  /**
+   * 压缩落库：内存里换成「摘要 + 保留的尾部」，磁盘上追加一条 summary 记录。
+   *
+   * `keep` 记下保留了多少条尾部消息：日志是 append-only，摘要之前的原始记录一条都不会删，
+   * 重放时只能靠这个数字知道该从磁盘记录构建出的消息里留下末尾几条
+   * （见 {@link Session.load} 的 `case 'summary'`）。
+   * @param summaryText - 摘要正文（第一条保留消息的 content）。
+   * @param kept - 压缩后内存里要留的消息，第一条就是摘要本身。
+   */
   replaceWithSummary(summaryText: string, kept: ChatMessage[]): void {
     this.messages.length = 0
     this.messages.push(...kept)
-    this.write({ type: 'summary', text: summaryText })
+    // 尾部不重新写盘：那得把 tool 记录的 name 字段反推回来，得不偿失。
+    // kept[0] 是摘要本身，所以减一才是尾部条数。
+    this.write({ type: 'summary', text: summaryText, keep: Math.max(kept.length - 1, 0) })
+  }
+
+  /**
+   * 读一个会话状态条目（恢复历史会话时由日志重放填回）。
+   * @param id - 条目名，见 {@link SessionStateMap}。
+   * @returns 这个功能点最后写进去的负载；没写过就是 undefined。
+   */
+  state<K extends keyof SessionStateMap>(id: K): SessionStateMap[K] | undefined {
+    // 负载从磁盘 JSON 里来，读的时候不重新校验（各功能点自己负责读懂自己存的东西，
+    // 例如 GoalStore.restore 会挑坏值），这里只做条目名的查表。
+    return this.stateById.get(id as string) as SessionStateMap[K] | undefined
+  }
+
+  /**
+   * 写一个会话状态条目：内存里换掉，磁盘上追加一条（日志是 append-only，最后一条生效）。
+   * @param id - 条目名，见 {@link SessionStateMap}。
+   * @param payload - 这个功能点自己的负载。
+   */
+  appendState<K extends keyof SessionStateMap>(id: K, payload: SessionStateMap[K]): void {
+    this.stateById.set(id as string, payload)
+    this.write({ type: 'state', id: String(id), payload })
   }
 
   close(): void {

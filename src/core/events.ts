@@ -8,8 +8,8 @@
 
 /** MiniAgent 事件。 */
 export type CoreEvent =
-  /** 用户输入已入会话（回显）。 */
-  | { type: 'user'; text: string }
+  /** 用户输入已入会话（回显）；images 是随消息发出去的 data URL 清单。 */
+  | { type: 'user'; text: string; images?: string[] }
   /** 一次模型请求的定稿（直播尾此刻应折叠为定稿条目）。 */
   | { type: 'message'; text: string; reasoning: string }
   /** 流式增量（直播尾）。 */

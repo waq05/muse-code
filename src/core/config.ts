@@ -21,9 +21,10 @@ import {
   type FileConfig,
   type FileProvider,
 } from './migrate.js'
+import { readModelCaps, type ModelCaps } from './model-caps.js'
 
-/** 一个可对话的模型。 */
-export interface ModelInfo {
+/** 一个可对话的模型（能力声明见 core/model-caps.ts）。 */
+export interface ModelInfo extends ModelCaps {
   id: string
   name: string
   contextWindow: number
@@ -84,6 +85,8 @@ function toProvider(name: string, raw: FileProvider): ProviderConfig | null {
       name: model.name ?? model.id,
       contextWindow: typeof model.contextWindow === 'number' ? model.contextWindow : 128_000,
       maxTokens: typeof model.maxTokens === 'number' ? model.maxTokens : 8_192,
+      // 能力字段缺省时等价于旧行为：thinking 开关 + 四档 + 只吃文本
+      ...readModelCaps(model),
     })),
   }
 }

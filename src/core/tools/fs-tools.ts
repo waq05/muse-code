@@ -1,12 +1,14 @@
 /**
- * 文件工具三件套：read / write / edit。路径相对会话 cwd 解析；
- * 个人版不做目录白名单（写类操作由审批卡兜底）。
+ * 文件工具三件套：read / write / edit。路径相对会话 cwd 解析。
+ * 三道护栏长在工具自己肚子里（不靠调用方自觉）：凭据文件不许读、
+ * 系统关键路径不许写、没读过就不许整写覆盖。写要不要经用户点头由审批层管。
  *
  * @module dsc/core/tools/fs-tools
  */
 import { promises as fs } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import type { ToolEntry } from '../tools.js'
+import { noteRead, noteWrite, readBlockReason, staleOverwriteReason, writeHardBlockReason } from '../path-policy.js'
 
 const READ_LINE_LIMIT = 2000
 
@@ -22,7 +24,10 @@ const str = (v: unknown, name: string): string => {
 
 export const readTool: ToolEntry = {
   name: 'read',
-  description: '读取文本文件内容。可指定起始行（1-based）与行数。适合读代码、配置、日志。',
+  description:
+    '读取文本文件内容，输出「行号 + 制表符 + 原文」，可指定起始行与行数。' +
+    '读代码、配置、日志一律用它，不要用 bash 跑 cat/head/tail——那样拿不到行号，也没法续读。' +
+    '要整写覆盖一个已存在的文件之前必须先读过它，本工具会记下你读过哪个版本。',
   parameters: {
     type: 'object',
     properties: {
@@ -35,7 +40,10 @@ export const readTool: ToolEntry = {
   risk: 'read',
   async run(args, ctx) {
     const file = abs(ctx.cwd, args.path)
+    const blocked = readBlockReason(file)
+    if (blocked !== null) throw new Error(blocked)
     const raw = await fs.readFile(file, 'utf8')
+    noteRead(file)
     const lines = raw.split(/\r?\n/)
     const start = Math.max(1, typeof args.offset === 'number' ? Math.floor(args.offset) : 1)
     const limit = Math.max(1, typeof args.limit === 'number' ? Math.floor(args.limit) : READ_LINE_LIMIT)
@@ -49,7 +57,10 @@ export const readTool: ToolEntry = {
 
 export const writeTool: ToolEntry = {
   name: 'write',
-  description: '把内容整体写入文件（覆盖）。目录不存在会自动创建。',
+  description:
+    '把内容整体写入文件（覆盖原内容），目录不存在会自动创建。' +
+    '改已有文件优先用 edit 做定点替换；只有在「新建文件」或「整篇重写」时才用本工具。' +
+    '已存在的文件必须先 read 过才允许覆盖，否则本工具会拒绝并让你先去读。',
   parameters: {
     type: 'object',
     properties: {
@@ -61,16 +72,24 @@ export const writeTool: ToolEntry = {
   risk: 'write',
   async run(args, ctx) {
     const file = abs(ctx.cwd, args.path)
+    const hard = writeHardBlockReason(file)
+    if (hard !== null) throw new Error(hard)
+    const stale = staleOverwriteReason(file)
+    if (stale !== null) throw new Error(stale)
     const content = str(args.content, 'content')
     await fs.mkdir(resolve(file, '..'), { recursive: true })
     await fs.writeFile(file, content, 'utf8')
+    noteWrite(file)
     return `已写入 ${file}（${content.length} 字符）`
   },
 }
 
 export const editTool: ToolEntry = {
   name: 'edit',
-  description: '对文件做一次精确字符串替换。old 必须与文件内容唯一匹配（原样替换为 new）。',
+  description:
+    '对文件做一次精确字符串替换：old 必须与文件内容逐字唯一匹配，然后原样换成 new。' +
+    '改一两处代码就用它，不要把整个文件读出来再 write 回去。' +
+    'old 匹配多处会失败，此时加长上下文（多带几行）让它唯一，而不是改用 write 覆盖。',
   parameters: {
     type: 'object',
     properties: {
@@ -83,6 +102,8 @@ export const editTool: ToolEntry = {
   risk: 'write',
   async run(args, ctx) {
     const file = abs(ctx.cwd, args.path)
+    const hard = writeHardBlockReason(file)
+    if (hard !== null) throw new Error(hard)
     const oldText = str(args.old, 'old')
     const newText = str(args.new, 'new')
     const raw = await fs.readFile(file, 'utf8')
@@ -90,6 +111,7 @@ export const editTool: ToolEntry = {
     if (first < 0) throw new Error('old 内容在文件中不存在')
     if (raw.indexOf(oldText, first + 1) >= 0) throw new Error('old 内容在文件中匹配多处，请加长上下文使其唯一')
     await fs.writeFile(file, raw.slice(0, first) + newText + raw.slice(first + oldText.length), 'utf8')
+    noteWrite(file)
     return `已编辑 ${file}`
   },
 }

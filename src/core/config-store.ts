@@ -13,13 +13,23 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import YAML from 'yaml'
-import type { ModelConfigView, ProviderDraft, ProviderModelView, ProviderView } from '../contract.js'
+import type { ModelConfigView, Modality, ProviderDraft, ProviderModelView, ProviderView, ThinkingLevel, ThinkingParam } from '../contract.js'
+import {
+  DEFAULT_THINKING_LEVELS,
+  DEFAULT_THINKING_PARAM,
+  MODALITIES,
+  THINKING_LEVELS,
+  THINKING_PARAMS,
+  normalizeModalities,
+  readModelCaps,
+} from './model-caps.js'
 import {
   DSC_CONFIG_YAML,
   DSC_CREDENTIALS,
   DSH_CREDENTIALS,
   parseTolerantYaml,
   type FileConfig,
+  type FileModel,
   type FileProvider,
 } from './migrate.js'
 
@@ -47,8 +57,10 @@ export function writeConfigDoc(doc: FileConfig): void {
     }
   }
   const header =
-    '# dsc 模型配置（设置界面「模型」分区可直接编辑，也可手改本文件）\n' +
-    '# key 来源顺序：apiKeyEnv 环境变量 → ~/.dsc/credentials.yaml → ~/.dsh/.credentials.yaml\n'
+    '# Muse Code 模型配置（设置界面「模型」分区可直接编辑，也可手改本文件）\n' +
+    '# key 来源顺序：apiKeyEnv 环境变量 → ~/.dsc/credentials.yaml → ~/.dsh/.credentials.yaml\n' +
+    '# 模型可选字段：thinkingLevels（支持哪些思考档位）、thinkingParam（档位发 thinking 还是 reasoning_effort）、\n' +
+    '#   effortMap（reasoning_effort 下各档的线上值）、modalities（text/image/video）；不写 = 四档 + thinking 开关 + 只吃文本\n'
   writeFileSync(DSC_CONFIG_YAML, `${header}${YAML.stringify(doc)}`, 'utf8')
 }
 
@@ -94,6 +106,7 @@ function toModelViews(models: FileProvider['models'] | undefined): ProviderModel
     name: String(model.name ?? model.id ?? ''),
     contextWindow: typeof model.contextWindow === 'number' ? model.contextWindow : 128_000,
     maxTokens: typeof model.maxTokens === 'number' ? model.maxTokens : 8_192,
+    ...readModelCaps(model),
   }))
 }
 
@@ -123,7 +136,23 @@ export function readModelConfig(): ModelConfigView {
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,40}$/
 
-/** 校验并归一化端点草稿（抛错的消息可直接展示给用户）。 */
+/**
+ * 草稿里的能力字段：旧渲染进程或手拼的调用可能整个不带这些字段，
+ * 缺省按 {@link DEFAULT_CAPS} 那套走，不能让校验层因为 undefined 直接崩。
+ */
+function capsOf(model: ProviderModelView): Required<Pick<ProviderModelView, 'thinkingLevels' | 'thinkingParam' | 'effortMap' | 'modalities'>> {
+  return {
+    thinkingLevels: model.thinkingLevels ?? [...DEFAULT_THINKING_LEVELS],
+    thinkingParam: model.thinkingParam ?? DEFAULT_THINKING_PARAM,
+    effortMap: model.effortMap ?? {},
+    modalities: model.modalities ?? (['text'] as Modality[]),
+  }
+}
+
+/**
+ * 校验并归一化端点草稿（抛错的消息可直接展示给用户）。
+ * 草稿从渲染进程经 IPC 过来，属于跨进程边界，能力字段在这里过一遍枚举。
+ */
 export function validateDraft(draft: ProviderDraft): void {
   if (!NAME_PATTERN.test(draft.name)) {
     throw new Error(`端点名「${draft.name}」非法：用小写字母、数字、下划线或短横线，以字母或数字开头`)
@@ -137,7 +166,46 @@ export function validateDraft(draft: ProviderDraft): void {
     if (!Number.isFinite(model.contextWindow) || model.contextWindow <= 0) {
       throw new Error(`模型 ${model.id} 的上下文窗口要是正整数（不知道就填 128000）`)
     }
+    const caps = capsOf(model)
+    if (!THINKING_PARAMS.includes(caps.thinkingParam)) {
+      throw new Error(`模型 ${model.id} 的思考档位字段「${caps.thinkingParam}」不认识`)
+    }
+    for (const level of caps.thinkingLevels) {
+      if (!THINKING_LEVELS.includes(level)) throw new Error(`模型 ${model.id} 的思考档位「${level}」不认识`)
+    }
+    if (caps.thinkingParam !== 'none' && caps.thinkingLevels.length === 0) {
+      throw new Error(`模型 ${model.id} 没勾任何思考档位：要么勾一档，要么把档位字段选成「不发思考字段」`)
+    }
+    for (const modality of caps.modalities) {
+      if (!MODALITIES.includes(modality)) throw new Error(`模型 ${model.id} 的输入类型「${modality}」不认识`)
+    }
   }
+}
+
+/** 能力字段只在偏离缺省时写进 YAML，免得每次编辑都给每个模型挂一串默认值。 */
+function toFileModel(model: ProviderModelView): FileModel {
+  const caps = capsOf(model)
+  const entry: FileModel = {
+    id: model.id.trim(),
+    name: model.name.trim() === '' ? model.id.trim() : model.name.trim(),
+    contextWindow: Math.round(model.contextWindow),
+    maxTokens: model.maxTokens > 0 ? Math.round(model.maxTokens) : 8_192,
+  }
+  const levels = THINKING_LEVELS.filter((level: ThinkingLevel) => caps.thinkingLevels.includes(level))
+  if (levels.join(',') !== DEFAULT_THINKING_LEVELS.join(',')) entry.thinkingLevels = levels
+  const param = THINKING_PARAMS.includes(caps.thinkingParam) ? caps.thinkingParam : DEFAULT_THINKING_PARAM
+  if (param !== DEFAULT_THINKING_PARAM) entry.thinkingParam = param
+  if (param === 'reasoning-effort') {
+    const map: Record<string, string | null> = {}
+    for (const level of levels) {
+      const value = caps.effortMap[level]
+      if (value !== undefined) map[level] = value
+    }
+    if (Object.keys(map).length > 0) entry.effortMap = map
+  }
+  const modalities = normalizeModalities(caps.modalities)
+  if (modalities.length > 1) entry.modalities = modalities
+  return entry
 }
 
 /**
@@ -157,12 +225,7 @@ export function upsertProvider(oldName: string | null, draft: ProviderDraft): st
     displayName: draft.displayName.trim() === '' ? name : draft.displayName.trim(),
     baseURL: draft.baseUrl.trim().replace(/\/+$/, ''),
     apiKeyEnv: keyRef,
-    models: draft.models.map((model) => ({
-      id: model.id.trim(),
-      name: model.name.trim() === '' ? model.id.trim() : model.name.trim(),
-      contextWindow: Math.round(model.contextWindow),
-      maxTokens: model.maxTokens > 0 ? Math.round(model.maxTokens) : 8_192,
-    })),
+    models: draft.models.map(toFileModel),
   }
   if (oldName !== null && oldName !== name) delete doc.providers[oldName]
   doc.providers[name] = provider

@@ -451,7 +451,7 @@ export async function takeScreenshot(
     text:
       `这是整个桌面的截图，尺寸 ${String(imageWidth)}×${String(imageHeight)}；` +
       `屏幕物理分辨率 ${String(bounds.width)}×${String(bounds.height)}，起点 (${String(bounds.left)}, ${String(bounds.top)})。` +
-      `要点的坐标直接用这张图上的像素值，dsc 会换算（当前换算系数 ${scale.toFixed(2)}）。` +
+      `要点的坐标直接用这张图上的像素值，Muse Code 会换算（当前换算系数 ${scale.toFixed(2)}）。` +
       `鼠标现在指的位置可用 cursor 查。`,
     images: [`data:${mime};base64,${base64}`],
     scale,

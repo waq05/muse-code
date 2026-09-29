@@ -153,7 +153,7 @@ async function browseGitHub(source: MarketSource): Promise<MarketEntry[]> {
     ...(await mapLimit(dirs, BROWSE_CONCURRENCY, async (name): Promise<MarketEntry> => {
       const entry: MarketEntry = {
         name,
-        description: '（没读到描述，安装后本地解析）',
+        description: '未提供描述，安装后本地解析',
         source: source.name,
         kind: 'dir',
         root: `${prefix}${name}`,
@@ -173,7 +173,7 @@ async function browseGitHub(source: MarketSource): Promise<MarketEntry[]> {
     ...(await mapLimit(flatSkills.sort(), BROWSE_CONCURRENCY, async (path): Promise<MarketEntry> => {
       const entry: MarketEntry = {
         name: basename(path, '.md'),
-        description: '（没读到描述，安装后本地解析）',
+        description: '未提供描述，安装后本地解析',
         source: source.name,
         kind: 'flat',
         root: path.slice(0, Math.max(0, path.lastIndexOf('/'))),

@@ -14,18 +14,27 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import YAML from 'yaml'
+import type { RawModelCaps } from './model-caps.js'
 
 export const DSH_SETTINGS = join(homedir(), '.dsh', 'settings.yaml')
 export const DSH_CREDENTIALS = join(homedir(), '.dsh', '.credentials.yaml')
 export const DSC_CONFIG_YAML = join(homedir(), '.dsc', 'config.yaml')
 export const DSC_CREDENTIALS = join(homedir(), '.dsc', 'credentials.yaml')
 
+/** config.yaml 里一个模型条目：除 id 外都可缺省，能力字段见 core/model-caps.ts。 */
+export interface FileModel extends RawModelCaps {
+  id: string
+  name?: string
+  contextWindow?: number
+  maxTokens?: number
+}
+
 /** dsc config.yaml 里一个端点的形状。 */
 export interface FileProvider {
   displayName: string
   baseURL: string
   apiKeyEnv?: string
-  models: { id: string; name: string; contextWindow: number; maxTokens: number }[]
+  models: FileModel[]
 }
 
 /** dsc config.yaml 的文件形状。 */
@@ -50,7 +59,16 @@ interface RawProvider {
   apiKeyEnv?: string
   api?: string
   baseURL?: string
-  models?: { id?: string; name?: string; contextWindow?: number; maxTokens?: number }[]
+  models?: {
+    id?: string
+    name?: string
+    contextWindow?: number
+    maxTokens?: number
+    /** dsh 侧的输入模态声明（`[text, image]` 之类）。 */
+    inputModalities?: unknown
+    /** dsh 侧的档位映射：false = 不支持思考，对象 = 档位 → 端点上的线上值。 */
+    reasoningEfforts?: unknown
+  }[]
 }
 
 /** 解析含 dsh 特有 tag（`!!js`）的 YAML：失败则剥掉这些行重试。 */
@@ -79,12 +97,22 @@ export function extractDshProviders(doc: Record<string, unknown>): Record<string
     const models: FileProvider['models'] = []
     for (const model of raw.models ?? []) {
       if (typeof model?.id !== 'string') continue
-      models.push({
+      const entry: FileModel = {
         id: model.id,
         name: typeof model.name === 'string' ? model.name : model.id,
         contextWindow: typeof model.contextWindow === 'number' ? model.contextWindow : 128_000,
         maxTokens: typeof model.maxTokens === 'number' ? model.maxTokens : 8_192,
-      })
+      }
+      // dsh 侧已经写清楚的能力声明一起搬过来，省得用户在界面上重填一遍
+      if (Array.isArray(model.inputModalities)) entry.modalities = model.inputModalities
+      const efforts = model.reasoningEfforts
+      if (efforts === false) entry.thinkingLevels = []
+      else if (efforts !== null && typeof efforts === 'object') {
+        entry.thinkingLevels = Object.keys(efforts as Record<string, unknown>)
+        entry.effortMap = efforts
+        entry.thinkingParam = 'reasoning-effort'
+      }
+      models.push(entry)
     }
     if (models.length === 0) continue
     providers[name] = {

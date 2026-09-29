@@ -16,19 +16,22 @@ import type { ChatMessage, StreamResult, ToolSchema } from './llm.js'
 import { LlmError, streamChat } from './llm.js'
 import type { CoreEvent } from './events.js'
 import type { Session } from './session.js'
-import { REJECTED_TOOL_TEXT } from './session.js'
-import type { ApprovalHandler } from './approval.js'
-import type { ToolEntry } from './tools.js'
+import type { ToolGuardChain } from './tool-guards.js'
+import { callFacts, type ToolEntry } from './tools.js'
 
 export interface AgentDeps {
   /** 每次请求时动态读取（支持 /model 热切换）。 */
   route(): { baseUrl: string; apiKey: string; model: string; maxTokens?: number; temperature?: number; thinking?: 'enabled' | 'disabled' }
   systemPrompt(): string
   tools(): ToolEntry[]
-  approval: ApprovalHandler
+  /**
+   * 工具守卫链：一次调用动手之前该问谁，由链上的人自己说。
+   * 循环只问结果（拦 / 免问 / 照常），不知道也不该知道链上有模式闸门、审批卡还是别的谁。
+   */
+  guards: ToolGuardChain
   emit(event: CoreEvent): void
-  /** 每轮请求前的自动压缩检查（估算超阈值时折叠历史）；缺省不启用。 */
-  autoCompact?(): Promise<void>
+  /** 每轮请求前的一次维护动作（上下文压缩检查挂在这里）；缺省不启用。 */
+  beforeRequest?(): Promise<void>
   /**
    * 组装好「发给模型的那份消息」之后的改写钩子（只影响请求体，不改会话日志）。
    * 插件用它丢掉过期截图之类「留在历史里只会撑上下文、对下一轮没用」的内容。
@@ -76,9 +79,13 @@ export class MiniAgent {
     this.session = session
   }
 
-  followup(text: string): void {
-    this.session.appendUser(text)
-    this.deps.emit({ type: 'user', text })
+  /**
+   * 追加一条用户消息并排队跑一轮。
+   * @param images - 随消息发送的图片（data URL 清单）；模型收不收图由请求前的改写决定。
+   */
+  followup(text: string, images?: string[]): void {
+    this.session.appendUser(text, images)
+    this.deps.emit({ type: 'user', text, ...(images !== undefined && images.length > 0 ? { images } : {}) })
     this.enqueueTurn()
   }
 
@@ -108,7 +115,7 @@ export class MiniAgent {
     this.abort = abort
     this.deps.emit({ type: 'turn/start' })
     try {
-      await this.deps.autoCompact?.()
+      await this.deps.beforeRequest?.()
       if (abort.signal.aborted) throw new Error('aborted')
       for (;;) {
         const result = await this.requestOnce(abort.signal)
@@ -195,25 +202,31 @@ export class MiniAgent {
         fail(`参数不是合法 JSON：${summarizeArgs(call.arguments)}`)
         continue
       }
+      // 一次调用动手之前先问守卫链：模式档不许改文件、免打扰档不许弹卡、审批卡等人点头，
+      // 这些都是链上的人自己说的，循环不知道也不该知道是谁。
+      const verdict = await this.deps.guards.gate({
+        toolName: call.name,
+        risk: tool.risk,
+        cwd: this.cwd,
+        args,
+        signal,
+        ...callFacts(args, this.cwd),
+      })
+      if (verdict.action === 'deny') {
+        this.session.appendTool(call.id, call.name, verdict.reason, 'rejected')
+        this.deps.emit({ type: 'tool/result', callId: call.id, text: verdict.reason, error: 'rejected' })
+        continue
+      }
       try {
-        if (tool.risk !== 'read') {
-          const decision = await this.deps.approval.decide(
-            { toolName: call.name, argsSummary: summarizeArgs(call.arguments), args, cwd: this.cwd },
-            signal,
-          )
-          if (decision === 'reject') {
-            this.session.appendTool(call.id, call.name, REJECTED_TOOL_TEXT, 'rejected')
-            this.deps.emit({ type: 'tool/result', callId: call.id, text: REJECTED_TOOL_TEXT, error: 'rejected' })
-            continue
-          }
-        }
         const output = await tool.run(args, { cwd: this.cwd, signal })
-        const text = typeof output === 'string' ? output : output.text
-        const imageNote =
-          typeof output === 'object' && output.images !== undefined && output.images.length > 0
-            ? `\n[附 ${output.images.length} 张截图]`
-            : ''
-        this.session.appendTool(call.id, call.name, output)
+        const rawText = typeof output === 'string' ? output : output.text
+        // 工具结果里的密钥形状字符串不进会话日志，也不回显给模型（遮红挂在观察者链上）。
+        const text = this.deps.guards.observe(call.name, rawText)
+        const images = typeof output === 'string' ? undefined : output.images
+        const stored: string | { text: string; images?: string[] } =
+          text === rawText ? output : images !== undefined && images.length > 0 ? { text, images } : text
+        const imageNote = images !== undefined && images.length > 0 ? `\n[附 ${images.length} 张截图]` : ''
+        this.session.appendTool(call.id, call.name, stored)
         this.deps.emit({ type: 'tool/result', callId: call.id, text: text + imageNote })
       } catch (error) {
         fail(errText(error))

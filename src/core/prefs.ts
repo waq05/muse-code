@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { ApprovalPolicy, EffortLevel, MarketSource, SessionSortKey, ThemeMode, UiDensity, UiFontSize, UiPrefsView } from '../contract.js'
+import type { ApprovalPolicy, ArchivedFilter, EffortLevel, MarketSource, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiFontSize, UiPrefsView } from '../contract.js'
 
 export const DSC_SETTINGS_JSON = join(homedir(), '.dsc', 'settings.json')
 
@@ -36,7 +36,9 @@ export interface DscPrefs {
 
 const POLICIES: readonly ApprovalPolicy[] = ['readonly', 'auto-edit', 'full-access', 'ai-review']
 const EFFORTS: readonly EffortLevel[] = ['default', 'off', 'low', 'high', 'max']
-const SESSION_SORTS: readonly SessionSortKey[] = ['created', 'recent']
+const SESSION_SORTS: readonly SessionSortKey[] = ['manual', 'recent', 'created']
+const SESSION_GROUPS: readonly SessionGroupKey[] = ['workspace', 'tree', 'flat']
+const ARCHIVED_FILTERS: readonly ArchivedFilter[] = ['hide', 'show', 'only']
 const THEME_MODES: readonly ThemeMode[] = ['dark', 'light', 'system']
 const FONT_SIZES: readonly UiFontSize[] = ['sm', 'md', 'lg']
 const DENSITIES: readonly UiDensity[] = ['compact', 'standard', 'roomy']
@@ -51,7 +53,16 @@ export function readPrefs(): DscPrefs {
     defaultEffort: null,
     marketSources: [...DEFAULT_MARKET_SOURCES],
     closeToTray: true,
-    ui: { sessionSort: 'created', workspaceOrder: [], workspaceAliases: {}, themeMode: 'dark', fontSize: 'md', density: 'standard' },
+    ui: {
+      sessionSort: 'manual',
+      sessionGroup: 'workspace',
+      archivedFilter: 'hide',
+      workspaceOrder: [],
+      workspaceAliases: {},
+      themeMode: 'dark',
+      fontSize: 'md',
+      density: 'standard',
+    },
   }
   if (!existsSync(DSC_SETTINGS_JSON)) return prefs
   try {
@@ -63,6 +74,12 @@ export function readPrefs(): DscPrefs {
       const ui = doc.ui as Record<string, unknown>
       if (typeof ui.sessionSort === 'string' && SESSION_SORTS.includes(ui.sessionSort as SessionSortKey)) {
         prefs.ui.sessionSort = ui.sessionSort as SessionSortKey
+      }
+      if (typeof ui.sessionGroup === 'string' && SESSION_GROUPS.includes(ui.sessionGroup as SessionGroupKey)) {
+        prefs.ui.sessionGroup = ui.sessionGroup as SessionGroupKey
+      }
+      if (typeof ui.archivedFilter === 'string' && ARCHIVED_FILTERS.includes(ui.archivedFilter as ArchivedFilter)) {
+        prefs.ui.archivedFilter = ui.archivedFilter as ArchivedFilter
       }
       if (Array.isArray(ui.workspaceOrder)) {
         prefs.ui.workspaceOrder = [...new Set(ui.workspaceOrder.filter((entry): entry is string => typeof entry === 'string' && entry !== ''))]

@@ -16,10 +16,29 @@ export interface ApprovalRequest {
   cwd?: string
 }
 
-export type ApprovalDecision = 'allow-once' | 'reject'
+/**
+ * 审批裁决（内核层）。
+ *   allow-once     只放过这一次；
+ *   allow-session  同一会话内同类动作不再问；
+ *   allow-always   写一条永久前缀规则（危险动作由界面与策略层一起摘掉这一档）；
+ *   reject         拒。
+ */
+export type ApprovalDecision = 'allow-once' | 'allow-session' | 'allow-always' | 'reject'
+
+/** 一次审批裁决的附加要求。 */
+export interface ApprovalOptions {
+  /**
+   * 要求这一次必须问人：卡片上的原因写这句，并且跳过所有自动放行的档位
+   * （会话内已授权、规则允许、权限模式自动档、AI 审查自动放行）。
+   *
+   * 安全钩子用它把「这次得有人看一眼」落实到审批环节。硬地板（灾难命令、关键系统路径）
+   * 与说明书类文件那两层照旧优先——它们本来就是连卡都不弹直接拒。
+   */
+  forceAskReason?: string
+}
 
 export interface ApprovalHandler {
-  decide(request: ApprovalRequest, signal: AbortSignal): Promise<ApprovalDecision>
+  decide(request: ApprovalRequest, signal: AbortSignal, options?: ApprovalOptions): Promise<ApprovalDecision>
 }
 
 /** M1 / 自动化场景用：全部放行。 */

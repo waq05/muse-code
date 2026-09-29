@@ -32,7 +32,7 @@ export interface PluginMeta {
    */
   toggleable?: boolean
   /**
-   * 这个插件在设置面板里贡献的分区 id；UI 据此决定「配置」按钮出现与否。
+   * 这个插件贡献的设置分区 id；插件中心据此在详情页渲染它的配置表单。
    * 内置插件在 kernel 清单里声明；外部插件用 `export const settingsSection` 声明。
    */
   settingsSection?: string
@@ -61,10 +61,14 @@ export function getPluginMeta(file: string): PluginMeta | undefined {
  * （`ctx.skills.registerProvider` / `registerMarket`）两个扩展点；
  * 3 = 增加请求组装扩展点（`ctx.prompt.register` 附加系统提示、
  * `ctx.prompt.transformMessages` 改写发给模型的消息），并允许外部插件用
- * `export const settingsSection` 声明自己的设置分区 id（插件中心据此给「配置」按钮）；
- * 1 与 2 的插件照常挂载（版本检查只拦「高于内核」的声明）。
+ * `export const settingsSection` 声明自己的设置分区 id（插件中心据此在详情页画它的配置表单）；
+ * 4 = 增加三个内核扩展点：工具守卫链（`ctx.guards.register` / `registerObserver`，
+ * 工具动手之前的闸门与工具输出的改写）、快照片段（`ctx.surfaces.register`，界面每块状态
+ * 由那个功能点自己登记）、等人登记（`ctx.waiting.register`，哪张卡片正挂着等用户）；
+ * 会话记录也在此版多了按 id 存取状态这一对（`ctx.session.appendState` / `session.state`）。
+ * 1 到 3 的插件照常挂载（版本检查只拦「高于内核」的声明）。
  */
-export const KERNEL_API_VERSION = 3
+export const KERNEL_API_VERSION = 4
 
 /** 条目树的一项。 */
 export interface PluginEntry {
@@ -152,6 +156,19 @@ export function writePluginConfig(
 }
 
 /**
+ * 取一个插件此刻该用的配置：装配时传进来的那份作底，磁盘上那份覆盖它。
+ * 为什么要覆盖——设置分区保存走 {@link writePluginConfig} 改的是磁盘，
+ * 插件每次用值时现调这个函数，改完配置就不必重启宿主。
+ * @param file - 条目树里的插件 file（内置插件就是插件名，例如 `goal`）。
+ * @param passed - 装配时传进来的第二参数；不是对象就当没给。
+ */
+export function resolvePluginConfig(file: string, passed?: unknown): Record<string, unknown> {
+  const fromDisk = getPluginConfig(file)
+  if (passed === null || typeof passed !== 'object' || Array.isArray(passed)) return fromDisk
+  return { ...(passed as Record<string, unknown>), ...fromDisk }
+}
+
+/**
  * 这个插件该不该挂载。条目树没记录时回落到元数据声明的默认值
  * （`defaultDisabled` 为 true 的官方插件在用户主动打开之前不挂载）。
  */
@@ -190,7 +207,7 @@ export function checkApiVersion(apiVersion: number | undefined): string | null {
     return `apiVersion 非法（${String(apiVersion)}），应为整数`
   }
   if (apiVersion > KERNEL_API_VERSION) {
-    return `插件要求内核 API v${apiVersion}，当前内核 v${KERNEL_API_VERSION}（请升级 dsc）`
+    return `插件要求内核 API v${apiVersion}，当前内核 v${KERNEL_API_VERSION}（请升级 Muse Code）`
   }
   if (apiVersion < 1) {
     return `apiVersion 必须为正整数，收到 ${apiVersion}`
