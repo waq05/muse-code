@@ -365,3 +365,20 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 验收：五个单元自检全绿（sandbox 193 / schedule 207 / lsp 167 / browser 210 / self-improve 181，全部 0 FAIL，跑在临时 HOME 上），两份集成自检全绿（既有 95 条 + 新增 m5：起四次真内核验登记/挂载/热卸载/沙箱不误伤），全套既有回归 15 个脚本 0 FAIL。过程中自检真实逮到并修掉的实现 bug：LSP 的 pending 结账先清表后 settle（挂着的请求永不落地、进程 exit 13）、启动失败不透传 stderr 尾巴、PATHEXT 候选顺序错；self-improve 的 store 重复声明会话状态键（项目编译失败）；沙箱可写根误用挂载 cwd。
 
 阶段 13 补记（交接时容易漏的三件小事）：内核侧除执行器缝与 `sandbox` 服务外，`SessionStateMap` 也加了一个 `learnings` 键——形状故意留 `unknown`，core 层不认识插件层类型，读回一律过 `normalizeLearningsState` 收口；plugin-development 的内核 API 版本表原先只写到 v2，v3/v4 两行一直只在 `src/core/plugin-registry.ts` 的注释里，这次连同 v5 一起补全；两个被自检逼出来的架构事实进了 development.md §4——命令补全面（`src/plugins/commands.ts` 的模块级 `extraSpecs`）是进程级共享，同进程起多个内核验「热卸载无残留」必须先 `await ctx.fiber.dispose()`（cordis 的 `Context` 本身没有 dispose，fiber 在 `ctx.fiber` 上）。
+
+---
+
+## 阶段 14：全面对标审查（codex / hermes / dsh）与九项修复
+
+四路并行源码审查（dsc 深审 + 三家参照盘点），报告落在 `docs/audit-2026-09-29.md`。审查发现两条高危并当轮修复，其余按优先级分六批落地（`180dc05` → `aff6f68`），收尾时全量 23 个检查脚本 0 FAIL。
+
+| 发现与决策 | 理由 |
+| --- | --- |
+| 命令切段漏洞是全仓唯一能被持久化规则放大的免审批执行面 | `OPERATORS` 里的 `'\n'` 是单字符、切段只认 2 字符切片——多行命令永远是一段；配上前缀规则只看前 N 个词元、allow 命中即 `continue`，`git status` 的授权会被「git status⏎curl evil」整条继承。修法把换行/孤立 `&` 入切段点、allow 只放干净段，并顺手堵掉同族洞：反引号与 `$()` 替换段不再算只读（`echo $(node -e …)` 原来免卡） |
+| dsc 控制文件的保护落点在 plugins.json 而非 settings.json | 审查报告初稿把 LSP/browser 配置写成 settings.json，动手前核实：真实落点是 `~/.dsc/plugins.json` 条目树的 config（LSP 服务器、MCP 服务器、浏览器 executablePath 全在里面），settings.json 是 UI 偏好与市场源。必问清单补进 plugins.json / hooks.json / **hooks-trusted.json**（钩子脚本批准名单可被直接写入=自己盖章） |
+| 中断后的 tool 消息缺口是协议洞不是体验问题 | 主循环 abort 后直接 return，剩余 tool_call 没有对应 tool 消息，下一轮请求 400。并行化改造时一并对齐 dsh 的做法：未启动的调用补「用户取消」合成结果，已启动的排干 |
+| 压缩的两处失手要分开修 | chars/3 对中文低估近一半（DeepSeek 中文 ≈0.6 token/字），自动压缩等真实用量冲过窗口才触发——估算改成 CJK 0.65/其余 0.33 分开算；估算再准也有失手时，补上 dsh 式兜底：请求报爆窗 400 就 `forceCompact` 一次再重试一轮 |
+| 「纯 TS 做不了 Windows 受限令牌」的旧结论修正为「做得到但要 koffi」 | dsh 的实现桥是 koffi 3.1.1 FFI（runner 进程内直调 CreateProcessAsUserW，完全绕开 Node 的 spawn），移植约 1.5-2k 行、一个专项迭代；只做 ACL deny 半套证实要么无效要么全局自伤。移植列远景，本期不动 |
+| secrets 超 4MB 跳遮红改按行分段，不做偏移量拼接 | 密钥形状（sk-、JWT）不跨行、PEM 整块夹在相邻换行之间——切点落在换行上就不会把真密钥切成两半，比正则命中收集+绝对坐标替换的方案少一整类 bug |
+
+改动落在 `src/core/command-policy.ts`、`src/core/path-policy.ts`、`src/core/loop.ts`、`src/core/compact.ts`、`src/core/prompt.ts`、`src/core/llm.ts`、`src/core/tools/bash.ts`、`src/core/session.ts`、`src/core/secrets.ts`、`src/core/cdp/launch.ts`、`src/plugins/{compact,agent,desktop-dock}.ts`、`src/services/types.ts`。自检断言同步：modes-security 新增 17 条回归（切段、替换段、控制文件必问），browser-check 2.5 翻转为「不放开 --remote-allow-origins」。验收：全量回归 23 个脚本 0 FAIL（含 approval-floor 95、browser 210、sandbox 193、schedule 207、lsp 167、self-improve 181、compact 53）。
