@@ -1,6 +1,6 @@
 {
   "name": "muse-code",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Muse Code（msc）— 独立的终端 AI harness（自研 ReAct loop + ink TUI）",
   "type": "module",
@@ -24,6 +24,7 @@
     "@deepseek-ai/cordis": "^4.0.4",
     "@deepseek-ai/cordis-plugin-loader": "^1.0.5",
     "ink": "^6.0.0",
+    "koffi": "3.1.1",
     "react": "^19.2.0",
     "yaml": "^2.9.1"
   },
@@ -31,5 +32,10 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "typescript": "^5.9.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "koffi"
+    ]
   }
 }

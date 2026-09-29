@@ -51,15 +51,19 @@ function killTree(child: ChildProcess): void {
  */
 function spawnShell(plan: SpawnPlan, timeoutMs: number, signal: AbortSignal): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(plan.file, plan.args, {
-      cwd: plan.cwd,
-      env: plan.env,
-      // stdin 直接关掉：等输入的命令立即失败退出，好过挂到超时才死；
-      // POSIX 上 detached 让子命令自成进程组，超时能整组收掉。
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-      detached: process.platform !== 'win32',
-    })
+    // 执行计划带了自定义 spawn（受限令牌这类 node spawn 表达不了的）就走它；
+    // 默认路径与加这条缝之前完全一致。
+    const child = plan.spawn
+      ? plan.spawn()
+      : spawn(plan.file, plan.args, {
+          cwd: plan.cwd,
+          env: plan.env,
+          // stdin 直接关掉：等输入的命令立即失败退出，好过挂到超时才死；
+          // POSIX 上 detached 让子命令自成进程组，超时能整组收掉。
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true,
+          detached: process.platform !== 'win32',
+        })
     let output = ''
     const append = (chunk: Buffer | string): void => {
       if (output.length < OUTPUT_LIMIT * 2) output += String(chunk)

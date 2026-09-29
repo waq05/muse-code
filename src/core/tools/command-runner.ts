@@ -12,6 +12,8 @@
  * @module dsc/core/tools/command-runner
  */
 
+import type { ChildProcess } from 'node:child_process'
+
 /** 一次待执行命令的事实（注册者据此决定要不要换执行体）。 */
 export interface CommandRun {
   /** 要执行的命令原文（shell 语法，未拆分）。 */
@@ -24,6 +26,16 @@ export interface CommandRun {
   signal: AbortSignal
 }
 
+/**
+ * 自定义 spawn：`file/args/env/cwd` 表达不了的执行计划（受限令牌的
+ * `CreateProcessAsUserW`、容器运行时 API 这类）从这里走。
+ *
+ * 返回值按 node:child_process 的 `ChildProcess` 最小形状给：
+ * `pid`（taskkill 树杀靠它）、可读的 `stdout`/`stderr`、`error`/`close` 事件。
+ * spawn 本身同步返回，失败不抛——照 node 的惯例 emit `error`。
+ */
+export type CustomSpawn = () => ChildProcess
+
 /** 最终的进程启动计划（bash 工具照着它 spawn）。 */
 export interface SpawnPlan {
   /** 可执行文件。 */
@@ -34,6 +46,11 @@ export interface SpawnPlan {
   env: Record<string, string | undefined>
   /** 子进程工作目录。 */
   cwd: string
+  /**
+   * 自定义 spawn（可选）：给了它，bash 工具就不走 `spawn(file, args, …)`，
+   * 改调这里。`file/args/env/cwd` 此刻只是给后续执行器与诊断看的「计划描述」。
+   */
+  spawn?: CustomSpawn
 }
 
 /**

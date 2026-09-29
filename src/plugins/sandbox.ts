@@ -37,6 +37,7 @@ import { registerCommandRunner } from '../core/tools/command-runner.js'
 import { readSandboxRequest } from '../core/tools/sandbox-args.js'
 import type { ToolGuard } from '../core/tool-guards.js'
 import { createDockerRunner, probeDocker } from '../core/sandbox/backends.js'
+import { createWindowsTokenRunner, probeWindowsToken, type WindowsTokenRunnerHandle } from '../core/sandbox/win/backend.js'
 import { evaluateCommand } from '../core/sandbox/execpolicy.js'
 import {
   checkWrite,
@@ -44,6 +45,7 @@ import {
   describePolicy,
   formatPathList,
   legalWay,
+  parseAllowlistText,
   parsePathListText,
   resolveSandboxConfig,
   sandboxTmpDir,
@@ -113,6 +115,8 @@ export const sandboxPlugin: Plugin.Object = {
     let backendDetail = '进程内策略围栏（默认后端，不依赖外部进程）'
     /** 容器执行器的退订函数（换后端/停插件时要收回）。 */
     let offRunner: (() => void) | null = null
+    /** 受限令牌后端的收尾（回收私有临时目录的能力 ACE）。 */
+    let offWinDispose: (() => void) | null = null
     /** 探测代次：异步探测回来时后端已经又换过一次，那就作废这次结果。 */
     let generation = 0
     let disposed = false
@@ -261,7 +265,11 @@ export const sandboxPlugin: Plugin.Object = {
           `只读子路径：${policy.readOnlySubpaths.length === 0 ? '（无）' : policy.readOnlySubpaths.join('、')}；` +
           `网络：${config.networkAccess ? '开' : '关（要联网的命令会被直接拒）'}`,
       )
-      lines.push('策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写（脚本里的 fs.writeFile 这类）；要真隔离，请在「设置 → 沙箱」把后端换成容器（需要本机 docker）。')
+      if (config.backend === 'windows-token') {
+        lines.push('当前后端是 Windows 受限令牌：命令内部的越界写（脚本里的 fs.writeFile 这类）会被系统层直接拒绝；读不受限；网络管控取决于是否完成提权 setup（/sandbox 里看现状）。')
+      } else {
+        lines.push('策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写（脚本里的 fs.writeFile 这类）；要真隔离，请在「设置 → 沙箱」把后端换成 Windows 受限令牌（本机即可，无需 docker）或容器。')
+      }
       lines.push('要写到可写根之外（例如另一个盘的项目目录），只能在这一次调用里同时给 sandbox_permissions 与 justification，且照常会弹审批卡让用户点。')
       if (problems.length > 0) lines.push(`⚠ 沙箱配置有问题（已按默认值兜底）：${problems.join('；')}`)
       return lines.join('\n')
@@ -282,6 +290,8 @@ export const sandboxPlugin: Plugin.Object = {
       const mine = generation
       offRunner?.()
       offRunner = null
+      offWinDispose?.()
+      offWinDispose = null
       const { config } = readConfig()
 
       if (config.mode === 'danger-full-access') {
@@ -293,6 +303,35 @@ export const sandboxPlugin: Plugin.Object = {
       if (config.backend === 'policy') {
         enforcement = 'partial'
         backendDetail = '进程内策略围栏（默认后端，不需要外部进程）'
+        ctx.emit('dsc/changed')
+        return backendDetail
+      }
+
+      if (config.backend === 'windows-token') {
+        const probe = probeWindowsToken()
+        if (!probe.available) {
+          enforcement = 'partial'
+          backendDetail = `Windows 受限令牌后端不可用，已降级为策略围栏：${probe.detail}`
+          ctx.transcript.system(`沙箱：${backendDetail}`)
+          ctx.emit('dsc/changed')
+          return backendDetail
+        }
+        const handle: WindowsTokenRunnerHandle = createWindowsTokenRunner({
+          mode: config.mode === 'read-only' ? 'read-only' : 'workspace-write',
+          cwd: currentCwd(),
+          tmpDir: sandboxTmpDir(DSC_HOME, currentCwd(), currentSessionId()),
+          extraRoots: config.extraWritableRoots,
+          networkAccess: () => readConfig().config.networkAccess,
+          onDetail: (message) => {
+            if (!disposed) ctx.transcript.system(`沙箱：${message}`)
+          },
+        })
+        offRunner = registerCommandRunner(handle.runner)
+        offWinDispose = handle.dispose
+        // 如实上报：写越界已是系统层强制，但硬链接别名/读不受限是结构性缺口，
+        // 网络强制要第二级提权 setup——整体仍按 partial 报，缺口在 backendDetail 里说透
+        enforcement = 'partial'
+        backendDetail = `Windows 受限令牌：命令内部越界写被系统层拦截（${handle.describe()}）`
         ctx.emit('dsc/changed')
         return backendDetail
       }
@@ -326,7 +365,9 @@ export const sandboxPlugin: Plugin.Object = {
         `沙箱已就绪：档位 ${config.mode}｜强制执行 ${enforcement}｜后端 ${backendDetail}｜` +
         `可写根 ${String(policy.roots.length)} 个：${roots}｜网络 ${config.networkAccess ? '开' : '关'}`
       const tail = enforcement === 'partial'
-        ? '。策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写；要真隔离请在「设置 → 沙箱」把后端换成容器。'
+        ? (config.backend === 'windows-token'
+          ? '。越界写已被系统层拦截（受限令牌 runner）；读不受限，网络管控看提权 setup 状态（/sandbox）。'
+          : '。策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写；要真隔离请在「设置 → 沙箱」把后端换成 Windows 受限令牌或容器。')
         : '。'
       const warn = problems.length === 0 ? '' : ` ⚠ 配置有问题（已按默认值兜底）：${problems.join('；')}`
       return `${head}${tail}${warn}`
@@ -380,6 +421,14 @@ export const sandboxPlugin: Plugin.Object = {
           },
           {
             type: 'text',
+            key: 'networkAllowlist',
+            label: '出网白名单（分号分隔域名）',
+            mono: true,
+            placeholder: 'registry.npmjs.org; *.example.com',
+            help: 'windows-token 后端第二级（提权 setup 后）的代理按这份清单放行；*.example.com 匹配子域，精确域不含子域。清单为空 = 开着网也没放任何域名。',
+          },
+          {
+            type: 'text',
             key: 'extraWritableRoots',
             label: '附加可写根（分号分隔）',
             mono: true,
@@ -400,12 +449,14 @@ export const sandboxPlugin: Plugin.Object = {
             label: '强制后端',
             options: [
               { value: 'policy', label: '进程内策略围栏（默认，强制执行 partial）' },
+              { value: 'windows-token', label: 'Windows 受限令牌（仅 Windows，越界写系统层拦截）' },
               { value: 'docker', label: '容器（需要本机 docker，强制执行 full）' },
             ],
             help:
-              '容器后端把命令换进 docker 里跑（只挂工作区，网络按上面的开关）。注意：容器里只有 sh，' +
-              'Windows 的 PowerShell 语法在容器里跑不通，所以它只适合 pnpm/npm/pytest 这类跨平台的构建与测试命令；' +
-              '认不出 shell 形态的命令不会被换执行体，那一句仍会在宿主上跑。默认不启用。',
+              '受限令牌后端把命令换进「受限令牌 + 工作区 ACL」的 runner 子进程里跑（无需 docker，命令内部的越界写会被系统直接拒绝；' +
+              '已知缺口：硬链接别名、读不受限、网络真管控需一次性提权 setup）。' +
+              '容器后端把命令换进 docker 里跑（只挂工作区，网络按上面的开关），适合跨平台构建命令。' +
+              '认不出 shell 形态的命令不会被换执行体，那一句仍会在宿主上跑。',
           },
           {
             type: 'text',
@@ -447,6 +498,7 @@ export const sandboxPlugin: Plugin.Object = {
         return {
           mode: config.mode,
           networkAccess: config.networkAccess,
+          networkAllowlist: formatPathList(config.networkAllowlist),
           extraWritableRoots: formatPathList(config.extraWritableRoots),
           readOnlySubpaths: formatPathList(config.readOnlySubpaths),
           backend: config.backend,
@@ -464,6 +516,12 @@ export const sandboxPlugin: Plugin.Object = {
           case 'networkAccess':
             writePluginConfig(SANDBOX_CONFIG_KEY, { networkAccess: value === true })
             break
+          case 'networkAllowlist': {
+            const { domains, bad } = parseAllowlistText(typeof value === 'string' ? value : String(value))
+            if (bad.length > 0) return `白名单里有不像域名的项：${bad.join('；')}`
+            writePluginConfig(SANDBOX_CONFIG_KEY, { networkAllowlist: domains })
+            break
+          }
           case 'extraWritableRoots':
             writePluginConfig(SANDBOX_CONFIG_KEY, { extraWritableRoots: parsePathListText(typeof value === 'string' ? value : String(value)) })
             break
@@ -472,7 +530,9 @@ export const sandboxPlugin: Plugin.Object = {
             break
           case 'backend': {
             const backend = String(value)
-            if (backend !== 'policy' && backend !== 'docker') return '后端只能是 policy（策略围栏）或 docker（容器）'
+            if (backend !== 'policy' && backend !== 'docker' && backend !== 'windows-token') {
+              return '后端只能是 policy（策略围栏）/ docker（容器）/ windows-token（Windows 受限令牌）'
+            }
             writePluginConfig(SANDBOX_CONFIG_KEY, { backend })
             break
           }
@@ -539,8 +599,11 @@ export const sandboxPlugin: Plugin.Object = {
     }
     const offService = ctx.provide('sandbox', service)
 
-    // 换会话 = 换工作目录与临时目录，可写根跟着变；这里只让界面重取一次快照。
+    // 换会话 = 换工作目录：受限令牌后端的可写根必须跟着重建（授权按路径缓存，重复授权幂等）。
     const offSession = ctx.on('dsc/session-open', () => {
+      void refreshBackend().catch(() => {
+        // 重建失败维持现状：下一次 plan() 会在授权失败时自己降级并如实上报
+      })
       ctx.emit('dsc/changed')
     })
 
@@ -558,6 +621,8 @@ export const sandboxPlugin: Plugin.Object = {
       generation += 1
       offRunner?.()
       offRunner = null
+      offWinDispose?.()
+      offWinDispose = null
       offSession()
       offService()
       offCommand()

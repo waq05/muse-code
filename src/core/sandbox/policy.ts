@@ -29,8 +29,17 @@ export const SANDBOX_CONFIG_KEY = 'sandbox'
 /** 三档（形制照 codex 的 `sandbox_mode`）。 */
 export const SANDBOX_MODES: readonly SandboxMode[] = ['read-only', 'workspace-write', 'danger-full-access']
 
-/** 强制后端：进程内策略围栏 / 容器。受限令牌那一路不做（理由见 backends.ts 文件头）。 */
-export const SANDBOX_BACKENDS = ['policy', 'docker'] as const
+/**
+ * 强制后端：进程内策略围栏 / 容器 / Windows 受限令牌。
+ *
+ * `windows-token`（2026-10-xx 起提供）推翻了「受限令牌那一路不做」的旧决定：
+ * 当时拒绝它的理由是零 npm 依赖硬约束与「半可靠比明说 partial 更危险」。
+ * 用户已拍板引入 koffi（预构建 N-API FFI，dsh 同款路线）换真隔离——
+ * 文件系统效果由 ACL + 受限令牌强制，网络由「专用账号 + WFP + 白名单代理」强制，
+ * 且 enforcement 与缺口清单如实上报，旧的「半可靠装可靠」顾虑由诚实上报解决。
+ * 平台与依赖不可用时它不可选，不会悄悄回落成 policy。
+ */
+export const SANDBOX_BACKENDS = ['policy', 'docker', 'windows-token'] as const
 
 export type SandboxBackend = (typeof SANDBOX_BACKENDS)[number]
 
@@ -42,6 +51,12 @@ export interface SandboxConfig {
   mode: SandboxMode
   /** 网络开关：关时命中网络命令一律拒（策略后端只能拦「自己发起的」网络命令，见 describe）。 */
   networkAccess: boolean
+  /**
+   * 出网域名白名单（windows-token 后端的代理用）：networkAccess 开着时，
+   * 只有清单里的域名能过代理，其余一律阻断（deny-by-default）。
+   * 支持 `*.example.com` 通配；清单为空等于实际断网（如实上报，不静默放行）。
+   */
+  networkAllowlist: readonly string[]
   /** 附加可写根（在会话工作目录之外再放行几个目录）。 */
   extraWritableRoots: readonly string[]
   /** 可写根内的只读子路径（放进白名单里的例外）。 */
@@ -54,6 +69,7 @@ export interface SandboxConfig {
 export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
   mode: 'workspace-write',
   networkAccess: false,
+  networkAllowlist: [],
   extraWritableRoots: [],
   readOnlySubpaths: [],
   backend: 'policy',
@@ -82,6 +98,7 @@ export function resolveSandboxConfig(raw: unknown): SandboxConfigResult {
   const config: {
     mode: SandboxMode
     networkAccess: boolean
+    networkAllowlist: readonly string[]
     extraWritableRoots: readonly string[]
     readOnlySubpaths: readonly string[]
     backend: SandboxBackend
@@ -106,6 +123,18 @@ export function resolveSandboxConfig(raw: unknown): SandboxConfigResult {
     if (Array.isArray(value)) config[target] = value.map((item) => String(item)).filter((item) => item.trim() !== '')
     else if (typeof value === 'string') config[target] = parsePathListText(value)
     else problems.push(`${key} 要一个字符串数组（设置页里是分号分隔的文本），已忽略`)
+  }
+  if (doc.networkAllowlist !== undefined) {
+    const value = doc.networkAllowlist
+    if (Array.isArray(value)) {
+      const { domains, bad } = parseAllowlist(value.map((item) => String(item)))
+      config.networkAllowlist = domains
+      if (bad.length > 0) problems.push(`出网白名单里有不像域名的项，已忽略：${bad.join('、')}`)
+    } else if (typeof value === 'string') {
+      const { domains, bad } = parseAllowlistText(value)
+      config.networkAllowlist = domains
+      if (bad.length > 0) problems.push(`出网白名单里有不像域名的项，已忽略：${bad.join('、')}`)
+    } else problems.push('networkAllowlist 要字符串数组或分号分隔的文本，已忽略')
   }
   if (doc.backend !== undefined) {
     const backend = String(doc.backend)
@@ -136,6 +165,70 @@ export function parsePathListText(text: string): string[] {
 /** 路径数组 → 设置页那个框的文本。 */
 export function formatPathList(paths: readonly string[]): string {
   return paths.join('; ')
+}
+
+/**
+ * 单个出网白名单条目的校验与归一：小写、去末尾点，接受 `example.com` 与
+ * `*.example.com`（通配只能整段，`*x.example.com` 这类不收）。
+ * 返回归一后的串；不像域名就给拒因。
+ */
+export function normalizeAllowlistEntry(raw: string): { ok: true; domain: string } | { ok: false; why: string } {
+  const domain = raw.trim().toLowerCase().replace(/\.+$/, '')
+  if (domain === '') return { ok: false, why: '空条目' }
+  if (/\s/.test(domain)) return { ok: false, why: `「${raw}」带了空格` }
+  if (domain.includes('/')) return { ok: false, why: `「${raw}」是路径不是域名（白名单按域匹配，不带路径）` }
+  const host = domain.startsWith('*.') ? domain.slice(2) : domain
+  if (host === '' || host.startsWith('.') || host.endsWith('.') || host.includes('..')) {
+    return { ok: false, why: `「${raw}」域名形状不对` }
+  }
+  // 逐段校验：字母数字与连字符，IDN 直接拒（让用户用 punycode 写，判定里少一层归一化歧义）
+  const label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
+  for (const part of host.split('.')) {
+    if (part === '' || !label.test(part)) return { ok: false, why: `「${raw}」里的「${part}」不是合法的域名字段（中文域名请用 punycode）` }
+  }
+  return { ok: true, domain }
+}
+
+/** 已拆好的条目数组 → 归一域名列表 + 拒因列表（保序去重）。 */
+export function parseAllowlist(entries: readonly string[]): { domains: string[]; bad: string[] } {
+  const domains: string[] = []
+  const bad: string[] = []
+  const seen = new Set<string>()
+  for (const raw of entries) {
+    const one = normalizeAllowlistEntry(raw)
+    if (!one.ok) {
+      bad.push(one.why)
+      continue
+    }
+    if (seen.has(one.domain)) continue
+    seen.add(one.domain)
+    domains.push(one.domain)
+  }
+  return { domains, bad }
+}
+
+/** 设置页那个框（分号或换行分隔）→ 白名单（带逐项拒因）。 */
+export function parseAllowlistText(text: string): { domains: string[]; bad: string[] } {
+  return parseAllowlist(text.split(/[;\n\r]+/))
+}
+
+/**
+ * host 是否被白名单放行：全等，或通配域（`*.example.com`）匹配「任意段后缀但至少一段」。
+ * 精确域不放行子域——`example.com` 不含 `api.example.com`；要连子域一起放就写 `*.example.com`。
+ */
+export function allowlistMatches(host: string, list: readonly string[]): boolean {
+  const name = host.trim().toLowerCase().replace(/\.+$/, '')
+  if (name === '') return false
+  for (const entry of list) {
+    if (entry === name) return true
+    if (entry.startsWith('*.')) {
+      const suffix = entry.slice(1) // '.example.com'
+      if (name.endsWith(suffix) && name.length > suffix.length && !name.slice(0, -suffix.length).includes('.')) {
+        return true
+      }
+    }
+  }
+  return false
 }
 
 /** 沙箱私有临时目录：`<dscHome>/sandbox/tmp/<会话 id 或 cwd 哈希>`。 */

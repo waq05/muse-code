@@ -8,13 +8,11 @@
  * 装不上就不许用电脑，那是骚扰用户；照 codex 的姿态降级为
  * 「照常执行 + 审批卡兜底」，并把 `enforced: partial` 如实上报（见插件的挂载提示与系统提示段）。
  *
- * **不实现受限令牌后端**（`runas /trustlevel:0x20000`、Windows 原生 FFI 建低完整性令牌）：
- *   - `runas /trustlevel` 依赖 Secondary Logon 服务，且它只改令牌完整性级别，
- *     **不改文件系统 ACL**：普通用户对工作区的写权限它照样有，隔离是假的；
- *   - 用 FFI 自己建受限令牌（CreateRestrictedToken + CreateProcessAsUser）
- *     需要引入外部依赖或 `node:ffi` 这类不稳定的原生模块，而 dsc 的硬约束是零 npm 依赖；
- *   - 半可靠的隔离比明说「只到 partial」更危险：用户会以为写在外面真的被挡住了。
- * 所以只剩两条腿：进程内策略（partial）+ 容器（full）。
+ * **受限令牌后端自 2026-09-30 起由 `src/core/sandbox/win/` 提供**（koffi FFI，见
+ * `win/backend.ts`）。本文件头旧的「不实现受限令牌」决定已推翻：当时的理由是
+ * 零 npm 依赖硬约束与「半可靠比明说 partial 更危险」；用户拍板引入 koffi（预构建
+ * N-API，dsh 同款路线）换真隔离，「半可靠装可靠」的顾虑由 enforcement 与缺口
+ * 清单如实上报解决。本文件保持容器后端这一半不动；两级的取舍对比看两处文件头。
  *
  * @module dsc/core/sandbox/backends
  */
