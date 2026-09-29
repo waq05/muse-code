@@ -26,7 +26,7 @@ export function resolveHeadlessEntry(): string {
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate
   }
-  throw new Error(`未找到 dsc 宿主入口（${candidates.join(' 或 ')}）；先在 dsc 根目录运行 pnpm build`)
+  throw new Error(`未找到 Muse Code 宿主入口（${candidates.join(' 或 ')}）；先在项目根目录运行 pnpm build`)
 }
 
 /** 工作目录记忆文件（~/.dsc/desktop.json）。 */
@@ -36,6 +36,8 @@ export interface DesktopState {
   recentCwds?: string[]
   /** 缩到托盘的那次气泡提示是否已经弹过（只弹一次）。 */
   trayHintShown?: boolean
+  /** 窗口大小/位置记忆：关窗与退出时由主进程落盘，下次开窗恢复。 */
+  windowBounds?: { width: number; height: number; x: number; y: number; maximized: boolean }
 }
 
 export function statePath(): string {

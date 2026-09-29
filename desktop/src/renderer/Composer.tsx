@@ -1,42 +1,77 @@
 /**
  * 输入区：大圆角容器 + 无边框 textarea + 底部操作行（+ 按钮 / 模型选择器 / 发送圆钮）
- * + / 命令与 /model 补全面板 + 模型/思考强度弹出面板。
+ * + / 命令与 /model 补全面板 + 模型/思考强度弹出面板 + 图片附件（粘贴 / 拖入）。
+ *
+ * 思考档位只列当前模型声明过的那些；图片要模型勾了「照片」才收（否则发出去也是白搭）。
  *
  * @module desktop/renderer/Composer
  */
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import type { ApprovalPolicy, EffortLevel, ModelChoiceView } from '@dsc/runtime/contract.js'
+import type {
+  ApprovalPolicy,
+  CollaborationMode,
+  EffortLevel,
+  ModelChoiceView,
+  ModeSurface,
+  PolicySurface,
+  ThinkingLevel,
+} from '@dsc/runtime/contract.js'
 import { completionsFor, expandCommand } from '@dsc/runtime/plugins/commands.js'
 import type { CompletionItem } from '@dsc/runtime/services/types.js'
-import { IconArrowUp, IconCheck, IconChevronDown, IconPlus, IconShield, IconStop } from './icons.js'
+import { toastErr } from './components/toast.js'
+import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconFlag, IconPlus, IconShield, IconStop } from './icons.js'
 
 const EFFORTS: { value: EffortLevel; label: string; hint: string }[] = [
-  { value: 'default', label: '默认', hint: '不声明思考模式（跟随端点默认）' },
+  { value: 'default', label: '默认', hint: '不声明思考模式，跟随端点默认' },
   { value: 'off', label: '关', hint: '禁用思考' },
   { value: 'low', label: '低', hint: '' },
   { value: 'high', label: '高', hint: '' },
   { value: 'max', label: '最大', hint: '' },
 ]
 
-const POLICIES: { value: ApprovalPolicy; label: string; title: string }[] = [
-  { value: 'readonly', label: '仅查看', title: '只读模式：写/执行类工具一律拒绝' },
-  { value: 'auto-edit', label: '自动编辑', title: '工作区内写操作自动放行，其余需审批' },
-  { value: 'full-access', label: '完全访问', title: '全部工具自动放行（谨慎）' },
-  { value: 'ai-review', label: 'AI 审查', title: '由模型逐次判断是否放行，失败回退人工审批' },
-]
+/** 一张贴图最多 6MB（base64 后约 8MB）：再大的图应当先缩放，而不是塞进上下文。 */
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024
 
+/** 读一张图的两种结局：拿到 data URL，或者一句能直接显示的原因。 */
+type ImageRead = { ok: true; url: string } | { ok: false; error: string }
+
+async function readImage(file: File): Promise<ImageRead> {
+  if (!file.type.startsWith('image/')) return { ok: false, error: `${file.name || '剪贴板里的内容'}不是图片` }
+  if (file.size > MAX_IMAGE_BYTES) return { ok: false, error: `${file.name || '图片'}超过 6MB，先缩小一点再贴` }
+  try {
+    const url = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result ?? ''))
+      reader.onerror = () => reject(reader.error ?? new Error('读取失败'))
+      reader.readAsDataURL(file)
+    })
+    return url.startsWith('data:') ? { ok: true, url } : { ok: false, error: '没读到图片内容' }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
+ * 输入框下面那两根旋钮：左边是协作模式（这一轮允许把手伸多远），
+ * 右边是权限模式（问出来之后怎么裁）。两根旋钮的档位都不在这里写死：
+ * 清单由快照里对应功能点贡献的那两片（`surfaces.mode` / `surfaces.policy`）给。
+ */
 export function Composer(props: {
   disabled: boolean
   models: readonly ModelChoiceView[]
   model: string
   effort: EffortLevel
-  policy: ApprovalPolicy
+  /** 权限模式那根旋钮（当前档 + 可切清单，approval 插件贡献）。 */
+  policy: PolicySurface
+  /** 协作模式那根旋钮（当前档 + 可切清单，mode 插件贡献）。 */
+  mode: ModeSurface
   working: boolean
-  onSubmit(text: string): void
+  onSubmit(text: string, images?: string[]): void
   onInterrupt(): void
   onModelChange(value: string): void
   onEffortChange(value: EffortLevel): void
   onPolicyChange(value: ApprovalPolicy): void
+  onModeChange(value: CollaborationMode): void
 }): JSX.Element {
   const [value, setValue] = useState('')
   const [history, setHistory] = useState<string[]>([])
@@ -44,6 +79,9 @@ export function Composer(props: {
   const [active, setActive] = useState(0)
   const [modelOpen, setModelOpen] = useState(false)
   const [policyOpen, setPolicyOpen] = useState(false)
+  const [modeOpen, setModeOpen] = useState(false)
+  /** 待发送的图片（data URL 清单）。 */
+  const [attachments, setAttachments] = useState<string[]>([])
   const textarea = useRef<HTMLTextAreaElement | null>(null)
 
   const completions = completionsFor(value, props.models)
@@ -60,15 +98,50 @@ export function Composer(props: {
     element.style.height = `${Math.min(element.scrollHeight, 200)}px`
   }, [value])
 
+  const currentChoice = props.models.find((model) => model.model === props.model)
+  /** 权限模式当前档的文案（档位清单由 approval 插件贡献，这里只负责画）。 */
+  const policyCurrent = props.policy.options.find((item) => item.id === props.policy.current)
+  /** 协作模式当前档的文案（档位清单由 mode 插件贡献）。 */
+  const modeCurrent = props.mode.options.find((item) => item.id === props.mode.current)
+  /** 当前模型能不能收图；模型列表里查不到它时先放行，别把输入框锁死。 */
+  const canPasteImage = currentChoice === undefined || currentChoice.modalities.includes('image')
+
+  /** 这个模型支持的思考档位；查不到模型时全给（避免列表没同步就把面板掏空）。 */
+  const effortOptions = useMemo(
+    () =>
+      EFFORTS.filter(
+        (item) =>
+          item.value === 'default' ||
+          currentChoice === undefined ||
+          currentChoice.thinkingLevels.includes(item.value as ThinkingLevel),
+      ),
+    [currentChoice],
+  )
+
+  /** 把剪贴板 / 拖进来的文件收成贴图；模型没声明照片输入就一句话顶回去。 */
+  const attachFiles = async (files: File[]): Promise<void> => {
+    if (files.length === 0) return
+    if (!canPasteImage) {
+      toastErr(`${props.model} 没声明照片输入：在设置 → 模型里给它勾上「照片」，或者换一个勾了的模型`)
+      return
+    }
+    for (const file of files) {
+      const result = await readImage(file)
+      if (!result.ok) toastErr(`这张图没贴上：${result.error}`)
+      else setAttachments((current) => [...current, result.url])
+    }
+  }
+
   const submit = (): void => {
     const text = expandCommand(value).trim()
-    if (text === '') return
-    props.onSubmit(text)
-    if (!text.startsWith('/')) {
+    if (text === '' && attachments.length === 0) return
+    props.onSubmit(text, attachments.length > 0 ? attachments : undefined)
+    if (text !== '' && !text.startsWith('/')) {
       setHistory((current) => [...current.slice(-49), text])
     }
     setHistoryIndex(null)
     setValue('')
+    setAttachments([])
   }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -138,11 +211,22 @@ export function Composer(props: {
     return [...map.entries()]
   }, [props.models])
 
-  const currentChoice = props.models.find((model) => model.model === props.model)
   const currentLabel = currentChoice?.model ?? props.model
 
   return (
-    <div className="composer" style={{ marginTop: 10 }}>
+    <div
+      className="composer"
+      style={{ marginTop: 10 }}
+      onDragOver={(event) => {
+        if (canPasteImage && event.dataTransfer?.types.includes('Files') === true) event.preventDefault()
+      }}
+      onDrop={(event) => {
+        const files = event.dataTransfer?.files
+        if (files === undefined || files.length === 0) return
+        event.preventDefault()
+        void attachFiles(Array.from(files))
+      }}
+    >
       {showPanel && (
         <div className="completions">
           {completions.map((item: CompletionItem, index: number) => (
@@ -161,15 +245,49 @@ export function Composer(props: {
           ))}
         </div>
       )}
+      {attachments.length > 0 && (
+        <div className="attach-strip">
+          {attachments.map((url, index) => (
+            <span className="attach-item" key={`${url.slice(0, 48)}-${String(index)}`}>
+              <img src={url} alt={`第 ${String(index + 1)} 张贴图`} />
+              <button
+                className="attach-remove"
+                data-tip="不要这张图"
+                onClick={() => setAttachments((current) => current.filter((_, at) => at !== index))}
+              >
+                <IconClose size={11} />
+              </button>
+            </span>
+          ))}
+          <span className="attach-hint">{attachments.length} 张贴图，发送时一起发出去</span>
+        </div>
+      )}
       <textarea
         ref={textarea}
         rows={1}
         autoFocus
         value={value}
-        placeholder={props.disabled ? '等待审批…' : '发消息，/ 调用指令'}
+        placeholder={
+          props.disabled
+            ? '等待审批…'
+            : canPasteImage
+              ? '发消息，/ 调用指令，可以贴图或拖图片进来'
+              : '发消息，/ 调用指令（当前模型没开照片输入，贴图会被拒绝）'
+        }
         disabled={props.disabled}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={onKeyDown}
+        onPaste={(event) => {
+          const items = event.clipboardData?.items
+          if (items === undefined) return
+          const files = Array.from(items)
+            .filter((item) => item.kind === 'file')
+            .map((item) => item.getAsFile())
+            .filter((file): file is File => file !== null)
+          if (files.length === 0) return
+          event.preventDefault()
+          void attachFiles(files)
+        }}
       />
       <div className="composer-bar">
         <button
@@ -190,10 +308,10 @@ export function Composer(props: {
                 setPolicyOpen((current) => !current)
                 setModelOpen(false)
               }}
-              data-tip={POLICIES.find((item) => item.value === props.policy)?.title ?? '权限模式'}
+              data-tip={policyCurrent?.hint ?? '权限模式'}
             >
               <IconShield size={13} />
-              {POLICIES.find((item) => item.value === props.policy)?.label ?? props.policy}
+              {policyCurrent?.label ?? props.policy.current}
               <IconChevronDown size={12} />
             </button>
             {policyOpen && (
@@ -201,18 +319,55 @@ export function Composer(props: {
                 <div className="pop-mask" onClick={() => setPolicyOpen(false)} />
                 <div className="model-pop policy-pop">
                   <div className="pop-label">权限模式</div>
-                  {POLICIES.map((item) => (
+                  {props.policy.options.map((item) => (
                     <button
-                      key={item.value}
-                      className={`pop-item${item.value === props.policy ? ' on' : ''}`}
-                      data-tip={item.title}
+                      key={item.id}
+                      className={`pop-item${item.id === props.policy.current ? ' on' : ''}`}
+                      data-tip={item.hint}
                       onClick={() => {
-                        props.onPolicyChange(item.value)
+                        props.onPolicyChange(item.id)
                         setPolicyOpen(false)
                       }}
                     >
                       <span className="name">{item.label}</span>
-                      {item.value === props.policy && <IconCheck size={14} className="check" />}
+                      {item.id === props.policy.current && <IconCheck size={14} className="check" />}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          <div className="model-anchor">
+            <button
+              className={`model-btn mode-btn mode-${props.mode.current}${modeOpen ? ' open' : ''}`}
+              onClick={() => {
+                setModeOpen((current) => !current)
+                setPolicyOpen(false)
+                setModelOpen(false)
+              }}
+              data-tip={modeCurrent?.hint ?? '协作模式'}
+            >
+              <IconFlag size={13} />
+              {modeCurrent?.label ?? props.mode.current}
+              <IconChevronDown size={12} />
+            </button>
+            {modeOpen && (
+              <>
+                <div className="pop-mask" onClick={() => setModeOpen(false)} />
+                <div className="model-pop policy-pop">
+                  <div className="pop-label">协作模式</div>
+                  {props.mode.options.map((item) => (
+                    <button
+                      key={item.id}
+                      className={`pop-item${item.id === props.mode.current ? ' on' : ''}`}
+                      data-tip={item.hint}
+                      onClick={() => {
+                        props.onModeChange(item.id)
+                        setModeOpen(false)
+                      }}
+                    >
+                      <span className="name">{item.label}</span>
+                      {item.id === props.mode.current && <IconCheck size={14} className="check" />}
                     </button>
                   ))}
                 </div>
@@ -237,9 +392,14 @@ export function Composer(props: {
               <>
                 <div className="pop-mask" onClick={() => setModelOpen(false)} />
                 <div className="model-pop">
-                  <div className="pop-label">思考强度</div>
+                  <div className="pop-label">
+                    思考强度
+                    {effortOptions.length < EFFORTS.length && (
+                      <span className="pop-note">这个模型只声明了这些档位</span>
+                    )}
+                  </div>
                   <div className="effort-row">
-                    {EFFORTS.map((item) => (
+                    {effortOptions.map((item) => (
                       <button
                         key={item.value}
                         className={`effort-btn${props.effort === item.value ? ' on' : ''}`}
@@ -269,9 +429,9 @@ export function Composer(props: {
                             }}
                           >
                             <span className="name">{choice.model}</span>
-                            <span className="ctx">
-                              {choice.description.split('·').pop()?.trim() ?? ''}
-                            </span>
+                            {choice.modalities.includes('image') && <span className="pop-badge">图</span>}
+                            {choice.modalities.includes('video') && <span className="pop-badge">视频</span>}
+                            <span className="ctx">{`${Math.round(choice.contextWindow / 1000)}k`}</span>
                             {choice.value === currentChoice?.value && (
                               <IconCheck size={14} className="check" />
                             )}
@@ -296,8 +456,8 @@ export function Composer(props: {
           ) : (
             <button
               className="send-btn"
-              data-tip="发送（Enter）"
-              disabled={value.trim() === '' || props.disabled}
+              data-tip="发送，快捷键 Enter"
+              disabled={(value.trim() === '' && attachments.length === 0) || props.disabled}
               onClick={submit}
             >
               <IconArrowUp size={16} />

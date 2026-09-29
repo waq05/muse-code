@@ -707,36 +707,8 @@ textarea.ctl {
   justify-content: flex-end;
 }
 
-/* ══════════════════ 悬浮提示 ══════════════════
- * 替掉原来 71 处原生 title=：原生提示由系统绘制，还要等 500ms，颜色跟主题脱节。
- *
- * 气泡只有一个节点，由 components/tipLayer.ts 挂到 body 上定位，因此不会被
- * .sidebar-scroll 这类带 overflow 的容器裁掉。调用方只写 data-tip，可选
- * data-tip-place='bottom' | 'right' 指定方位。 */
-
-.dsc-tip {
-  background: var(--dsc-bg-popover);
-  border: 1px solid var(--dsc-stroke-2);
-  border-radius: var(--dsc-r-badge);
-  box-shadow: var(--dsc-shadow-sm);
-  color: var(--dsc-text-secondary);
-  font-size: var(--dsc-fs-tool);
-  font-weight: 400;
-  left: 0;
-  letter-spacing: 0;
-  line-height: 14px;
-  max-width: 260px;
-  padding: 3px 6px;
-  pointer-events: none;
-  position: fixed;
-  top: 0;
-  white-space: pre-wrap;
-  z-index: var(--dsc-z-tip);
-}
-
-.dsc-tip[hidden] {
-  display: none;
-}
+/* 悬浮注释层已下线：data-tip 气泡（原 .dsc-tip）按需求移除，
+   少数需要补充信息的地方直接用系统原生 title。 */
 
 /* ══════════════════ 加载 / 空态 / 错态 ══════════════════ */
 /* 一个 concern 一个组件：转圈只有 .loader，空页只有 .state-empty。

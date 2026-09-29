@@ -1,5 +1,5 @@
 appId: io.dsc.desktop
-productName: dsc
+productName: Muse Code
 directories:
   output: dist
   buildResources: build
@@ -22,6 +22,6 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: dsc-desktop-setup-${version}.${ext}
+  artifactName: muse-code-setup-${version}.${ext}
 portable:
-  artifactName: dsc-desktop-portable-${version}.${ext}
+  artifactName: muse-code-portable-${version}.${ext}

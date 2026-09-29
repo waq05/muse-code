@@ -242,8 +242,6 @@
   /* 会话列宽。ch 量的是数字「0」的宽度，中文一个字约等于两个 ch，
    * 所以照抄英文的 68ch 会让中文每行只剩 30 字；76ch ≈ 38 个汉字。 */
   --dsc-thread-max: 76ch;
-  /* 窗口控件占位：Windows Window Controls Overlay；env 不支持时回退 0。 */
-  --dsc-wco-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
 
   /* ── 阴影：一律从上方打光，每一层都向下坠、水平内收，
      所以阴影聚在面板下方而不是四面漏光。── */

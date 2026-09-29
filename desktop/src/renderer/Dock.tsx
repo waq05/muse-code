@@ -82,7 +82,7 @@ export function Dock(props: {
     <aside className="dock" style={{ width: props.width }}>
       <div
         className="dock-resizer"
-        data-tip="拖拽调整宽度（双击复位）"
+        data-tip="拖拽调整宽度，双击复位"
         onMouseDown={startResize}
         onDoubleClick={() => props.onResize(420)}
       />
@@ -141,7 +141,7 @@ function TerminalPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX
       term.options.fontSize = size
       fit.fit()
     })
-    term.writeln(`\x1b[90m${shellMeta.label} · 管道模式：输入命令回车执行（不支持交互式全屏程序）\x1b[0m\r\n`)
+    term.writeln(`\x1b[90m${shellMeta.label} · 管道模式：输入命令回车执行，不支持交互式全屏程序\x1b[0m\r\n`)
 
     let disposed = false
     let currentId = ''
@@ -250,7 +250,7 @@ function TerminalPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX
         </select>
       </div>
       <div ref={host} className="term-host" />
-      {session?.exited === true && <div className="term-exited">会话已退出（切换 tab 或收起面板后重开可新建）</div>}
+      {session?.exited === true && <div className="term-exited">会话已退出，重新打开面板或切换会话后可新建</div>}
       {error !== '' && <div className="notice">{error}</div>}
     </div>
   )
@@ -390,7 +390,7 @@ function FilesPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX.El
             <span>{preview.path.slice(cwd.length)}</span>
             <button className="icon-btn" onClick={() => setPreview(null)}>✕</button>
           </div>
-          <pre>{preview.tooLarge ? '（文件过大，仅支持 ≤512KB 预览）' : preview.text.slice(0, 20000)}</pre>
+          <pre>{preview.tooLarge ? '文件过大，仅支持预览 512KB 以内的文件' : preview.text.slice(0, 20000)}</pre>
         </div>
       )}
     </div>
@@ -444,7 +444,7 @@ function GitPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX.Elem
     <div className="git-pane">
       {error !== '' && <div className="notice">{error}</div>}
       {status === null ? (
-        <div className="trace-empty">{busy ? '读取中…' : '此目录不是 git 仓库（或读取失败）。'}</div>
+        <div className="trace-empty">{busy ? '读取中…' : '此目录不是 git 仓库，或读取失败。'}</div>
       ) : (
         <>
           <div className="git-branch">
@@ -469,7 +469,7 @@ function GitPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX.Elem
           <div className="git-commit">
             <textarea
               rows={2}
-              placeholder="提交信息（feat:/fix:/chore: ...）"
+              placeholder="提交信息，遵循 feat:/fix:/chore: 规范"
               value={message}
               onChange={(event) => setMessage(event.target.value)}
               disabled={busy || status.staged.length === 0}

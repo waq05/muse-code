@@ -4,14 +4,25 @@
  *
  * 内容有两张表：
  * - 通用表单：把宿主声明的 `SettingsField`（text/number/select/switch/info/button）
- *   画成控件——内置「通用」「关于」和外部插件贡献的分区都走这里，插件不给组件；
+ *   画成控件——内置「通用」「关于」走这里；插件贡献的分区不进设置，它们的
+ *   配置就地画在插件中心的详情页里（复用的就是下面这个 GenericFields）；
  * - 特殊分区：`custom: true` 的「模型」「技能」由本文件与 SkillsView 自己画，
  *   数据走 getModelConfig / listSkills。
  *
  * @module desktop/renderer/SettingsModal
  */
-import { useEffect, useRef, useState, type JSX } from 'react'
+import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react'
+import {
+  EFFORT_WIRE_HINT,
+  MODALITIES,
+  MODALITY_LABELS,
+  THINKING_LEVELS,
+  THINKING_LEVEL_LABELS,
+  THINKING_PARAMS,
+  THINKING_PARAM_LABELS,
+} from '@dsc/runtime/core/model-caps.js'
 import type {
+  Modality,
   ModelConfigView,
   ProviderDraft,
   ProviderModelView,
@@ -21,6 +32,8 @@ import type {
   SettingsSectionView,
   SettingsValue,
   SettingsValues,
+  ThinkingLevel,
+  ThinkingParam,
   UiPrefsView,
   ThemeMode,
   UiFontSize,
@@ -31,9 +44,11 @@ import { ArchivedView } from './ArchivedView.js'
 import { confirmAction } from './components/confirm.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { SkillsView } from './SkillsView.js'
+import { UsagePanel } from './UsagePanel.js'
 import {
   IconArchive,
   IconBolt,
+  IconChart,
   IconClose,
   IconEdit,
   IconGear,
@@ -41,15 +56,17 @@ import {
   IconKey,
   IconPlus,
   IconSpark,
+  IconSwap,
   IconTrash,
 } from './icons.js'
 
-/** 分区图标：认得的用形状，插件贡献的分区退回齿轮。 */
+/** 分区图标：认得的用形状，其余退回齿轮。 */
 function sectionIcon(id: string): JSX.Element {
   const size = 15
   if (id === 'models') return <IconSpark size={size} />
   if (id === 'skills') return <IconBolt size={size} />
   if (id === 'archive') return <IconArchive size={size} />
+  if (id === 'usage') return <IconChart size={size} />
   if (id === 'about') return <IconInfo size={size} />
   return <IconGear size={size} />
 }
@@ -70,12 +87,14 @@ export function SettingsModal(props: {
   const closing = useRef(props.onClose)
   closing.current = props.onClose
 
-  // 每次打开重取分区清单：期间可能挂上/卸下了贡献分区的插件
+  // 每次打开重取分区清单。插件贡献的分区不进设置：它们的配置就地画在
+  // 插件中心的详情页里（对照 dsh——插件配置页在插件中心编辑，设置不重复收录）。
   useEffect(() => {
     if (!props.open) return
     void props.proxy
       .getSettingsSections()
-      .then((list) => {
+      .then((all) => {
+        const list = all.filter((section) => section.builtin)
         setSections(list)
         setActive((current) =>
           list.some((section) => section.id === current)
@@ -109,7 +128,7 @@ export function SettingsModal(props: {
         if (event.target === event.currentTarget) props.onClose()
       }}
     >
-      <div className="settings" role="dialog" aria-modal="true" aria-label="dsc 设置">
+      <div className="settings" role="dialog" aria-modal="true" aria-label="Muse Code 设置">
         <nav className="settings-nav">
           <div className="settings-nav-head">设置</div>
           {sections.map((item) => (
@@ -121,13 +140,12 @@ export function SettingsModal(props: {
             >
               {sectionIcon(item.id)}
               <span className="label">{item.title}</span>
-              {!item.builtin && <span className="from-plugin">插件</span>}
             </button>
           ))}
           {sections.length === 0 && (
             <div className="settings-nav-empty">{loadError === '' ? '正在读取分区…' : loadError}</div>
           )}
-          <div className="settings-nav-foot">dsc 设置 · 改动即时写入 ~/.dsc</div>
+          <div className="settings-nav-foot">Muse Code 设置 · 改动即时写入 ~/.dsc</div>
         </nav>
 
         <div className="settings-main">
@@ -136,7 +154,7 @@ export function SettingsModal(props: {
               <h2>{section?.title ?? '设置'}</h2>
               {section?.subtitle !== undefined && <p>{section.subtitle}</p>}
             </div>
-            <button className="icon-btn" data-tip="关闭设置（Esc）" onClick={props.onClose}>
+            <button className="icon-btn" data-tip="关闭设置，快捷键 Esc" onClick={props.onClose}>
               <IconClose size={16} />
             </button>
           </div>
@@ -150,8 +168,18 @@ export function SettingsModal(props: {
               <SkillsView proxy={props.proxy} embedded />
             ) : section.custom && section.id === 'archive' ? (
               <ArchivedView proxy={props.proxy} />
+            ) : section.custom && section.id === 'usage' ? (
+              <UsagePanel proxy={props.proxy} />
             ) : (
-              <GenericFields section={section} proxy={props.proxy} uiPrefs={props.uiPrefs} onUiPrefs={props.onUiPrefs} />
+              <GenericFields
+                section={section}
+                proxy={props.proxy}
+                extra={
+                  section.id === 'general' ? (
+                    <AppearanceRows uiPrefs={props.uiPrefs} onUiPrefs={props.onUiPrefs} />
+                  ) : undefined
+                }
+              />
             )}
           </div>
         </div>
@@ -160,12 +188,20 @@ export function SettingsModal(props: {
   )
 }
 
-/** 把声明的控件画出来，改动即时写回宿主；成功回执与失败原因都走全局 Toast。 */
-function GenericFields(props: {
+/**
+ * 把声明的控件画出来，改动即时写回宿主；成功回执与失败原因都走全局 Toast。
+ * 设置面板和插件中心的详情页共用：`extra` 是追加在字段表末尾的额外内容
+ * （设置「通用」分区的外观三项走这里，详情页不传）。
+ */
+export function GenericFields(props: {
   section: SettingsSectionView
   proxy: RuntimeProxy
-  uiPrefs: UiPrefsView
-  onUiPrefs(patch: Partial<UiPrefsView>): void
+  extra?: ReactNode
+  /**
+   * 按钮跑成功之后叫一声。有的分区（安全钩子那种）的控件清单会随内容变：
+   * 加了一条规则，下拉里就多一项。光回读值不够，得让外层把整份分区重取一次。
+   */
+  onAction?: () => void
 }): JSX.Element {
   const [values, setValues] = useState<SettingsValues>({})
   const [draft, setDraft] = useState<Record<string, string>>({})
@@ -184,20 +220,26 @@ function GenericFields(props: {
       .setSettingValue(props.section.id, key, value)
       .then((result) => {
         if (!result.ok) {
-          toastErr(`没改成：${result.error}`)
+          toastErr(`保存失败：${result.error}`)
           return
         }
         if (result.notice !== undefined) toastOk(result.notice)
         // 值可能被宿主改写（例如非法值被夹取），回读一次
         void props.proxy.getSectionValues(props.section.id).then(setValues).catch(() => {})
       })
-      .catch((error: unknown) => toastErr(`没改成：${text(error)}`))
+      .catch((error: unknown) => toastErr(`保存失败：${text(error)}`))
   }
 
   const act = (action: string): void => {
     void props.proxy
       .runSettingAction(props.section.id, action)
-      .then((result) => apply(result))
+      .then((result) => {
+        apply(result)
+        // 按钮也可能改值（批准状态、启停），跟保存一样回读一次
+        void props.proxy.getSectionValues(props.section.id).then(setValues).catch(() => {})
+        // 按钮可能改动了控件清单本身（加了一条规则、删了一条脚本），让外层重取整份分区
+        if (result.ok) props.onAction?.()
+      })
       .catch((error: unknown) => toastErr(`操作失败：${text(error)}`))
   }
 
@@ -270,7 +312,7 @@ function GenericFields(props: {
               ))}
               {/* 宿主返回了选项外的值也要看得见，不能悄悄显示成第一项 */}
               {!field.options.some((option) => option.value === current) && current !== '' && (
-                <option value={current}>{current}（未识别）</option>
+                <option value={current}>{current} · 未识别</option>
               )}
             </select>
             {field.help !== undefined && <div className="setting-help">{field.help}</div>}
@@ -328,12 +370,10 @@ function GenericFields(props: {
   return (
     <div className="settings-fields">
       {props.section.fields.length === 0 && (
-        <div className="settings-empty">这个分区没有可配置的项。</div>
+        <div className="settings-empty">该分区没有可配置项。</div>
       )}
       {props.section.fields.map(render)}
-      {props.section.id === 'general' && (
-        <AppearanceRows uiPrefs={props.uiPrefs} onUiPrefs={props.onUiPrefs} />
-      )}
+      {props.extra}
     </div>
   )
 }
@@ -365,7 +405,7 @@ function AppearanceRows(props: {
             ]}
             onPick={(value) => props.onUiPrefs({ themeMode: value })}
           />
-          <div className="setting-help">深浅两套配色都是完整的；选「跟随系统」会跟着 Windows 的浅色设置随时切换。</div>
+          <div className="setting-help">深浅两套均为完整配色；选择「跟随系统」时随 Windows 的浅色设置自动切换。</div>
         </div>
       </div>
       <div className="setting-row">
@@ -395,7 +435,7 @@ function AppearanceRows(props: {
             ]}
             onPick={(value) => props.onUiPrefs({ density: value })}
           />
-          <div className="setting-help">只改行高与纵向内距（紧凑 90%、宽松 115%），一屏能看到的会话数会跟着变。</div>
+          <div className="setting-help">调整行高与纵向间距，紧凑档 90%，宽松档 115%，一屏可见的会话数随之变化。</div>
         </div>
       </div>
     </div>
@@ -428,7 +468,7 @@ function Segments<T extends string>(props: {
 /** 结果 → Toast 回执：失败说清原因，成功有回执就报一句。 */
 function apply(result: SettingsMutation): void {
   if (!result.ok) {
-    toastErr(`没做成：${result.error}`)
+    toastErr(`操作失败：${result.error}`)
     return
   }
   if (result.notice !== undefined) toastOk(result.notice)
@@ -462,16 +502,27 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
     task
       .then((result) => {
         if (!result.ok) {
-          toastErr(`没做成：${result.error}`)
+          toastErr(`操作失败：${result.error}`)
           return
         }
         toastOk(result.notice ?? okText ?? '已保存')
         reload()
       })
-      .catch((error: unknown) => toastErr(`没做成：${text(error)}`))
+      .catch((error: unknown) => toastErr(`操作失败：${text(error)}`))
   }
 
   const defaultProvider = config.providers.find((entry) => entry.name === config.defaultProvider)
+
+  /** 表单保存回执：失败留在表单里让用户改，成功就收起并重取（文件可能已被外部改过）。 */
+  const finishDraft = (result: SettingsMutation): void => {
+    if (!result.ok) {
+      toastErr(`保存失败：${result.error}`)
+      return
+    }
+    toastOk(result.notice ?? '端点已保存')
+    setDraft(null)
+    reload()
+  }
 
   return (
     <div className="settings-fields models">
@@ -488,7 +539,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                 if (first !== '') write(props.proxy.setDefaultModel(event.target.value, first))
               }}
             >
-              {config.providers.length === 0 && <option value="">（还没有端点）</option>}
+              {config.providers.length === 0 && <option value="">暂无端点</option>}
               {config.providers.map((entry) => (
                 <option key={entry.name} value={entry.name}>
                   {entry.displayName || entry.name}
@@ -519,9 +570,10 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
         <span className="count">{config.providers.length}</span>
         <button
           className="btn-primary models-add"
-          onClick={() =>
-            setDraft({ oldName: null, name: '', displayName: '', baseUrl: '', models: [{ id: '', name: '', contextWindow: 0, maxTokens: 0 }] })
-          }
+          onClick={() => {
+            setDraft({ oldName: null, name: '', displayName: '', baseUrl: '', models: [blankModel()] })
+            setTimeout(() => document.querySelector('.provider-form')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 0)
+          }}
         >
           <IconPlus size={14} /> 添加端点
         </button>
@@ -529,7 +581,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
 
       {config.providers.length === 0 && (
         <div className="settings-empty">
-          还没有端点。也可以直接编辑 <span className="mono">{config.configFile}</span>，改完点右上刷新。
+          还没有端点。也可以直接编辑 <span className="mono">{config.configFile}</span>，修改后点击右上角刷新。
         </div>
       )}
 
@@ -542,7 +594,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                 <span className="mono provider-id">{provider.name}</span>
                 {config.defaultProvider === provider.name && <span className="tag">默认</span>}
               </div>
-              <div className="provider-sub mono" data-tip={provider.baseUrl}>
+              <div className="provider-sub mono" title={provider.baseUrl}>
                 {provider.baseUrl}
               </div>
             </div>
@@ -551,8 +603,8 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                 className={`text-btn${provider.keyConfigured ? ' ok' : ' warn'}`}
                 data-tip={
                   provider.keyConfigured
-                    ? `${provider.keyRef} 已就绪（环境变量或凭据库）`
-                    : `${provider.keyRef} 还没有值，这个端点暂时用不了`
+                    ? `${provider.keyRef} 已就绪，来自环境变量或凭据库`
+                    : `${provider.keyRef} 尚未配置，该端点暂不可用`
                 }
                 onClick={() => {
                   setKeyFor(provider)
@@ -564,7 +616,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
               <button
                 className="text-btn"
                 data-tip="编辑这个端点"
-                onClick={() => {
+                onClick={(event) => {
                   setDraft({
                     oldName: provider.name,
                     name: provider.name,
@@ -572,6 +624,9 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                     baseUrl: provider.baseUrl,
                     models: provider.models,
                   })
+                  // 编辑框就长在这张卡里，滚动一下让它露出来（卡片在长列表下方时尤其需要）
+                  const card = event.currentTarget.closest('.provider-card')
+                  setTimeout(() => card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 0)
                 }}
               >
                 <IconEdit size={13} /> 编辑
@@ -585,8 +640,8 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                   void confirmAction({
                     title: `删除端点「${provider.displayName || provider.name}」？`,
                     detail:
-                      `这会从 ${config.configFile} 删掉这个端点，用它的会话要到下次请求才发现用不了；` +
-                      `它的 API key 仍留在凭据库里，重加同名端点还能用。${isDefault ? '它是当前默认端点，删掉后默认会自动改指第一个可用端点。' : ''}`,
+                      `将从 ${config.configFile} 删除该端点，使用它的会话在下次请求时才会发现不可用；` +
+                      `其 API key 仍保留在凭据库中，重新添加同名端点后可继续使用。${isDefault ? '该端点是当前默认端点，删除后默认端点将自动改为第一个可用端点。' : ''}`,
                     confirmLabel: '删除端点',
                     danger: true,
                   }).then((yes) => {
@@ -600,6 +655,18 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
               </button>
             </div>
           </div>
+
+          {/* 编辑框就长在点「编辑」的那张卡里，不再永远掉到列表最底下 */}
+          {draft !== null && draft.oldName === provider.name && (
+            <ProviderForm
+              key={`edit-${provider.name}`}
+              draft={draft}
+              proxy={props.proxy}
+              onChange={setDraft}
+              onCancel={() => setDraft(null)}
+              onDone={finishDraft}
+            />
+          )}
 
           {keyFor !== null && keyFor.name === provider.name && (
             <div className="provider-key">
@@ -652,35 +719,32 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                 <button
                   key={model.id}
                   className={`model-chip${isDefault ? ' on' : ''}`}
-                  data-tip={isDefault ? '当前默认模型' : '设为默认模型'}
+                  data-tip={`${model.id} · ${modelCapsSummary(model)}${isDefault ? ' · 当前默认模型' : ' · 点一下设为默认模型'}`}
                   onClick={() => write(props.proxy.setDefaultModel(provider.name, model.id))}
                 >
                   {model.name || model.id}
-                  {model.contextWindow > 0 && <span className="ctx">{model.contextWindow / 1000}k</span>}
+                  {model.contextWindow > 0 && <span className="ctx">{Math.round(model.contextWindow / 1000)}k</span>}
+                  {/* 只标不寻常的能力：能收图、能收视频、没有思考档位 */}
+                  {model.modalities.includes('image') && <span className="cap-badge">图</span>}
+                  {model.modalities.includes('video') && <span className="cap-badge">视频</span>}
+                  {model.thinkingLevels.length === 0 && <span className="cap-badge dim">无思考</span>}
                 </button>
               )
             })}
-            {provider.models.length === 0 && <span className="provider-nomodel">这个端点还没有模型，点「编辑」加一个</span>}
+            {provider.models.length === 0 && <span className="provider-nomodel">该端点还没有模型，点击「编辑」添加</span>}
           </div>
         </div>
       ))}
 
-      {draft !== null && (
+      {/* 只有「添加端点」才在列表末尾长一张新表单；编辑走卡片内的就地表单 */}
+      {draft !== null && draft.oldName === null && (
         <ProviderForm
-          key={draft.oldName ?? 'new'}
+          key="new"
           draft={draft}
           proxy={props.proxy}
           onChange={setDraft}
           onCancel={() => setDraft(null)}
-          onDone={(result) => {
-            if (!result.ok) {
-              toastErr(`保存失败：${result.error}`)
-              return
-            }
-            toastOk(result.notice ?? '端点已保存')
-            setDraft(null)
-            reload()
-          }}
+          onDone={finishDraft}
         />
       )}
 
@@ -694,7 +758,39 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
   )
 }
 
-/** 端点编辑表单：新增与改名共用（models 一行一个，`id, 显示名, 上下文窗口`）。 */
+/** 一行空模型（点「加模型」时用）。 */
+function blankModel(): ProviderModelView {
+  return { id: '', name: '', contextWindow: 0, maxTokens: 0, ...defaultCaps() }
+}
+
+/** 能力缺省值：数组每次新建，免得几行模型共用同一个数组互相改到。 */
+function defaultCaps(): Pick<ProviderModelView, 'thinkingLevels' | 'thinkingParam' | 'effortMap' | 'modalities'> {
+  return { thinkingLevels: [...THINKING_LEVELS], thinkingParam: 'thinking', effortMap: {}, modalities: ['text'] }
+}
+
+/** 一个模型的能力说明（端点卡片上模型 chip 的悬浮提示）。 */
+function modelCapsSummary(model: ProviderModelView): string {
+  const parts = [model.contextWindow > 0 ? `${Math.round(model.contextWindow / 1000)}k 上下文` : '上下文窗口没填']
+  parts.push(
+    model.thinkingLevels.length === 0
+      ? '没有思考档位'
+      : `思考档位 ${model.thinkingLevels.map((level) => THINKING_LEVEL_LABELS[level]).join('/')}（发法：${THINKING_PARAM_LABELS[model.thinkingParam].label}）`,
+  )
+  parts.push(`输入 ${model.modalities.map((modality) => MODALITY_LABELS[modality]).join('/')}`)
+  return parts.join(' · ')
+}
+
+/** 「128000」「128k」「0.5m」都认；解析不了返回 NaN。 */
+function parseTokenCount(text: string): number {
+  const match = /^(\d+(?:\.\d+)?)([km]?)$/.exec(text.trim().toLowerCase().replace(/[,\s]/g, ''))
+  if (match === null) return Number.NaN
+  const value = Number.parseFloat(match[1] ?? '')
+  if (match[2] === 'k') return Math.round(value * 1000)
+  if (match[2] === 'm') return Math.round(value * 1_000_000)
+  return Math.round(value)
+}
+
+/** 端点编辑表单：长在对应端点的卡片里；只有新增端点时才落在列表末尾。 */
 function ProviderForm(props: {
   draft: ProviderDraft
   proxy: RuntimeProxy
@@ -702,11 +798,52 @@ function ProviderForm(props: {
   onCancel(): void
   onDone(result: SettingsMutation): void
 }): JSX.Element {
-  const [modelsText, setModelsText] = useState(formatModels(props.draft.models))
+  /** 批量文本模式：一行一个快改 id / 显示名 / 上下文，档位与输入类型按原行保留。 */
+  const [bulk, setBulk] = useState(false)
+  const [bulkText, setBulkText] = useState(formatModels(props.draft.models))
   const isNew = props.draft.oldName === null
 
+  /** 进出批量文本各同步一次，两种录入方式不会各说各话。 */
+  const switchBulk = (): void => {
+    if (bulk) props.onChange({ ...props.draft, models: mergeCaps(props.draft.models, parseModels(bulkText)) })
+    else setBulkText(formatModels(props.draft.models))
+    setBulk(!bulk)
+  }
+
+  /** 改其中一行模型（其余行原样留着）。 */
+  const patchModel = (index: number, patch: Partial<ProviderModelView>): void => {
+    props.onChange({
+      ...props.draft,
+      models: props.draft.models.map((model, at) => (at === index ? { ...model, ...patch } : model)),
+    })
+  }
+
+  const removeModel = (index: number): void => {
+    props.onChange({ ...props.draft, models: props.draft.models.filter((_, at) => at !== index) })
+  }
+
+  /** 勾/去勾一档思考（结果始终按固定顺序排，免得勾选顺序随点击跑乱）。 */
+  const toggleLevel = (index: number, level: ThinkingLevel): void => {
+    const model = props.draft.models[index]
+    if (model === undefined) return
+    const wanted = new Set(model.thinkingLevels)
+    if (wanted.has(level)) wanted.delete(level)
+    else wanted.add(level)
+    patchModel(index, { thinkingLevels: THINKING_LEVELS.filter((entry) => wanted.has(entry)) })
+  }
+
+  /** 勾/去勾一种输入类型；文本永远留着（协议里没有文本就发不出消息）。 */
+  const toggleModality = (index: number, modality: Modality): void => {
+    const model = props.draft.models[index]
+    if (model === undefined || modality === 'text') return
+    const wanted = new Set(model.modalities)
+    if (wanted.has(modality)) wanted.delete(modality)
+    else wanted.add(modality)
+    patchModel(index, { modalities: MODALITIES.filter((entry) => wanted.has(entry)) })
+  }
+
   const save = (): void => {
-    const models = parseModels(modelsText)
+    const models = bulk ? mergeCaps(props.draft.models, parseModels(bulkText)) : props.draft.models
     props.proxy
       .saveProvider({ ...props.draft, models })
       .then(props.onDone)
@@ -720,7 +857,7 @@ function ProviderForm(props: {
       <div className="provider-form-title">{isNew ? '添加端点' : `编辑端点 ${props.draft.oldName}`}</div>
       <div className="provider-form-grid">
         <label className="field">
-          <span>名字（小写字母/数字/-/_，写入 config.yaml 的键）</span>
+          <span>名字：小写字母、数字、- 或 _，作为 config.yaml 的键</span>
           <input
             className="setting-input mono"
             value={props.draft.name}
@@ -746,16 +883,48 @@ function ProviderForm(props: {
             onChange={(event) => props.onChange({ ...props.draft, baseUrl: event.target.value })}
           />
         </label>
-        <label className="field wide">
-          <span>模型（一行一个：模型id, 显示名, 上下文窗口）</span>
-          <textarea
-            className="setting-input mono tall"
-            rows={3}
-            value={modelsText}
-            placeholder={'deepseek-chat, DeepSeek Chat, 64000\ndeepseek-reasoner, DeepSeek R1, 64000'}
-            onChange={(event) => setModelsText(event.target.value)}
-          />
-        </label>
+        <div className="field wide">
+          <div className="model-rows-head">
+            <span>模型与能力（不写的字段按默认：thinking 开关 + 四档 + 只吃文本）</span>
+            <div className="model-rows-tools">
+              <button className="text-btn" data-tip="用一行一个的文本快改 id / 显示名 / 上下文窗口" onClick={switchBulk}>
+                <IconSwap size={13} /> {bulk ? '回到表格' : '批量文本'}
+              </button>
+              <button
+                className="text-btn"
+                data-tip="再加一个模型"
+                onClick={() => props.onChange({ ...props.draft, models: [...props.draft.models, blankModel()] })}
+              >
+                <IconPlus size={13} /> 加模型
+              </button>
+            </div>
+          </div>
+          {bulk ? (
+            <textarea
+              className="setting-input mono tall"
+              rows={Math.max(3, props.draft.models.length + 1)}
+              value={bulkText}
+              placeholder={'deepseek-chat, DeepSeek Chat, 64000, 8192\ndeepseek-reasoner, DeepSeek R1, 64000'}
+              onChange={(event) => setBulkText(event.target.value)}
+            />
+          ) : (
+            <>
+              {props.draft.models.map((model, index) => (
+                <ModelRow
+                  key={index}
+                  model={model}
+                  onPatch={(patch) => patchModel(index, patch)}
+                  onToggleLevel={(level) => toggleLevel(index, level)}
+                  onToggleModality={(modality) => toggleModality(index, modality)}
+                  onRemove={props.draft.models.length > 1 ? () => removeModel(index) : undefined}
+                />
+              ))}
+              {props.draft.models.length === 0 && (
+                <div className="model-rows-empty">这个端点还没有模型，点「加模型」填第一个（模型 id 就是请求里发的名字）。</div>
+              )}
+            </>
+          )}
+        </div>
       </div>
       <div className="provider-form-actions">
         <button className="btn-primary" onClick={save}>
@@ -770,18 +939,24 @@ function ProviderForm(props: {
   )
 }
 
-/** 端点编辑表单里的模型清单：一行一个，`id, 显示名, 上下文窗口`。 */
+/** 批量文本：一行一个 `id, 显示名, 上下文窗口, 最大输出`；空列从尾部省掉。 */
 function formatModels(models: ProviderModelView[]): string {
   return models
     .filter((model) => model.id !== '')
-    .map((model) =>
-      [model.id, model.name === '' || model.name === model.id ? model.id : model.name, model.contextWindow > 0 ? String(model.contextWindow) : '']
-        .join(', ')
-        .replace(/, $/, ''),
-    )
+    .map((model) => {
+      const columns = [
+        model.id,
+        model.name === '' || model.name === model.id ? '' : model.name,
+        model.contextWindow > 0 ? String(model.contextWindow) : '',
+        model.maxTokens > 0 ? String(model.maxTokens) : '',
+      ]
+      while (columns.length > 1 && (columns.at(-1) ?? '') === '') columns.pop()
+      return columns.join(', ')
+    })
     .join('\n')
 }
 
+/** 解析批量文本；能力字段先按默认填，再由 {@link mergeCaps} 按 id 从原行接回来。 */
 function parseModels(text: string): ProviderModelView[] {
   const models: ProviderModelView[] = []
   for (const line of text.split('\n')) {
@@ -791,8 +966,189 @@ function parseModels(text: string): ProviderModelView[] {
     const id = parts[0] ?? ''
     if (id === '') continue
     const name = parts[1] !== undefined && parts[1] !== '' ? parts[1] : id
-    const contextWindow = Number.parseInt(parts[2] ?? '', 10)
-    models.push({ id, name, contextWindow: Number.isFinite(contextWindow) ? contextWindow : 0, maxTokens: 0 })
+    const contextWindow = parseTokenCount(parts[2] ?? '')
+    const maxTokens = parseTokenCount(parts[3] ?? '')
+    models.push({
+      id,
+      name,
+      contextWindow: Number.isFinite(contextWindow) ? contextWindow : 0,
+      maxTokens: Number.isFinite(maxTokens) ? maxTokens : 0,
+      ...defaultCaps(),
+    })
   }
   return models
+}
+
+/** 批量文本改完，把原行的思考档位 / 档位字段 / 输入类型接回来（一行一个的文本表达不了这些）。 */
+function mergeCaps(base: ProviderModelView[], parsed: ProviderModelView[]): ProviderModelView[] {
+  return parsed.map((model) => {
+    const old = base.find((entry) => entry.id === model.id)
+    if (old === undefined) return model
+    return {
+      ...model,
+      thinkingLevels: old.thinkingLevels,
+      thinkingParam: old.thinkingParam,
+      effortMap: old.effortMap,
+      modalities: old.modalities,
+    }
+  })
+}
+
+/**
+ * 表单里的一个模型一行：上面一行是 id / 显示名 / 两个 token 数，
+ * 下面一行是能力（思考档位、档位走哪个字段、输入类型）。
+ */
+function ModelRow(props: {
+  model: ProviderModelView
+  onPatch(patch: Partial<ProviderModelView>): void
+  onToggleLevel(level: ThinkingLevel): void
+  onToggleModality(modality: Modality): void
+  onRemove?(): void
+}): JSX.Element {
+  const model = props.model
+  // token 数这两个框让用户手打（128k 也认），所以本地存一份原文，失焦再归一化
+  const [ctxText, setCtxText] = useState(model.contextWindow > 0 ? String(model.contextWindow) : '')
+  const [outText, setOutText] = useState(model.maxTokens > 0 ? String(model.maxTokens) : '')
+
+  /** 归一化一个 token 数输入；解析不出来就退回模型上已经有的值。 */
+  const commit = (
+    text: string,
+    field: 'contextWindow' | 'maxTokens',
+    fallback: number,
+    sync: (text: string) => void,
+  ): void => {
+    const parsed = parseTokenCount(text)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      sync(fallback > 0 ? String(fallback) : '')
+      return
+    }
+    props.onPatch({ [field]: parsed } as Partial<ProviderModelView>)
+    sync(String(parsed))
+  }
+
+  /** 改某一档的线上值；清空 = 用内置值（读取时按缺省表补）。 */
+  const patchWire = (level: ThinkingLevel, text: string): void => {
+    const map = { ...model.effortMap }
+    const value = text.trim()
+    if (value === '') delete map[level]
+    else map[level] = value
+    props.onPatch({ effortMap: map })
+  }
+
+  return (
+    <div className="model-row">
+      <div className="model-row-main">
+        <label className="model-row-field">
+          <span>模型 id</span>
+          <input
+            className="setting-input mono"
+            placeholder="请求里发的名字"
+            value={model.id}
+            onChange={(event) => props.onPatch({ id: event.target.value })}
+          />
+        </label>
+        <label className="model-row-field">
+          <span>显示名</span>
+          <input
+            className="setting-input"
+            placeholder="留空 = 用 id"
+            value={model.name === model.id ? '' : model.name}
+            onChange={(event) => props.onPatch({ name: event.target.value })}
+          />
+        </label>
+        <label className="model-row-field">
+          <span>上下文</span>
+          <input
+            className="setting-input mono"
+            inputMode="numeric"
+            placeholder="128000"
+            value={ctxText}
+            onChange={(event) => setCtxText(event.target.value)}
+            onBlur={(event) => commit(event.target.value, 'contextWindow', model.contextWindow, setCtxText)}
+          />
+        </label>
+        <label className="model-row-field">
+          <span>最大输出</span>
+          <input
+            className="setting-input mono"
+            inputMode="numeric"
+            placeholder="8192"
+            value={outText}
+            onChange={(event) => setOutText(event.target.value)}
+            onBlur={(event) => commit(event.target.value, 'maxTokens', model.maxTokens, setOutText)}
+          />
+        </label>
+        {props.onRemove !== undefined && (
+          <button className="text-btn danger" data-tip="删掉这个模型" onClick={props.onRemove}>
+            <IconTrash size={13} />
+          </button>
+        )}
+      </div>
+      <div className="model-row-caps">
+        <span className="cap-label" data-tip="这个模型支持哪几档思考：思考面板只列勾上的这些">
+          思考档位
+        </span>
+        <span className="cap-group">
+          {THINKING_LEVELS.map((level) => (
+            <button
+              key={level}
+              className={`cap-chip${model.thinkingLevels.includes(level) ? ' on' : ''}`}
+              data-tip={`思考档位「${THINKING_LEVEL_LABELS[level]}」${model.thinkingLevels.includes(level) ? '，点一下取消' : '，点一下勾上'}`}
+              onClick={() => props.onToggleLevel(level)}
+            >
+              {THINKING_LEVEL_LABELS[level]}
+            </button>
+          ))}
+        </span>
+        <select
+          className="setting-select cap-param"
+          value={model.thinkingParam}
+          onChange={(event) => props.onPatch({ thinkingParam: event.target.value as ThinkingParam })}
+        >
+          {THINKING_PARAMS.map((param) => (
+            <option key={param} value={param}>
+              {THINKING_PARAM_LABELS[param].label}
+            </option>
+          ))}
+        </select>
+        {model.thinkingParam === 'reasoning-effort' && (
+          <span className="cap-wire">
+            <span className="cap-label">线上值</span>
+            {THINKING_LEVELS.filter((level) => model.thinkingLevels.includes(level)).map((level) => (
+              <label className="cap-wire-field" key={level}>
+                <span>{THINKING_LEVEL_LABELS[level]}</span>
+                <input
+                  className="setting-input mono cap-wire-input"
+                  placeholder={EFFORT_WIRE_HINT[level]}
+                  value={model.effortMap[level] ?? ''}
+                  data-tip={`发给端点的 ${THINKING_LEVEL_LABELS[level]} 档写这个值；留空 = ${EFFORT_WIRE_HINT[level]}。要这一档不发字段，去 config.yaml 写成 null`}
+                  onChange={(event) => patchWire(level, event.target.value)}
+                />
+              </label>
+            ))}
+          </span>
+        )}
+        <span className="cap-label" data-tip="这个模型能收什么输入：没勾照片，对话里就发不出图">
+          输入
+        </span>
+        <span className="cap-group">
+          {MODALITIES.map((modality) => (
+            <button
+              key={modality}
+              className={`cap-chip${model.modalities.includes(modality) ? ' on' : ''}`}
+              disabled={modality === 'text'}
+              data-tip={
+                modality === 'text'
+                  ? '文本永远要勾（协议里没有文本就发不出消息）'
+                  : `${MODALITY_LABELS[modality]}输入${model.modalities.includes(modality) ? '，点一下取消' : '，点一下勾上'}`
+              }
+              onClick={() => props.onToggleModality(modality)}
+            >
+              {MODALITY_LABELS[modality]}
+            </button>
+          ))}
+        </span>
+      </div>
+    </div>
+  )
 }

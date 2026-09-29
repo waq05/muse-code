@@ -39,7 +39,7 @@ export function SessionPicker(props: {
   return (
     <div className="overlay" onClick={props.onClose}>
       <div className="picker" onClick={(event) => event.stopPropagation()}>
-        <div className="title">选择要恢复的会话（↑↓ 选择 · Enter 恢复 · Esc 取消）</div>
+        <div className="title">选择要恢复的会话：↑↓ 选择 · Enter 恢复 · Esc 取消</div>
         <div className="list">
           {props.loading && <div className="empty">正在读取会话列表…</div>}
           {!props.loading && props.sessions.length === 0 && (

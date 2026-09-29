@@ -14,10 +14,10 @@ import { IconClose } from './icons.js'
 
 /** 状态 → 中文标签与颜色档位。 */
 const STATE_LABEL: Record<TeammateView['state'], string> = {
-  working: '正在干',
-  idle: '已完工',
-  stopped: '被打断',
-  failed: '失败了',
+  working: '运行中',
+  idle: '已完成',
+  stopped: '已停止',
+  failed: '已失败',
 }
 
 export function TeammatePeek(props: {
@@ -37,13 +37,13 @@ export function TeammatePeek(props: {
         <span className="peek-task" data-tip={teammate.task}>
           任务：{teammate.task}
         </span>
-        <span className="peek-hint">只读，不能在这里发言</span>
-        <button className="icon-btn" data-tip="关掉，回自己的会话" onClick={props.onClose}>
+        <span className="peek-hint">只读视图，不能在此发言</span>
+        <button className="icon-btn" data-tip="关闭并返回自己的会话" onClick={props.onClose}>
           <IconClose size={14} />
         </button>
       </div>
       {props.entries.length === 0 ? (
-        <div className="peek-empty">它还没有留下内容。</div>
+        <div className="peek-empty">该队友还没有产生运行记录。</div>
       ) : (
         <ChatView entries={props.entries} turnState={teammate.state === 'working' ? 'thinking' : 'idle'} />
       )}

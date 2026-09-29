@@ -17,14 +17,19 @@ import { confirmAction } from './components/confirm.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { dsc, type RuntimeProxy } from './bridge.js'
 import { SIDEBAR_MAX, SIDEBAR_MIN, readRootPx, setRootVar, useWidthDrag } from './panels.js'
-import { moveToEnd, moveWithin } from './workspace-order.js'
+import { moveToEnd, moveWithin, nestByPath, type NestedPath } from './workspace-order.js'
 import {
   IconArchive,
+  IconArchiveOff,
   IconBolt,
+  IconCalendar,
+  IconCheck,
   IconChevronDown,
   IconChevronRight,
+  IconClock,
   IconClose,
   IconCoins,
+  IconFlatList,
   IconFolder,
   IconFolderOpen,
   IconGear,
@@ -33,13 +38,22 @@ import {
   IconPin,
   IconPlus,
   IconPuzzle,
+  IconQueue,
+  IconRefresh,
   IconSearch,
   IconSidebar,
   IconSort,
+  IconSwap,
+  IconTree,
 } from './icons.js'
 
 /** 左栏页面（技能/插件各占一页，其余时间显示对话）。 */
 export type SidebarView = 'chat' | 'plugins' | 'skills'
+
+/** 侧栏里的一个工作区分组：树的层级来自 {@link NestedPath}，这里再挂上会话。 */
+interface WorkGroup extends NestedPath {
+  sessions: SessionSummary[]
+}
 
 /** 归档确认框里那句后果说明：写清去向与「消息不删」，免得用户把归档当成删除。 */
 const ARCHIVE_DETAIL_ONE = '会话会离开侧栏，移进「设置 → 归档」的归档区；消息一个字不删，想回来去归档里点「恢复」。'
@@ -87,6 +101,11 @@ export function Sidebar(props: {
   const [query, setQuery] = useState('')
   /** 打开着 `···` 菜单的行（工作区行是 `w:<cwd>`，会话行是 `s:<路径>`）。 */
   const [menu, setMenu] = useState<string | null>(null)
+  /**
+   * 视图选项菜单（分组 / 排序 / 筛选）的落点。用视口坐标而不是就地绝对定位：
+   * 这个菜单挂在滚动区里的头部上，就地定位会被 `overflow-y: auto` 裁掉。
+   */
+  const [viewMenu, setViewMenu] = useState<{ top: number; right: number } | null>(null)
   /** 正在改名的行。 */
   const [editing, setEditing] = useState<{ key: string; kind: 'workspace' | 'session'; value: string } | null>(null)
   /** 分叉位置选择器：会话路径 + 可选的用户消息清单。 */
@@ -123,13 +142,13 @@ export function Sidebar(props: {
     try {
       const result = await task
       if (result.ok) toastOk(result.notice ?? '已完成')
-      else toastErr(`没做成：${result.error}`)
+      else toastErr(`操作失败：${result.error}`)
       if (result.ok) {
         await props.proxy.refreshSessions()
         then?.()
       }
     } catch (error) {
-      toastErr(`没做成：${error instanceof Error ? error.message : String(error)}`)
+      toastErr(`操作失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -143,17 +162,31 @@ export function Sidebar(props: {
     })
   }
 
+  const sort = props.uiPrefs.sessionSort
+  const group = props.uiPrefs.sessionGroup
+  const archived = props.uiPrefs.archivedFilter
+
   const sortedSessions = (list: SessionSummary[]): SessionSummary[] =>
     [...list].sort((a, b) => {
       if ((a.pinnedAt ?? 0) !== (b.pinnedAt ?? 0)) return (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0)
-      return props.uiPrefs.sessionSort === 'recent' ? b.updatedAt - a.updatedAt : b.createdAt - a.createdAt
+      // 「手动排序」只管工作区那一级（会话行拖不了），所以会话行按最近写入排。
+      return sort === 'created' ? b.createdAt - a.createdAt : b.updatedAt - a.updatedAt
     })
+
+  /** 归档筛选：hide 只看活动区，only 只看归档区，show 两区并成一份列表。 */
+  const keepArchived = (session: SessionSummary): boolean =>
+    archived === 'hide'
+      ? session.archivedAt === undefined
+      : archived === 'only'
+        ? session.archivedAt !== undefined
+        : true
 
   const groups = useMemo(() => {
     const map = new Map<string, SessionSummary[]>()
-    // 只有「切过去还没发消息」的工作区没有会话，也要留在列表里
-    for (const dir of props.recentCwds) map.set(dir, [])
+    // 只有「切过去还没发消息」的工作区没有会话，也要留在列表里；只看归档时它们没意义
+    if (archived !== 'only') for (const dir of props.recentCwds) map.set(dir, [])
     for (const session of props.sessions) {
+      if (!keepArchived(session)) continue
       const key = session.cwd || '(未指定)'
       const list = map.get(key) ?? []
       list.push(session)
@@ -167,35 +200,58 @@ export function Sidebar(props: {
     const visible = [...map.entries()].filter(([cwd, list]) => match(cwd, list))
     const rank = (cwd: string): number => order.indexOf(cwd)
     const lastUsed = (list: SessionSummary[]): number => list.reduce((max, s) => Math.max(max, s.updatedAt), 0)
-    return visible
+    const lastCreated = (list: SessionSummary[]): number => list.reduce((max, s) => Math.max(max, s.createdAt), 0)
+    const sorted = visible
       .map(([cwd, list]) => [cwd, sortedSessions(list)] as [string, SessionSummary[]])
       .sort((a, b) => {
-        // 手动排过序就完全按手动顺序（活动组不再抢位）；否则活动组置顶
-        if (order.length > 0) {
-          const ra = rank(a[0])
-          const rb = rank(b[0])
-          if (ra !== rb) {
-            if (ra < 0) return 1
-            if (rb < 0) return -1
-            return ra - rb
+        if (sort === 'manual') {
+          // 手动排过序就完全按手动顺序（活动组不再抢位）；没排过则活动组置顶，其余按最近使用
+          if (order.length > 0) {
+            const ra = rank(a[0])
+            const rb = rank(b[0])
+            if (ra !== rb) {
+              if (ra < 0) return 1
+              if (rb < 0) return -1
+              return ra - rb
+            }
+          } else if ((a[0] === props.cwd) !== (b[0] === props.cwd)) {
+            return a[0] === props.cwd ? -1 : 1
           }
-        } else if ((a[0] === props.cwd) !== (b[0] === props.cwd)) {
-          return a[0] === props.cwd ? -1 : 1
+          return lastUsed(b[1]) - lastUsed(a[1])
         }
-        return lastUsed(b[1]) - lastUsed(a[1])
+        // 最近更新 / 创建时间这两档两级都按时间，不再人为把活动组顶上去
+        return sort === 'created' ? lastCreated(b[1]) - lastCreated(a[1]) : lastUsed(b[1]) - lastUsed(a[1])
       })
+    if (group !== 'tree') {
+      return sorted.map(
+        ([cwd, list]): WorkGroup => ({ cwd, sessions: list, depth: 0, parent: null, ancestors: [], hasChildren: false }),
+      )
+    }
+    const lists = new Map(sorted)
+    return nestByPath(sorted.map(([cwd]) => cwd)).map(
+      (node): WorkGroup => ({ ...node, sessions: lists.get(node.cwd) ?? [] }),
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.sessions, props.recentCwds, props.cwd, order, aliases, trimmed, props.uiPrefs.sessionSort])
+  }, [props.sessions, props.recentCwds, props.cwd, order, aliases, trimmed, sort, group, archived])
 
   const isActiveGroup = (cwd: string): boolean => cwd === props.cwd
-  const isExpanded = (cwd: string): boolean =>
-    trimmed !== '' || manualOpen.has(cwd) || (isActiveGroup(cwd) && !manualOpen.has(`!${cwd}`))
+  /** 树里带子分组的行（折叠它要连带收起后代，且默认展开）。 */
+  const parents = useMemo(() => new Set(groups.filter((item) => item.hasChildren).map((item) => item.cwd)), [groups])
+
+  const isExpanded = (cwd: string): boolean => {
+    if (trimmed !== '') return true
+    // 树里的父分组默认展开：折叠状态归 `!cwd` 管
+    if (group === 'tree' && parents.has(cwd)) return !manualOpen.has(`!${cwd}`)
+    if (isActiveGroup(cwd)) return !manualOpen.has(`!${cwd}`)
+    return manualOpen.has(cwd)
+  }
 
   const toggle = (cwd: string): void => {
     setManualOpen((current) => {
       const next = new Set(current)
+      const defaultsOpen = isActiveGroup(cwd) || (group === 'tree' && parents.has(cwd))
       if (isExpanded(cwd)) {
-        next.add(isActiveGroup(cwd) ? `!${cwd}` : cwd)
+        if (defaultsOpen) next.add(`!${cwd}`)
         next.delete(cwd)
       } else {
         next.delete(`!${cwd}`)
@@ -203,6 +259,48 @@ export function Sidebar(props: {
       }
       return next
     })
+  }
+
+  /** 祖先里只要有一个被折叠，这一组就不出现在列表里。 */
+  const hiddenByAncestor = (item: WorkGroup): boolean => item.ancestors.some((ancestor) => !isExpanded(ancestor))
+
+  /** 单列表：不分工作区，所有会话混成一条按排序方式排好的流。 */
+  const flatSessions = sortedSessions(groups.flatMap((item) => item.sessions))
+
+  /** 视图选项菜单的三组（对照 dsh 的「分组方式 / 排序方式 / 筛选会话」）。 */
+  const viewSections: { label: string; items: { id: string; text: string; icon: JSX.Element; active: boolean }[] }[] = [
+    {
+      label: '分组方式',
+      items: [
+        { id: 'workspace', text: '按工作区', icon: <IconFolder size={14} />, active: group === 'workspace' },
+        { id: 'tree', text: '按工作区树', icon: <IconTree size={14} />, active: group === 'tree' },
+        { id: 'flat', text: '单列表', icon: <IconFlatList size={14} />, active: group === 'flat' },
+      ],
+    },
+    {
+      label: '排序方式',
+      items: [
+        { id: 'manual', text: '手动排序', icon: <IconSwap size={14} />, active: sort === 'manual' },
+        { id: 'recent', text: '最近更新', icon: <IconClock size={14} />, active: sort === 'recent' },
+        { id: 'created', text: '创建时间', icon: <IconCalendar size={14} />, active: sort === 'created' },
+      ],
+    },
+    {
+      label: '筛选会话',
+      items: [
+        { id: 'hide', text: '隐藏已归档', icon: <IconArchiveOff size={14} />, active: archived === 'hide' },
+        { id: 'show', text: '全部对话（显示已归档）', icon: <IconQueue size={14} />, active: archived === 'show' },
+        { id: 'only', text: '仅显示已归档', icon: <IconArchive size={14} />, active: archived === 'only' },
+      ],
+    },
+  ]
+
+  /** 菜单里选了一项：按 id 分别落到界面偏好的三个字段上，然后收起菜单。 */
+  const pickView = (id: string): void => {
+    if (id === 'workspace' || id === 'tree' || id === 'flat') props.onUiPrefs({ sessionGroup: id })
+    else if (id === 'manual' || id === 'recent' || id === 'created') props.onUiPrefs({ sessionSort: id })
+    else if (id === 'hide' || id === 'show' || id === 'only') props.onUiPrefs({ archivedFilter: id })
+    setViewMenu(null)
   }
 
   const activateGroup = (cwd: string): void => {
@@ -213,7 +311,7 @@ export function Sidebar(props: {
 
   /** 把 source 挪到 target 之前或之后，其余保持当前视觉顺序，然后存起来。 */
   const reorder = (source: string, target: string, after: boolean): void => {
-    const current = groups.map(([cwd]) => cwd)
+    const current = groups.map((item) => item.cwd)
     const next = moveWithin(current, source, target, after)
     if (next.join('\n') === current.join('\n')) return
     props.onUiPrefs({ workspaceOrder: next })
@@ -221,7 +319,7 @@ export function Sidebar(props: {
 
   /** 拖到列表末尾的落点。 */
   const dropAtEnd = (source: string): void => {
-    const current = groups.map(([cwd]) => cwd)
+    const current = groups.map((item) => item.cwd)
     const next = moveToEnd(current, source)
     if (next.join('\n') === current.join('\n')) return
     props.onUiPrefs({ workspaceOrder: next })
@@ -259,7 +357,7 @@ export function Sidebar(props: {
     setMenu(null)
     const points = await props.proxy.listUserMessages(path)
     if (points.length < 2) {
-      toastErr('这个会话里可选的分叉位置少于两条用户消息')
+      toastErr('可分叉的位置不足，至少需要两条用户消息')
       return
     }
     setFork({ path, points })
@@ -275,7 +373,7 @@ export function Sidebar(props: {
       return
     }
     await props.proxy.refreshSessions()
-    toastOk(`已分叉出新会话（到第 ${index + 1} 条消息为止）`)
+    toastOk(`已分叉出新会话，包含第 ${index + 1} 条消息之前的内容`)
     props.onPick(result.path)
   }
 
@@ -317,6 +415,8 @@ export function Sidebar(props: {
     if (kind === 'session' && event.ctrlKey && event.shiftKey && lower === 'a') {
       event.preventDefault()
       const target = props.sessions.find((session) => session.id === key.slice(2))
+      // 归档区里的行不再走归档（会报「不能重复归档」），它要的是行内那颗「恢复」
+      if (target?.archivedAt !== undefined) return
       archiveWithConfirm([key.slice(2)], `归档会话「${target?.title ?? '未命名会话'}」？`, ARCHIVE_DETAIL_ONE)
     }
   }
@@ -331,13 +431,177 @@ export function Sidebar(props: {
     onCommit: (px) => props.onSidebarResize(px),
   })
 
+  /**
+   * 会话行：分组列表、单列表、归档区共用这一份渲染。
+   * 归档行置灰，点开被拦下（要先用行尾的「恢复」把它移回活动区），行操作也跟着换成恢复。
+   */
+  const renderSession = (session: SessionSummary): JSX.Element => {
+    const sKey = `s:${session.id}`
+    const isArchived = session.archivedAt !== undefined
+    const blocked = (): void => {
+      toastErr('这个会话已归档：先点行尾的「恢复」再打开')
+    }
+    return (
+      <div
+        key={session.id}
+        className={`sess-item${isArchived ? ' archived' : ''}${session.id.endsWith(`${props.activeSessionId ?? '#'}.jsonl`) ? ' active' : ''}`}
+        role="button"
+        tabIndex={0}
+        data-tip={
+          isArchived
+            ? `${session.title ?? '新会话'}（已归档）；恢复后才能在对话里打开`
+            : `${session.title ?? '新会话'}；Ctrl+Alt+R 改名 · Ctrl+Alt+F 分叉 · Ctrl+Shift+A 归档`
+        }
+        onClick={() => {
+          if (isArchived) blocked()
+          else props.onPick(session.id)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            if (isArchived) blocked()
+            else props.onPick(session.id)
+            return
+          }
+          rowKeys(event, sKey, 'session')
+        }}
+      >
+        {session.pinnedAt !== undefined && (
+          <span className="pin-mark" data-tip="已置顶">
+            <IconPin size={11} />
+          </span>
+        )}
+        {editing?.key === sKey ? (
+          <input
+            className="row-rename"
+            autoFocus
+            value={editing.value}
+            onChange={(event) => setEditing({ ...editing, value: event.target.value })}
+            onBlur={commitRename}
+            onKeyDown={(event) => {
+              event.stopPropagation()
+              if (event.key === 'Enter') commitRename()
+              if (event.key === 'Escape') setEditing(null)
+            }}
+          />
+        ) : (
+          <span className="title">{session.title ?? '新会话'}</span>
+        )}
+        {/* 归档行的时间显示归档时刻：那才是它在这一档里排队的依据。 */}
+        <span className="when">
+          {relative(sort === 'created' ? session.createdAt : (session.archivedAt ?? session.updatedAt))}
+        </span>
+        <span className="row-actions">
+          <button
+            className="icon-btn"
+            data-tip={session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
+            onClick={(event) => {
+              event.stopPropagation()
+              void run(props.proxy.setSessionPinned(session.id, session.pinnedAt === undefined))
+            }}
+          >
+            <IconPin size={13} />
+          </button>
+          {isArchived ? (
+            <button
+              className="icon-btn"
+              data-tip="恢复这个会话，移回活动区"
+              onClick={(event) => {
+                event.stopPropagation()
+                void run(props.proxy.restoreSessions([session.id]))
+              }}
+            >
+              <IconRefresh size={13} />
+            </button>
+          ) : (
+            <button
+              className="icon-btn"
+              data-tip="归档会话"
+              onClick={(event) => {
+                event.stopPropagation()
+                archiveWithConfirm(
+                  [session.id],
+                  `归档会话「${session.title ?? '新会话'}」？`,
+                  ARCHIVE_DETAIL_ONE,
+                )
+              }}
+            >
+              <IconArchive size={13} />
+            </button>
+          )}
+          <button
+            className={`icon-btn${menu === sKey ? ' on' : ''}`}
+            data-tip="更多操作"
+            onClick={(event) => {
+              event.stopPropagation()
+              setMenu(menu === sKey ? null : sKey)
+            }}
+          >
+            <IconMore size={14} />
+          </button>
+        </span>
+        {menu === sKey && (
+          <>
+            <div className="menu-backdrop" onClick={() => setMenu(null)} />
+            <div className="row-menu" onClick={(event) => event.stopPropagation()}>
+              <button
+                className="menu-item"
+                onClick={() => {
+                  setMenu(null)
+                  void run(props.proxy.setSessionPinned(session.id, session.pinnedAt === undefined))
+                }}
+              >
+                <IconPin size={14} /> {session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
+              </button>
+              <button
+                className="menu-item"
+                onClick={() => startRename(sKey, 'session', session.title ?? '')}
+              >
+                重命名 <span className="menu-key">Ctrl+Alt+R</span>
+              </button>
+              <button className="menu-item" onClick={() => void openFork(session.id)}>
+                分叉会话 <span className="menu-key">Ctrl+Alt+F</span>
+              </button>
+              <div className="menu-sep" />
+              {isArchived ? (
+                <button
+                  className="menu-item"
+                  onClick={() => {
+                    setMenu(null)
+                    void run(props.proxy.restoreSessions([session.id]))
+                  }}
+                >
+                  <IconRefresh size={14} /> 恢复会话
+                </button>
+              ) : (
+                <button
+                  className="menu-item danger"
+                  onClick={() => {
+                    setMenu(null)
+                    archiveWithConfirm(
+                      [session.id],
+                      `归档会话「${session.title ?? '新会话'}」？`,
+                      ARCHIVE_DETAIL_ONE,
+                    )
+                  }}
+                >
+                  <IconArchive size={14} /> 归档会话 <span className="menu-key">Ctrl+Shift+A</span>
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
   // 收起态：56px 图标窄栏（照 dsh 的窄栏规格——36px 控件、18px 图标）。
   // 最上面那颗就是展开按钮：窄栏里 logo 就代表「点开侧栏」，不再另摆一颗开关。
   if (props.rail) {
     return (
       <aside className="sidebar rail">
-        <button className="rail-logo" data-tip="展开侧边栏（Ctrl+B）" onClick={props.onToggleRail}>
-          <img src={iconUrl} alt="dsc" draggable={false} />
+        <button className="rail-logo" data-tip="展开侧边栏，快捷键 Ctrl+B" onClick={props.onToggleRail}>
+          <img src={iconUrl} alt="Muse Code" draggable={false} />
         </button>
         <button className="rail-btn" data-tip="新会话" onClick={props.onNew}>
           <IconPlus size={18} />
@@ -357,17 +621,18 @@ export function Sidebar(props: {
           >
             <IconPuzzle size={18} />
           </button>
-          <button className="rail-btn" data-tip="设置（模型、权限、技能源）" onClick={() => props.onOpenSettings('general')}>
-            <IconGear size={18} />
-          </button>
         </nav>
         <div className="rail-foot">
           <button
             className="rail-btn"
-            data-tip={`工作目录 ${props.cwd}；要挑会话就先展开侧栏`}
+            data-tip={`工作目录 ${props.cwd}，展开侧栏后可选择会话`}
             onClick={props.onToggleRail}
           >
             <IconFolder size={18} />
+          </button>
+          {/* 设置收进左下角（对照 dsh 的底部锚位），窄栏里排在目录按钮下面。 */}
+          <button className="rail-btn" data-tip="设置：模型、权限、技能源" onClick={() => props.onOpenSettings('general')}>
+            <IconGear size={18} />
           </button>
         </div>
       </aside>
@@ -377,10 +642,10 @@ export function Sidebar(props: {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
-        <img src={iconUrl} alt="dsc" draggable={false} />
-        <span className="brand">dsc</span>
+        <img src={iconUrl} alt="Muse Code" draggable={false} />
+        <span className="brand">Muse Code</span>
         <span className="badge">DESKTOP</span>
-        <button className="icon-btn rail-toggle" data-tip="收起侧边栏（Ctrl+B）" onClick={props.onToggleRail}>
+        <button className="icon-btn rail-toggle" data-tip="收起侧边栏，快捷键 Ctrl+B" onClick={props.onToggleRail}>
           <IconSidebar size={15} />
         </button>
       </div>
@@ -402,9 +667,6 @@ export function Sidebar(props: {
         >
           <IconPuzzle size={15} /> 插件
         </button>
-        <button className="nav-item" data-tip="设置（模型、权限、技能源）" onClick={() => props.onOpenSettings('general')}>
-          <IconGear size={15} /> 设置
-        </button>
       </nav>
 
       <div className="sidebar-scroll">
@@ -415,7 +677,7 @@ export function Sidebar(props: {
             </button>
             <button
               className={`side-tab${tab === 'teammates' ? ' on' : ''}`}
-              data-tip="子智能体团队派出去的队友；点开只读查看它在干什么"
+              data-tip="子智能体团队的队友，点击查看只读运行记录"
               onClick={() => setTab('teammates')}
             >
               队友{teammates.length > 0 ? ` ${teammates.length}` : ''}
@@ -434,13 +696,20 @@ export function Sidebar(props: {
                 <IconSearch size={14} />
               </button>
               <button
-                className="icon-btn"
-                data-tip={
-                  props.uiPrefs.sessionSort === 'recent'
-                    ? '当前按最近使用排序，点击改为按创建时间'
-                    : '当前按创建时间排序，点击改为按最近使用'
-                }
-                onClick={() => props.onUiPrefs({ sessionSort: props.uiPrefs.sessionSort === 'recent' ? 'created' : 'recent' })}
+                className={`icon-btn${viewMenu !== null ? ' on' : ''}`}
+                data-tip="视图选项：分组方式、排序方式、筛选会话"
+                onClick={(event) => {
+                  if (viewMenu !== null) {
+                    setViewMenu(null)
+                    return
+                  }
+                  // 用视口坐标定位：菜单挂在滚动区里的头部上，就地绝对定位会被裁掉。
+                  // 右缘贴侧栏右边而不是按钮自己的右缘——按钮左边还排着两颗，跟着它对齐会顶出窗口。
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  const rail = event.currentTarget.closest('.sidebar')
+                  const edge = rail === null ? rect.right : rail.getBoundingClientRect().right - 6
+                  setViewMenu({ top: rect.bottom + 6, right: window.innerWidth - edge })
+                }}
               >
                 <IconSort size={14} />
               </button>
@@ -480,15 +749,21 @@ export function Sidebar(props: {
           </div>
         )}
 
-        {tab === 'sessions' && (props.sessions.length > 0 || props.recentCwds.length > 0) && groups.length === 0 && (
-          <div className="sidebar-empty">没有匹配「{query.trim()}」的会话。</div>
+        {tab === 'sessions' && groups.length === 0 && !(props.sessions.length === 0 && props.recentCwds.length === 0) && (
+          <div className="sidebar-empty">
+            {trimmed !== ''
+              ? `没有匹配「${query.trim()}」的会话。`
+              : archived === 'only'
+                ? '还没有已归档的会话。'
+                : '活动区没有会话了：归档的那些在「视图选项 → 仅显示已归档」里。'}
+          </div>
         )}
 
         {tab === 'teammates' && teammates.length === 0 && (
           <div className="sidebar-empty">
-            没有在队的队友。
+            当前没有队友。
             <br />
-            在「插件」页打开「子智能体团队」，让模型把活拆给队友，这里就会出现它们。
+            在「插件」页启用「子智能体团队」后，模型派出的队友会显示在这里。
           </div>
         )}
 
@@ -509,16 +784,30 @@ export function Sidebar(props: {
               <span className="tm-name">{mate.name}</span>
               <span className="tm-role">{mate.role}</span>
               <span className="tm-state">
-                {mate.state === 'working' ? `在干 · ${mate.rounds} 轮` : mate.state === 'idle' ? '完工' : mate.state === 'stopped' ? '打断' : '失败'}
+                {mate.state === 'working' ? `运行中 · ${mate.rounds} 轮` : mate.state === 'idle' ? '已完成' : mate.state === 'stopped' ? '已停止' : '已失败'}
               </span>
               <span className="tm-time">{relative(mate.finishedAt ?? mate.startedAt)}</span>
             </div>
           ))}
 
-        {tab === 'sessions' && groups.map(([cwd, sessions]) => {
+        {/* 单列表：不分工作区，会话混成一条流 */}
+        {tab === 'sessions' &&
+          group === 'flat' &&
+          (showAll ? flatSessions : flatSessions.slice(0, PREVIEW_COUNT)).map((session) => renderSession(session))}
+        {tab === 'sessions' && group === 'flat' && !showAll && flatSessions.length > PREVIEW_COUNT && (
+          <button className="expand-link" onClick={() => setShowAll(true)}>
+            展开剩余 {flatSessions.length - PREVIEW_COUNT} 个会话
+          </button>
+        )}
+
+        {tab === 'sessions' &&
+          group !== 'flat' &&
+          groups.filter((item) => !hiddenByAncestor(item)).map(({ cwd, sessions, depth }) => {
           const key = `w:${cwd}`
           const expanded = isExpanded(cwd)
           const active = isActiveGroup(cwd)
+          // 拖拽排序只属于「按工作区」这一档：树顺序由目录层级决定，单列表没有工作区行
+          const sortable = group === 'workspace'
           const visible = expanded && !showAll ? sessions.slice(0, PREVIEW_COUNT) : expanded ? sessions : []
           const rest = sessions.length - visible.length
           // 指示线画在整个工作区块的上沿或下沿，也就是两组之间
@@ -529,13 +818,13 @@ export function Sidebar(props: {
                 : ' drop-above'
               : ''
           return (
-            <div key={cwd} className={`group${drop}`}>
+            <div key={cwd} className={`group depth-${Math.min(depth, 4)}${drop}`}>
               <div
                 className={`group-row${active ? ' active' : ''}${dragCwd === cwd ? ' dragging' : ''}`}
                 role="button"
                 tabIndex={0}
-                data-tip={`${cwd}（点击切换工作区，拖动可以排顺序）`}
-                draggable={editing === null}
+                data-tip={sortable ? `${cwd}，点击切换工作区，拖动排序` : `${cwd}，点击切换工作区`}
+                draggable={sortable && editing === null}
                 onClick={() => activateGroup(cwd)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
@@ -597,22 +886,34 @@ export function Sidebar(props: {
                 )}
                 <span className="count">{sessions.length}</span>
                 <span className="row-actions">
-                  {sessions.length > 0 && (
-                    <button
-                      className="icon-btn"
-                      data-tip="归档这个工作区的全部会话"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        archiveWithConfirm(
-                          sessions.map((session) => session.id),
-                          `归档这 ${sessions.length} 个会话？`,
-                          ARCHIVE_DETAIL_MANY,
-                        )
-                      }}
-                    >
-                      <IconArchive size={13} />
-                    </button>
-                  )}
+                  {sessions.length > 0 &&
+                    (archived === 'only' ? (
+                      <button
+                        className="icon-btn"
+                        data-tip="把这个工作区的会话全部恢复"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          void run(props.proxy.restoreSessions(sessions.map((session) => session.id)))
+                        }}
+                      >
+                        <IconRefresh size={13} />
+                      </button>
+                    ) : (
+                      <button
+                        className="icon-btn"
+                        data-tip="归档这个工作区的全部会话"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          archiveWithConfirm(
+                            sessions.map((session) => session.id),
+                            `归档这 ${sessions.length} 个会话？`,
+                            ARCHIVE_DETAIL_MANY,
+                          )
+                        }}
+                      >
+                        <IconArchive size={13} />
+                      </button>
+                    ))}
                   <button
                     className={`icon-btn${menu === key ? ' on' : ''}`}
                     data-tip="更多操作"
@@ -623,9 +924,11 @@ export function Sidebar(props: {
                   >
                     <IconMore size={14} />
                   </button>
-                  <span className="grip" data-tip="拖动排序">
-                    <IconGrip size={13} />
-                  </span>
+                  {sortable && (
+                    <span className="grip" data-tip="拖动排序">
+                      <IconGrip size={13} />
+                    </span>
+                  )}
                 </span>
                 {menu === key && (
                   <>
@@ -645,144 +948,38 @@ export function Sidebar(props: {
                       {sessions.length > 0 && (
                         <>
                           <div className="menu-sep" />
-                          <button
-                            className="menu-item danger"
-                            onClick={() => {
-                              setMenu(null)
-                              archiveWithConfirm(
-                                sessions.map((session) => session.id),
-                                `归档这 ${sessions.length} 个会话？`,
-                                ARCHIVE_DETAIL_MANY,
-                              )
-                            }}
-                          >
-                            <IconArchive size={14} /> 归档这 {sessions.length} 个会话
-                          </button>
+                          {archived === 'only' ? (
+                            <button
+                              className="menu-item"
+                              onClick={() => {
+                                setMenu(null)
+                                void run(props.proxy.restoreSessions(sessions.map((session) => session.id)))
+                              }}
+                            >
+                              <IconRefresh size={14} /> 恢复这 {sessions.length} 个会话
+                            </button>
+                          ) : (
+                            <button
+                              className="menu-item danger"
+                              onClick={() => {
+                                setMenu(null)
+                                archiveWithConfirm(
+                                  sessions.map((session) => session.id),
+                                  `归档这 ${sessions.length} 个会话？`,
+                                  ARCHIVE_DETAIL_MANY,
+                                )
+                              }}
+                            >
+                              <IconArchive size={14} /> 归档这 {sessions.length} 个会话
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
                   </>
                 )}
               </div>
-              {visible.map((session) => {
-                const sKey = `s:${session.id}`
-                return (
-                  <div
-                    key={session.id}
-                    className={`sess-item${session.id.endsWith(`${props.activeSessionId ?? '#'}.jsonl`) ? ' active' : ''}`}
-                    role="button"
-                    tabIndex={0}
-                    data-tip={`${session.title ?? '新会话'}（Ctrl+Alt+R 改名 · Ctrl+Alt+F 分叉 · Ctrl+Shift+A 归档）`}
-                    onClick={() => props.onPick(session.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        props.onPick(session.id)
-                        return
-                      }
-                      rowKeys(event, sKey, 'session')
-                    }}
-                  >
-                    {session.pinnedAt !== undefined && (
-                      <span className="pin-mark" data-tip="已置顶">
-                        <IconPin size={11} />
-                      </span>
-                    )}
-                    {editing?.key === sKey ? (
-                      <input
-                        className="row-rename"
-                        autoFocus
-                        value={editing.value}
-                        onChange={(event) => setEditing({ ...editing, value: event.target.value })}
-                        onBlur={commitRename}
-                        onKeyDown={(event) => {
-                          event.stopPropagation()
-                          if (event.key === 'Enter') commitRename()
-                          if (event.key === 'Escape') setEditing(null)
-                        }}
-                      />
-                    ) : (
-                      <span className="title">{session.title ?? '新会话'}</span>
-                    )}
-                    <span className="when">{relative(props.uiPrefs.sessionSort === 'recent' ? session.updatedAt : session.createdAt)}</span>
-                    <span className="row-actions">
-                      <button
-                        className="icon-btn"
-                        data-tip={session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          void run(props.proxy.setSessionPinned(session.id, session.pinnedAt === undefined))
-                        }}
-                      >
-                        <IconPin size={13} />
-                      </button>
-                      <button
-                        className="icon-btn"
-                        data-tip="归档会话"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          archiveWithConfirm(
-                            [session.id],
-                            `归档会话「${session.title ?? '新会话'}」？`,
-                            ARCHIVE_DETAIL_ONE,
-                          )
-                        }}
-                      >
-                        <IconArchive size={13} />
-                      </button>
-                      <button
-                        className={`icon-btn${menu === sKey ? ' on' : ''}`}
-                        data-tip="更多操作"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          setMenu(menu === sKey ? null : sKey)
-                        }}
-                      >
-                        <IconMore size={14} />
-                      </button>
-                    </span>
-                    {menu === sKey && (
-                      <>
-                        <div className="menu-backdrop" onClick={() => setMenu(null)} />
-                        <div className="row-menu" onClick={(event) => event.stopPropagation()}>
-                          <button
-                            className="menu-item"
-                            onClick={() => {
-                              setMenu(null)
-                              void run(props.proxy.setSessionPinned(session.id, session.pinnedAt === undefined))
-                            }}
-                          >
-                            <IconPin size={14} /> {session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
-                          </button>
-                          <button
-                            className="menu-item"
-                            onClick={() => startRename(sKey, 'session', session.title ?? '')}
-                          >
-                            重命名 <span className="menu-key">Ctrl+Alt+R</span>
-                          </button>
-                          <button className="menu-item" onClick={() => void openFork(session.id)}>
-                            分叉会话 <span className="menu-key">Ctrl+Alt+F</span>
-                          </button>
-                          <div className="menu-sep" />
-                          <button
-                            className="menu-item danger"
-                            onClick={() => {
-                              setMenu(null)
-                              archiveWithConfirm(
-                                [session.id],
-                                `归档会话「${session.title ?? '新会话'}」？`,
-                                ARCHIVE_DETAIL_ONE,
-                              )
-                            }}
-                          >
-                            <IconArchive size={14} /> 归档会话 <span className="menu-key">Ctrl+Shift+A</span>
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )
-              })}
+              {visible.map((session) => renderSession(session))}
               {expanded && rest > 0 && (
                 <button className="expand-link" onClick={() => setShowAll(true)}>
                   展开剩余 {rest} 个会话
@@ -791,13 +988,13 @@ export function Sidebar(props: {
             </div>
           )
         })}
-        {showAll && groups.length > 0 && (
+        {showAll && (groups.length > 0 || flatSessions.length > 0) && (
           <button className="expand-link" onClick={() => setShowAll(false)}>
             收起完整列表
           </button>
         )}
         {/* 拖动时才对出现：整列表末尾的落点，保证「放到最后一个」永远点得着 */}
-        {dragCwd !== null && groups.length > 1 && (
+        {dragCwd !== null && group === 'workspace' && groups.length > 1 && (
           <div
             className="drop-tail"
             onDragOver={(event: DragEvent<HTMLDivElement>) => {
@@ -816,6 +1013,39 @@ export function Sidebar(props: {
           </div>
         )}
       </div>
+
+      {/* 视图选项菜单：按视口坐标定位，所以放在滚动区外面 */}
+      {viewMenu !== null && (
+        <>
+          <div className="menu-backdrop" onClick={() => setViewMenu(null)} />
+          <div
+            className="row-menu view-menu"
+            role="menu"
+            style={{ position: 'fixed', top: `${viewMenu.top}px`, right: `${viewMenu.right}px` }}
+          >
+            {viewSections.map((section, index) => (
+              <div key={section.label}>
+                {index > 0 && <div className="menu-sep" />}
+                <div className="menu-label">{section.label}</div>
+                {section.items.map((item) => (
+                  <button
+                    key={item.id}
+                    className={`menu-item${item.active ? ' on' : ''}`}
+                    role="menuitemradio"
+                    aria-checked={item.active}
+                    data-tip={item.text}
+                    onClick={() => pickView(item.id)}
+                  >
+                    {item.icon}
+                    <span className="menu-text">{item.text}</span>
+                    <span className="menu-check">{item.active ? <IconCheck size={13} /> : null}</span>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {fork !== null && (
         <>
@@ -836,7 +1066,7 @@ export function Sidebar(props: {
       )}
 
       <div className="sidebar-footer">
-        <div className="row" data-tip={`${props.cwd}（点击浏览其他目录）`} onClick={props.onChooseDir}>
+        <div className="row" data-tip={`${props.cwd}，点击浏览其他目录`} onClick={props.onChooseDir}>
           <IconFolder size={14} />
           <span className="dir">{props.cwd}</span>
         </div>
@@ -845,12 +1075,17 @@ export function Sidebar(props: {
           <span>会话用量</span>
           <span className="num">{formatTokens(totalTokens)} tok</span>
         </div>
+        {/* 设置锚在左下角（对照 dsh 的底部锚位）：模型、权限、技能源都从这里进。 */}
+        <button className="row row-btn" data-tip="设置：模型、权限、技能源" onClick={() => props.onOpenSettings('general')}>
+          <IconGear size={14} />
+          <span>设置</span>
+        </button>
       </div>
 
       {/* 右边界拖拽条：9px 热区压在侧栏那道 1px 分界线上，双击复位成默认宽。 */}
       <div
         className="sidebar-resizer"
-        data-tip="拖拽调整宽度（双击复位）"
+        data-tip="拖拽调整宽度，双击复位"
         onPointerDown={resizeDrag.onPointerDown}
         onPointerMove={resizeDrag.onPointerMove}
         onPointerUp={resizeDrag.onPointerUp}

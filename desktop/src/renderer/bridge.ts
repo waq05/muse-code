@@ -11,7 +11,6 @@ import type {
   ArchivedPage,
   DscRuntime,
   MarketBrowseResult,
-  MarketSource,
   ModelChoiceView,
   ModelConfigView,
   PluginInfoView,
@@ -27,6 +26,7 @@ import type {
   TeammateView,
   TranscriptEntry,
   UiPrefsView,
+  UsageStatsView,
 } from '@dsc/runtime/contract.js'
 
 export interface DscBridge {
@@ -47,6 +47,8 @@ export interface DscBridge {
   installSkill(): Promise<string[]>
   /** 在系统文件管理器里打开路径；空串 = 成功，否则是原因。 */
   openPath(path: string): Promise<string>
+  /** 用多种方式打开当前工作区（terminal / explorer / vscode；顶栏下拉菜单）。 */
+  openWorkspace(kind: 'terminal' | 'explorer' | 'vscode'): Promise<{ ok: boolean; error?: string }>
   /** dock 内置终端（宿主 desktop-dock 服务，管道模式：行缓冲输入）。 */
   dock(op: string, payload?: Record<string, unknown>): Promise<unknown>
   onDockData(listener: (data: { id: string; data: string }) => void): () => void
@@ -62,33 +64,17 @@ export interface DscBridge {
 export const dsc: DscBridge = (window as unknown as { dsc: DscBridge }).dsc
 
 /**
- * 协议代理：与 DscRuntime 同形，跨进程方法一律 Promise 化。
- * 快照经 onSnapshot 推送，不走 subscribe/getSnapshot。
+ * 协议代理：与 `DscRuntime` 同名、同参数，返回值一律包成 Promise（跨进程必然异步）。
+ *
+ * 类型直接从 `DscRuntime` 映射出来，不再手写一份方法清单：
+ * 内核接口加一个方法，这里就必须给它一个实现，漏写当场编译报错
+ * （原先 Omit + 手写签名那份会静静漂掉）。
+ * 快照经 `dsc.onSnapshot` 推送，所以 `subscribe` / `getSnapshot` 在代理里没有真身。
  */
-export interface RuntimeProxy
-  extends Omit<
-    DscRuntime,
-    | 'listModels'
-    | 'listPlugins'
-    | 'listTeammates'
-    | 'runCommand'
-    | 'listSkills'
-    | 'getSettingsSections'
-    | 'getModelConfig'
-    | 'getUiPrefs'
-    | 'setSkillEnabled'
-    | 'setMarketSources'
-  > {
-  listModels(): Promise<ModelChoiceView[]>
-  listPlugins(): Promise<PluginInfoView[]>
-  listTeammates(): Promise<TeammateView[]>
-  runCommand(input: string): Promise<boolean>
-  listSkills(): Promise<SkillInfoView[]>
-  getSettingsSections(): Promise<SettingsSectionView[]>
-  getModelConfig(): Promise<ModelConfigView>
-  getUiPrefs(): Promise<UiPrefsView>
-  setSkillEnabled(name: string, enabled: boolean): Promise<SettingsMutation>
-  setMarketSources(sources: MarketSource[]): Promise<SettingsMutation>
+export type RuntimeProxy = {
+  [K in keyof DscRuntime]: DscRuntime[K] extends (...callArgs: infer A) => infer R
+    ? (...callArgs: A) => Promise<Awaited<R>>
+    : DscRuntime[K]
 }
 
 export function createRuntimeProxy(): RuntimeProxy {
@@ -96,21 +82,20 @@ export function createRuntimeProxy(): RuntimeProxy {
     dsc.invoke(method, args) as Promise<void>
   const call = <T>(method: string, ...args: unknown[]): Promise<T> => dsc.invoke(method, args) as Promise<T>
   return {
-    subscribe: () => () => undefined,
-    getSnapshot: () => {
-      throw new Error('快照经 onSnapshot 推送；代理不支持 getSnapshot')
-    },
-    submit: (text) => void dsc.invoke('submit', [text]),
-    interrupt: () => void dsc.invoke('interrupt'),
+    subscribe: () => Promise.resolve(() => undefined),
+    getSnapshot: () => Promise.reject(new Error('快照经 onSnapshot 推送；代理不支持 getSnapshot')),
+    submit: (text, images) => callVoid('submit', text, images),
+    interrupt: () => callVoid('interrupt'),
     openSession: (id) => callVoid('openSession', id),
     compact: () => callVoid('compact'),
     setModel: (model) => callVoid('setModel', model),
     setEffort: (effort) => callVoid('setEffort', effort),
     refreshSessions: () => callVoid('refreshSessions'),
 
-    // ── 会话库：归档 / 恢复 / 删除 / 改名 / 置顶 / 分叉 / 界面偏好 ──
+    // ── 会话库：归档 / 恢复 / 删除 / 改名 / 置顶 / 分叉 / 用量 / 界面偏好 ──
     archiveSessions: (paths) => call<SettingsMutation>('archiveSessions', paths),
     listArchivedSessions: () => call<ArchivedPage>('listArchivedSessions'),
+    usageStats: () => call<UsageStatsView>('usageStats'),
     restoreSessions: (paths) => call<SettingsMutation>('restoreSessions', paths),
     purgeSessions: (paths) => call<SettingsMutation>('purgeSessions', paths),
     renameSession: (path, title) => call<SettingsMutation>('renameSession', path, title),
@@ -127,9 +112,16 @@ export function createRuntimeProxy(): RuntimeProxy {
     peekTranscript: (file) => call<TranscriptEntry[]>('peekTranscript', file),
     runCommand: (input) => call<boolean>('runCommand', input),
     setPolicy: (policy) => callVoid('setPolicy', policy),
+    setMode: (mode) => callVoid('setMode', mode),
+    clearTodos: () => callVoid('clearTodos'),
+    answerQuestion: (answer) => callVoid('answerQuestion', answer),
+    answerPlan: (decision) => callVoid('answerPlan', decision),
+    goalAction: (action) => call<SettingsMutation>('goalAction', action),
     dock: (op, payload) => call<unknown>('dock', op, payload ?? {}),
-    answerApproval: (answer) => void dsc.invoke('answerApproval', [answer]),
-    exit: () => dsc.quit(),
+    answerApproval: (answer) => callVoid('answerApproval', answer),
+    exit: async () => {
+      dsc.quit()
+    },
     dispose: () => Promise.resolve(),
 
     // ── 技能中心 ──

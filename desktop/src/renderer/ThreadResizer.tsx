@@ -48,7 +48,7 @@ export function ThreadResizer(props: {
       <div
         className="thread-handle"
         data-side="left"
-        data-tip="拖拽调整正文宽度（双击复位）"
+        data-tip="拖拽调整正文宽度，双击复位"
         onPointerDown={left.onPointerDown}
         onPointerMove={left.onPointerMove}
         onPointerUp={left.onPointerUp}
@@ -58,7 +58,7 @@ export function ThreadResizer(props: {
       <div
         className="thread-handle"
         data-side="right"
-        data-tip="拖拽调整正文宽度（双击复位）"
+        data-tip="拖拽调整正文宽度，双击复位"
         onPointerDown={right.onPointerDown}
         onPointerMove={right.onPointerMove}
         onPointerUp={right.onPointerUp}

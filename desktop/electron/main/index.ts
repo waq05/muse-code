@@ -7,6 +7,7 @@
  *
  * @module desktop/main
  */
+import { spawn } from 'node:child_process'
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { BrowserWindow, Menu, Tray, WebContentsView, app, desktopCapturer, dialog, ipcMain, nativeImage, screen, shell, utilityProcess, type UtilityProcess } from 'electron'
@@ -24,7 +25,7 @@ let suppressHostExit = false
 /** 当前宿主工作目录（会话 cwd；desktop.json 记忆）。 */
 let hostCwd = ''
 
-/** 原生窗口控件区的高度：renderer 顶栏是 36px，多给 2px 让按钮命中区不裁边。 */
+/** 原生窗口控件区的高度：renderer 的窗口控件条（caption-bar）是 36px，多给 2px 让按钮命中区不裁边。 */
 const CAPTION_HEIGHT = 38
 /**
  * 深色主题的窗口底色与控件区配色，取自深色主题下这两个令牌算出来的实际值，
@@ -116,7 +117,7 @@ function trayIcon(): NativeImage {
 function ensureTray(): Tray {
   if (tray !== null) return tray
   const created = new Tray(trayIcon())
-  created.setToolTip('dsc — 点我回到窗口')
+  created.setToolTip('Muse Code — 点我回到窗口')
   created.setContextMenu(
     Menu.buildFromTemplate([
       { label: '显示主窗口', click: () => showMainWindow() },
@@ -168,6 +169,57 @@ function restartHost(cwd: string): Promise<void> {
 
 // ── IPC ──────────────────────────────────────────────────────────────────────
 
+/** 一次「打开工作区」的结果：失败时带一句能直接看的原因。 */
+type WorkspaceOpenResult = { ok: boolean; error?: string }
+
+/**
+ * 用多种方式打开当前工作区。terminal：优先 Windows Terminal，没装退回经
+ * PowerShell 指定工作目录的 cmd；vscode：借 cmd.exe 调 code 垫片（Node 直接
+ * spawn .cmd 会被拦）；explorer：shell.openPath。
+ */
+function openWorkspace(kind: string): WorkspaceOpenResult | Promise<WorkspaceOpenResult> {
+  const dir = hostCwd
+  if (dir === '' || !existsSync(dir)) {
+    return { ok: false, error: `工作目录不存在：${dir}` }
+  }
+  if (kind === 'explorer') {
+    return shell.openPath(dir).then((problem) => (problem === '' ? { ok: true } : { ok: false, error: problem }))
+  }
+  if (kind === 'terminal') {
+    return new Promise((resolveOpen) => {
+      // 没装 Windows Terminal（wt.exe）时退回经典 cmd：
+      // 经 PowerShell 的 Start-Process 指定工作目录，避免 cmd start 的转义泥潭。
+      const viaCmd = (): void => {
+        const psQuote = dir.replace(/'/g, "''")
+        const fallback = spawn(
+          'powershell.exe',
+          ['-NoProfile', '-Command', `Start-Process cmd -WorkingDirectory '${psQuote}'`],
+          { stdio: 'ignore' },
+        )
+        fallback.on('error', (error) => resolveOpen({ ok: false, error: String(error) }))
+        fallback.on('close', () => resolveOpen({ ok: true }))
+      }
+      const child = spawn('wt.exe', ['-d', dir], { stdio: 'ignore' })
+      child.on('error', viaCmd)
+      child.on('close', () => resolveOpen({ ok: true }))
+    })
+  }
+  if (kind === 'vscode') {
+    return new Promise((resolveOpen) => {
+      const child = spawn('cmd.exe', ['/d', '/c', 'code', dir], { stdio: 'ignore' })
+      child.on('error', () => resolveOpen({ ok: false, error: '启动 cmd 失败' }))
+      child.on('close', (codeNum) => {
+        if (codeNum === 0) {
+          resolveOpen({ ok: true })
+        } else {
+          resolveOpen({ ok: false, error: `没找到 code 命令（退出码 ${String(codeNum)}）：VS Code 可能没装，或没把 CLI 加进 PATH` })
+        }
+      })
+    })
+  }
+  return { ok: false, error: `未知的打开方式：${kind}` }
+}
+
 function registerIpc(): void {
   ipcMain.handle('dsc:invoke', (_event, method: string, args: unknown[]) => {
     if (protocol === null) throw new Error('宿主进程未运行')
@@ -179,7 +231,7 @@ function registerIpc(): void {
   ipcMain.handle('dsc:choose-directory', async () => {
     if (mainWindow === null) return null
     const outcome = await dialog.showOpenDialog(mainWindow, {
-      title: '选择 dsc 工作目录',
+      title: '选择 Muse Code 工作目录',
       properties: ['openDirectory'],
       defaultPath: hostCwd || undefined,
     })
@@ -211,8 +263,8 @@ function registerIpc(): void {
   ipcMain.handle('dsc:plugins-install', async () => {
     if (mainWindow === null) return []
     const outcome = await dialog.showOpenDialog(mainWindow, {
-      title: '选择 dsc 插件文件（.js）',
-      filters: [{ name: 'dsc 插件', extensions: ['js'] }],
+      title: '选择 Muse Code 插件文件',
+      filters: [{ name: 'Muse Code 插件', extensions: ['js'] }],
       properties: ['openFile', 'multiSelections'],
     })
     if (outcome.canceled || outcome.filePaths.length === 0) return []
@@ -271,6 +323,10 @@ function registerIpc(): void {
     return shell.openPath(path)
   })
 
+  // 用多种方式打开当前工作区（顶栏文件夹按钮的下拉；对照 dsh）。
+  // 只对宿主记忆里的 hostCwd 生效——它不是用户随手输入的字符串，spawn 参数固定。
+  ipcMain.handle('dsc:workspace-open', (_event, kind: string) => openWorkspace(String(kind)))
+
   ipcMain.on('dsc:quit', () => {
     mainWindow?.close()
   })
@@ -291,17 +347,68 @@ function registerIpc(): void {
 
 // ── 窗口与应用 ────────────────────────────────────────────────────────────────
 
+/** 记住的「还原态」窗口框：最大化期间不采集（那时 getBounds 是铺满工作区的假尺寸）。 */
+let normalBounds: { width: number; height: number; x: number; y: number } | null = null
+
+/**
+ * 读记忆的窗口框。宽高不合法（手改坏/旧版本数据）退回默认；位置必须和某台
+ * 显示器有交集——拔掉外接屏后残留的旧坐标会让窗口开在看不见的地方，
+ * 这时只保留大小、位置交给系统居中。
+ */
+function loadWindowMemory(): { width: number; height: number; x?: number; y?: number; maximized: boolean } {
+  const saved = readState().windowBounds
+  const width = typeof saved?.width === 'number' && saved.width >= 960 ? Math.round(saved.width) : 1440
+  const height = typeof saved?.height === 'number' && saved.height >= 640 ? Math.round(saved.height) : 940
+  const x = typeof saved?.x === 'number' ? Math.round(saved.x) : Number.NaN
+  const y = typeof saved?.y === 'number' ? Math.round(saved.y) : Number.NaN
+  const onScreen = screen.getAllDisplays().some(
+    (display) =>
+      x < display.bounds.x + display.bounds.width &&
+      x + width > display.bounds.x &&
+      y < display.bounds.y + display.bounds.height &&
+      y + height > display.bounds.y,
+  )
+  return {
+    width,
+    height,
+    ...(onScreen ? { x, y } : {}),
+    maximized: saved?.maximized === true,
+  }
+}
+
+/**
+ * 挂上 resize/move 采集与 close 落盘。落盘走 desktop.json 的合并写，只动
+ * windowBounds 自己的字段；app.exit()（自检截图退出）不触发 close，所以
+ * 自检运行不会把窗口记忆覆盖成自检窗口的尺寸。
+ */
+function rememberWindowBounds(win: BrowserWindow): void {
+  normalBounds = win.getBounds()
+  const track = (): void => {
+    // 最小化时 Windows 会把窗口挪到 -32000,-32000，这份坐标绝不能记
+    if (!win.isMaximized() && !win.isMinimized() && !win.isFullScreen()) {
+      normalBounds = win.getBounds()
+    }
+  }
+  win.on('resize', track)
+  win.on('move', track)
+  win.on('close', () => {
+    writeState({ windowBounds: { ...(normalBounds ?? win.getBounds()), maximized: win.isMaximized() } })
+  })
+}
+
 function createWindow(): void {
+  const memory = loadWindowMemory()
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 940,
+    width: memory.width,
+    height: memory.height,
+    ...(memory.x !== undefined ? { x: memory.x, y: memory.y } : {}),
     minWidth: 960,
     minHeight: 640,
     // 无边框：Windows 用原生 overlay 窗口控件，renderer 内留出拖拽区。
     // 窗口底色与控件区按深色主题起步；选浅色主题时 renderer 在外观生效那一刻
     // 把压平后的两个颜色报过来（IPC 频道 dsc:set-window-chrome）。
     backgroundColor: DARK_CHROME.bar,
-    title: 'dsc',
+    title: 'Muse Code',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: DARK_CHROME.bar,
@@ -317,6 +424,11 @@ function createWindow(): void {
   })
   // dock.ts 通过全局引用向 renderer 推送事件（pty 数据 / 浏览器状态）
   ;(globalThis as { __dscMainWindow?: BrowserWindow }).__dscMainWindow = mainWindow
+
+  // 窗口记忆：先挂采集（种子 = 刚开好的还原态），再按记忆恢复最大化——
+  // 顺序反了会把最大化尺寸当成还原态记下来
+  rememberWindowBounds(mainWindow)
+  if (memory.maximized) mainWindow.maximize()
 
   // 自检截图：DSC_DESKTOP_SHOT=<png 路径> 时，加载完成后截图并退出（自动化验证用）。
   // 必须在 loadFile/loadURL 之前注册，否则会错过 did-finish-load。
@@ -410,8 +522,8 @@ function createWindow(): void {
     if (state.trayHintShown !== true && process.platform === 'win32') {
       writeState({ ...state, trayHintShown: true })
       tray?.displayBalloon({
-        title: 'dsc 还在后台运行',
-        content: '点托盘图标回到窗口，右键图标可以完全退出；这个提示只出现一次，关窗行为可在设置 → 通用里改',
+        title: 'Muse Code 还在后台运行',
+        content: '点击托盘图标回到窗口，右键图标可完全退出；此提示仅出现一次，关窗行为可在设置 → 通用中修改',
       })
     }
   })

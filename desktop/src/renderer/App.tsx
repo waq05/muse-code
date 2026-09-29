@@ -1,5 +1,5 @@
 /**
- * 顶层界面：侧栏 + 顶栏（标题/对话轨迹 tab）+ 居中消息流 + 输入区 + 状态栏。
+ * 顶层界面：窗口控件条 + 顶栏（标题/对话轨迹 tab）+ 居中消息流 + 输入区 + 状态栏。
  * 布局对照 dsh 桌面端；空会话显示欢迎态；命令派发复用 dsc 的 runCommand。
  *
  * @module desktop/renderer/App
@@ -10,6 +10,7 @@ import { applyAppearance, loadCachedAppearance, saveCachedAppearance } from './a
 import { toastErr, toastOk } from './components/toast.js'
 import { dsc, createRuntimeProxy, type RuntimeProxy } from './bridge.js'
 import { ApprovalCard } from './ApprovalCard.js'
+import { AskCard, GoalBar, PlanReview, TaskDock } from './TaskDock.js'
 import { ChatView } from './ChatView.js'
 import { Composer } from './Composer.js'
 import { Dock } from './Dock.js'
@@ -34,7 +35,7 @@ import {
   writeStoredFlag,
   writeStoredPx,
 } from './panels.js'
-import { IconSidebar } from './icons.js'
+import { IconChevronDown, IconCode, IconCopy, IconFolderOpen, IconSidebar, IconTerminal } from './icons.js'
 
 export function App(): JSX.Element {
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null)
@@ -51,6 +52,8 @@ export function App(): JSX.Element {
   const [peek, setPeek] = useState<TeammateView | null>(null)
   const [peekEntries, setPeekEntries] = useState<TranscriptEntry[]>([])
   const [dockOpen, setDockOpen] = useState(false)
+  // 顶栏「多种方式打开工作区」的下拉菜单（对照 dsh 的文件夹+下拉分组钮）
+  const [wsMenu, setWsMenu] = useState(false)
   // dock 宽度（拖拽调宽，持久化到 localStorage）
   const [dockWidth, setDockWidth] = useState(() => {
     const saved = Number(localStorage.getItem('dsc.dockWidth'))
@@ -72,7 +75,9 @@ export function App(): JSX.Element {
   // 首帧的外观三项用 localStorage 镜像打底：等宿主返回真实设置的这段时间里，
   // 若按写死的深色上色，每次冷启动都会先闪一下深色，连窗口控件条都会被推成深色。
   const [uiPrefs, setUiPrefs] = useState<UiPrefsView>(() => ({
-    sessionSort: 'created',
+    sessionSort: 'manual',
+    sessionGroup: 'workspace',
+    archivedFilter: 'hide',
     workspaceOrder: [],
     workspaceAliases: {},
     ...loadCachedAppearance(),
@@ -248,14 +253,14 @@ export function App(): JSX.Element {
   const togglePlugin = (file: string, next: boolean): void => {
     setPlugins((current) => current.map((p) => (p.file === file ? { ...p, enabled: next } : p)))
     proxy.setPluginEnabled(file, next)
-    toastOk(`已${next ? '启用' : '停用'}插件 ${file}（即时生效）`)
+    toastOk(`已${next ? '启用' : '停用'}插件 ${file}，即时生效`)
     // 热挂载的结果（成功/回滚）随 system 条目与下一次清单刷新回来
     setTimeout(refreshPlugins, 600)
   }
   const installPlugin = (): void => {
     void dsc.installPlugin().then((installed) => {
       if (installed.length === 0) return
-      toastOk(`已安装 ${installed.join('、')}（即时生效）`)
+      toastOk(`已安装 ${installed.join('、')}，即时生效`)
       setTimeout(refreshPlugins, 600)
     })
   }
@@ -270,7 +275,7 @@ export function App(): JSX.Element {
   const switchCwd = (dir: string): void => {
     void dsc.switchCwd(dir).then((outcome) => {
       if (!outcome.ok) {
-        toastErr(`切不过去：${outcome.error}`)
+        toastErr(`切换失败：${outcome.error}`)
         return
       }
       setCwd(outcome.cwd)
@@ -286,7 +291,7 @@ export function App(): JSX.Element {
   const saveUiPrefs = (patch: Partial<UiPrefsView>): void => {
     void proxy.setUiPrefs(patch).then((result) => {
       if (!result.ok) {
-        toastErr(`没改成：${result.error}`)
+        toastErr(`保存失败：${result.error}`)
         return
       }
       if (result.notice !== undefined) toastOk(result.notice)
@@ -294,21 +299,22 @@ export function App(): JSX.Element {
     })
   }
 
-  const handleSubmit = (text: string): void => {
+  const handleSubmit = (text: string, images?: string[]): void => {
     setTab('chat')
-    if (text.startsWith('/')) {
+    if (text.startsWith('/') && images === undefined) {
       // / 命令统一派发到宿主命令注册表（内置 + 外部插件命令）；
       // 命令的反馈经 transcript 条目、openPicker 经 dsc:ui 事件回到本组件。
+      // 带贴图时不走命令：命令没有图可带，用户贴了图就是在发内容。
       void proxy.runCommand(text)
       return
     }
-    proxy.submit(text)
+    proxy.submit(text, images)
   }
 
   if (hostDown !== null) {
     return (
       <div className="loading" style={{ flexDirection: 'column', gap: 14 }}>
-        <div>dsc 宿主已退出（code {String(hostDown.code)}）</div>
+        <div>Muse Code 宿主已退出，退出码 {String(hostDown.code)}</div>
         <button
           className="btn-primary"
           onClick={() => {
@@ -322,7 +328,7 @@ export function App(): JSX.Element {
   }
 
   if (snapshot === null) {
-    return <div className="loading">正在启动 dsc 宿主…</div>
+    return <div className="loading">正在启动 Muse Code 宿主…</div>
   }
 
   // 顶栏标题：活动会话的标题（首条用户消息），否则最近一条用户消息，否则「新会话」
@@ -334,6 +340,9 @@ export function App(): JSX.Element {
   // 空态 = 没有任何用户/回复/工具条目（宿主预写的 system 提示行随欢迎态一起显示）
   const empty =
     !snapshot.entries.some((entry) => entry.kind !== 'system') && snapshot.status.turnState === 'idle'
+  // /resume 选择器只列还在活动区的会话：归档会话的恢复入口在设置 → 归档，
+  // 侧栏那份列表才是按「筛选会话」把两区混在一起看的地方。
+  const resumable = snapshot.sessions.filter((session) => session.archivedAt === undefined)
 
   const pickSession = (id: string): void => {
     setPicker(false)
@@ -342,6 +351,21 @@ export function App(): JSX.Element {
     // 换自己的会话就退出队友视图，别让标题还写着别人的名字
     setPeek(null)
     void proxy.openSession(id)
+  }
+
+  /** 顶栏下拉：用系统能力打开当前工作区；失败原因走 Toast。 */
+  const openWorkspace = (kind: 'terminal' | 'explorer' | 'vscode'): void => {
+    setWsMenu(false)
+    void dsc.openWorkspace(kind).then((outcome) => {
+      if (!outcome.ok) toastErr(outcome.error ?? '打开失败')
+    })
+  }
+
+  const copyWorkspacePath = (): void => {
+    setWsMenu(false)
+    void navigator.clipboard
+      .writeText(cwd)
+      .then(() => toastOk('已复制工作区路径'), () => toastErr('复制失败，请手动选中'))
   }
 
   return (
@@ -383,15 +407,18 @@ export function App(): JSX.Element {
       />
 
       <div className="main">
+        {/* 窗口控件条（最小化/最大化/关闭）独占的一档：顶栏在其下方一档，
+            对照 dsh —— 原生控件一行，会话标题/页签一行，消息区再往下分开。 */}
+        <div className="caption-bar" />
         {view === 'plugins' ? (
           <>
             <PluginsView
               plugins={plugins}
+              proxy={proxy}
               onToggle={togglePlugin}
               onRefresh={refreshPlugins}
               onInstall={installPlugin}
               onRestartHost={restartHost}
-              onOpenSettings={(section) => setSettings({ open: true, section })}
             />
             <StatusBar status={snapshot.status} />
           </>
@@ -403,9 +430,49 @@ export function App(): JSX.Element {
         ) : (
           <>
             <div className="topbar">
-              <span className="title" data-tip={peek === null ? conversationTitle : `队友 ${peek.name} 的运行记录（只读）`}>
-                {peek === null ? conversationTitle : `队友 ${peek.name}`}
-              </span>
+              <div className="topbar-title-row">
+                <span className="title" data-tip={peek === null ? conversationTitle : `队友 ${peek.name} 的运行记录，只读`}>
+                  {peek === null ? conversationTitle : `队友 ${peek.name}`}
+                </span>
+                <div className="drag-fill" />
+                {/* 多种方式打开当前工作区（对照 dsh 的「文件夹+下拉」分组钮）：
+                    主钮直接开文件资源管理器，下拉里还有终端 / VS Code / 复制路径。 */}
+                <div className="ws-open">
+                  <button className="ws-open-main" data-tip="在文件资源管理器中打开工作区" onClick={() => openWorkspace('explorer')}>
+                    <IconFolderOpen size={15} />
+                  </button>
+                  <button className="ws-open-caret" data-tip="更多打开方式" onClick={() => setWsMenu((current) => !current)}>
+                    <IconChevronDown size={13} />
+                  </button>
+                  {wsMenu && (
+                    <>
+                      <div className="menu-backdrop" onClick={() => setWsMenu(false)} />
+                      <div className="row-menu ws-open-menu" role="menu">
+                        <button className="menu-item" onClick={() => openWorkspace('terminal')}>
+                          <IconTerminal size={14} /> 在终端中打开
+                        </button>
+                        <button className="menu-item" onClick={() => openWorkspace('explorer')}>
+                          <IconFolderOpen size={14} /> 在文件资源管理器中打开
+                        </button>
+                        <button className="menu-item" onClick={() => openWorkspace('vscode')}>
+                          <IconCode size={14} /> 在 VS Code 中打开
+                        </button>
+                        <div className="menu-sep" />
+                        <button className="menu-item" onClick={copyWorkspacePath}>
+                          <IconCopy size={14} /> 复制工作区路径
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <button
+                  className={`icon-btn dock-toggle${dockOpen ? ' on' : ''}`}
+                  data-tip="工作区面板：终端、浏览器、文件、Git"
+                  onClick={() => setDockOpen((current) => !current)}
+                >
+                  <IconSidebar size={15} />
+                </button>
+              </div>
               {peek === null && (
                 <nav className="tabs">
                   <button className={tab === 'chat' ? 'on' : ''} onClick={() => setTab('chat')}>
@@ -416,15 +483,7 @@ export function App(): JSX.Element {
                   </button>
                 </nav>
               )}
-          <div className="drag-fill" />
-          <button
-            className={`icon-btn dock-toggle${dockOpen ? ' on' : ''}`}
-            data-tip="工作区面板（终端 / 浏览器 / 文件 / Git）"
-            onClick={() => setDockOpen((current) => !current)}
-          >
-            <IconSidebar size={15} />
-          </button>
-        </div>
+            </div>
 
             <div className="thread-zone" ref={zoneRef}>
               {peek !== null ? (
@@ -438,15 +497,31 @@ export function App(): JSX.Element {
               )}
 
               <div className="composer-zone">
-                {snapshot.pendingApproval !== null && (
+                {snapshot.surfaces.pendingApproval !== null && (
                   <ApprovalCard
-                    request={snapshot.pendingApproval}
+                    request={snapshot.surfaces.pendingApproval}
                     onAnswer={(answer) => proxy.answerApproval(answer)}
                   />
                 )}
+                {snapshot.surfaces.pendingPlan !== null && (
+                  <PlanReview
+                    plan={snapshot.surfaces.pendingPlan}
+                    onAnswer={(decision) => void proxy.answerPlan(decision)}
+                  />
+                )}
+                {snapshot.surfaces.pendingQuestion !== null && (
+                  <AskCard
+                    question={snapshot.surfaces.pendingQuestion}
+                    onAnswer={(answer) => void proxy.answerQuestion(answer)}
+                  />
+                )}
+                {snapshot.surfaces.goal !== null && (
+                  <GoalBar goal={snapshot.surfaces.goal} onAction={(action) => void proxy.goalAction(action)} />
+                )}
+                <TaskDock todos={snapshot.surfaces.todos} onClear={() => void proxy.clearTodos()} />
                 {picker ? (
                   <SessionPicker
-                    sessions={snapshot.sessions}
+                    sessions={resumable}
                     loading={snapshot.sessionsLoading}
                     onPick={pickSession}
                     onClose={() => setPicker(false)}
@@ -454,17 +529,19 @@ export function App(): JSX.Element {
                 ) : null}
                 {peek === null ? (
                   <Composer
-                    disabled={snapshot.pendingApproval !== null}
+                    disabled={snapshot.surfaces.pendingApproval !== null}
                     models={models}
                     model={snapshot.status.model}
                     effort={snapshot.status.effort}
-                    policy={snapshot.status.policy}
+                    policy={snapshot.surfaces.policy}
+                    mode={snapshot.surfaces.mode}
                     working={snapshot.status.turnState !== 'idle'}
                     onSubmit={handleSubmit}
                     onInterrupt={() => proxy.interrupt()}
                     onModelChange={(value) => void proxy.setModel(value)}
                     onEffortChange={(value) => void proxy.setEffort(value)}
                     onPolicyChange={(value) => proxy.setPolicy(value)}
+                    onModeChange={(value) => void proxy.setMode(value)}
                   />
                 ) : (
                   <div className="peek-lock">
@@ -521,7 +598,7 @@ export function App(): JSX.Element {
 function Welcome({ systemEntries }: { systemEntries: { id: number; text: string }[] }): JSX.Element {
   return (
     <div className="welcome">
-      <div className="welcome-mark">dsc</div>
+      <div className="welcome-mark">MC</div>
       <h1>有什么可以帮忙的？</h1>
       <p>
         输入 <code>/</code> 查看可用指令 · 消息会携带当前工作目录上下文

@@ -138,6 +138,16 @@ export function IconShield(props: IconProps): JSX.Element {
   )
 }
 
+export function IconFlag(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M6 21V4" />
+      <path d="M6 4.8h9.4l-1.7 3.6 1.7 3.6H6" />
+    </>,
+    props,
+  )
+}
+
 export function IconPuzzle(props: IconProps): JSX.Element {
   return base(
     <path d="M10 3.5a2 2 0 0 1 4 0c0 .4-.12.8-.32 1.1h3.82c.55 0 1 .45 1 1v3.1a2 2 0 1 0 0 3.6v3.1c0 .55-.45 1-1 1h-3.32c.2.3.32.7.32 1.1a2 2 0 0 1-4 0c0-.4.12-.8.32-1.1H7a1 1 0 0 1-1-1v-3.1a2 2 0 1 1 0-3.6V5.6c0-.55.45-1 1-1h3.32A1.99 1.99 0 0 1 10 3.5Z" />,
@@ -319,6 +329,98 @@ export function IconGrip(props: IconProps): JSX.Element {
       <circle cx="14.5" cy="12" r="1.05" />
       <circle cx="14.5" cy="17.5" r="1.05" />
     </g>,
+    props,
+  )
+}
+
+/** 终端（方框 + 提示符）。 */
+export function IconTerminal(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <rect x="3.5" y="5" width="17" height="14" rx="2" />
+      <path d="m7 9.5 3 2.5-3 2.5" />
+      <path d="M12.5 15H17" />
+    </>,
+    props,
+  )
+}
+
+/** 代码（尖括号对，VS Code 打开目录菜单用）。 */
+export function IconCode(props: IconProps): JSX.Element {
+  return base(<path d="m9 8-4 4 4 4M15 8l4 4-4 4" />, props)
+}
+
+/** 用量统计（柱状图）。 */
+export function IconChart(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 20h16" />
+      <path d="M7.5 20v-6" />
+      <path d="M12 20V7.5" />
+      <path d="M16.5 20v-9" />
+    </>,
+    props,
+  )
+}
+
+/** 工作区树（层级线 + 两个节点框）：视图选项里的「按工作区树」。 */
+export function IconTree(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4.2 4.5v14" />
+      <path d="M4.2 8h4.3" />
+      <path d="M4.2 15h4.3" />
+      <rect x="8.5" y="5.6" width="11.3" height="4.8" rx="1.4" />
+      <rect x="8.5" y="12.6" width="11.3" height="4.8" rx="1.4" />
+    </>,
+    props,
+  )
+}
+
+/** 单列表（三条等长横线）：视图选项里的「单列表」与「全部对话」。 */
+export function IconFlatList(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 7h16" />
+      <path d="M4 12h16" />
+      <path d="M4 17h16" />
+    </>,
+    props,
+  )
+}
+
+/** 创建时间（日历）。 */
+export function IconCalendar(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <rect x="3.8" y="5.4" width="16.4" height="14.2" rx="2" />
+      <path d="M3.8 9.8h16.4" />
+      <path d="M8.4 3.6v3.4M15.6 3.6v3.4" />
+    </>,
+    props,
+  )
+}
+
+/** 隐藏已归档（归档箱划掉）。 */
+export function IconArchiveOff(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M3.8 4.8h16.4a.8.8 0 0 1 .8.8v2.4H3v-2.4a.8.8 0 0 1 .8-.8Z" />
+      <path d="M5 8v9.4a1.6 1.6 0 0 0 1.6 1.6h10.8A1.6 1.6 0 0 0 19 17.4V8" />
+      <path d="M4 3.6 20 19.6" />
+    </>,
+    props,
+  )
+}
+
+/** 展开成完整清单（列表 + 向下箭头）：筛选会话里的「全部对话」。 */
+export function IconQueue(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 6.5h9.5M4 12h9.5M4 17.5h6" />
+      <path d="M17.5 6.5v11" />
+      <path d="m14.6 14.8 2.9 2.9 2.9-2.9" />
+    </>,
     props,
   )
 }

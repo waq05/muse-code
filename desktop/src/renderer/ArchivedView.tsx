@@ -34,13 +34,13 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
     void task
       .then((result) => {
         if (!result.ok) {
-          toastErr(`没做成：${result.error}`)
+          toastErr(`操作失败：${result.error}`)
           return
         }
         toastOk(result.notice ?? fallbackNotice)
         reload()
       })
-      .catch((error: unknown) => toastErr(`没做成：${text(error)}`))
+      .catch((error: unknown) => toastErr(`操作失败：${text(error)}`))
   }
 
   const groups = useMemo(() => groupByWorkspace(page?.items ?? []), [page])
@@ -62,7 +62,7 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
 
       {page.items.length === 0 && (
         <div className="settings-empty">
-          归档区是空的。在侧栏把鼠标移到会话行上点归档按钮，或者点工作区行的归档按钮一次归档整组会话。
+          归档区是空的。在侧栏会话行点击归档按钮可归档单个会话，或在工作区行点击归档按钮归档整组会话。
         </div>
       )}
 
@@ -96,7 +96,7 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
               <span className="arch-actions">
                 <button
                   className="text-btn"
-                  data-tip="放回会话列表（回到原来的工作区）"
+                  data-tip="放回会话列表，回到原工作区"
                   onClick={() => write(props.proxy.restoreSessions([item.path]), '已恢复到会话列表')}
                 >
                   <IconRestart size={13} /> 恢复
@@ -109,11 +109,11 @@ export function ArchivedView(props: { proxy: RuntimeProxy }): JSX.Element {
                     const trash = page.trashDir
                     void confirmAction({
                       title: `永久删除会话「${item.title ?? '未命名会话'}」？`,
-                      detail: `这会把它从归档区移进回收站（${trash}），回收站的文件保留 30 天后自动清空，清空后无法找回。`,
+                      detail: `会将其从归档区移入回收站 ${trash}，回收站文件保留 30 天后自动清空，此后无法找回。`,
                       confirmLabel: '永久删除',
                       danger: true,
                     }).then((yes) => {
-                      if (yes) write(props.proxy.purgeSessions([item.path]), '已移进回收站')
+                      if (yes) write(props.proxy.purgeSessions([item.path]), '已移入回收站')
                     })
                   }}
                 >

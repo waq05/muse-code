@@ -66,11 +66,11 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
         setMarketSource(result.source)
         // 抓取失败的原因挂在面板里（带重试按钮）；手动刷新额外补一条 Toast 回执
         if (result.error !== undefined) {
-          if (refresh) toastErr(`抓取失败：${result.error}`)
-        } else if (refresh) toastOk(`已从 ${result.source} 取回 ${result.items.length} 个技能`)
+          if (refresh) toastErr(`获取失败：${result.error}`)
+        } else if (refresh) toastOk(`已从 ${result.source} 获取 ${result.items.length} 个技能`)
         else maybeAutoInstall()
       })
-      .catch((error: unknown) => toastErr(`抓取失败：${text(error)}`))
+      .catch((error: unknown) => toastErr(`获取失败：${text(error)}`))
       .finally(() => setMarketLoading(false))
   }
 
@@ -109,12 +109,12 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
     void props.proxy
       .setSkillEnabled(skill.name, next)
       .then((result) => {
-        if (!result.ok) toastErr(`没改成：${result.error}`)
+        if (!result.ok) toastErr(`操作失败：${result.error}`)
         else if (result.notice !== undefined) toastOk(result.notice)
         reloadSkills()
       })
       .catch((error: unknown) => {
-        toastErr(`没改成：${text(error)}`)
+        toastErr(`操作失败：${text(error)}`)
         reloadSkills()
       })
   }
@@ -127,10 +127,10 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
     void props.proxy
       .readSkill(skill.name)
       .then((result) => {
-        if (!result.ok) toastErr(`读不出正文：${result.error}`)
+        if (!result.ok) toastErr(`读取正文失败：${result.error}`)
         else setDetail(result.skill)
       })
-      .catch((error: unknown) => toastErr(`读不出正文：${text(error)}`))
+      .catch((error: unknown) => toastErr(`读取正文失败：${text(error)}`))
   }
 
   const importSkill = (): void => {
@@ -199,13 +199,13 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
       })
       .filter((source) => source.name !== '' && source.url !== '')
     if (sources.length === 0) {
-      toastErr('至少写一行：源名, 仓库地址')
+      toastErr('请按格式填写，一行一个源：名字, 仓库地址')
       return
     }
     void props.proxy
       .setMarketSources(sources)
       .then((result) => {
-        if (!result.ok) toastErr(`没保存：${result.error}`)
+        if (!result.ok) toastErr(`保存失败：${result.error}`)
         else {
           toastOk(result.notice ?? '市场源已保存')
           setSourcesEditing(false)
@@ -213,7 +213,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
           browse(sources[0]?.name ?? '', false)
         }
       })
-      .catch((error: unknown) => toastErr(`没保存：${text(error)}`))
+      .catch((error: unknown) => toastErr(`保存失败：${text(error)}`))
   }
 
   const installedNames = new Set(skills.map((skill) => skill.name))
@@ -265,8 +265,8 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
           {skillsError !== '' && <div className="settings-note error">扫描失败：{skillsError}</div>}
           {skills.length === 0 && skillsError === '' && (
             <div className="plugins-empty">
-              还没有技能。把 <code>&lt;名字&gt;/SKILL.md</code> 放进 <code>~/.dsc/skills/</code> 或项目的{' '}
-              <code>.dsc/skills</code>，或点右上「导入技能」、去「市场」tab 安装。
+              还没有技能。将 <code>&lt;名字&gt;/SKILL.md</code> 放入 <code>~/.dsc/skills/</code> 或项目的{' '}
+              <code>.dsc/skills</code>，或点击右上角「导入技能」，也可在「市场」页安装。
             </div>
           )}
           {filtered.map((skill) => (
@@ -291,7 +291,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
                 {skill.whenToUse !== undefined && <div className="skill-when">何时用：{skill.whenToUse}</div>}
                 <div className="skill-links">
                   <button className="text-btn" onClick={() => openDetail(skill)}>
-                    {detail?.name === skill.name ? '收起正文' : '看正文'}
+                    {detail?.name === skill.name ? '收起正文' : '查看正文'}
                   </button>
                   {skill.path !== undefined && (
                     <>
@@ -321,7 +321,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
                 data-tip={
                   skill.toggleable
                     ? skill.enabled
-                      ? '停用（不再进入模型目录，命令也摘掉）'
+                      ? '停用，不再进入模型目录并移除命令'
                       : '启用'
                     : '由插件提供，不能在技能中心启停'
                 }
@@ -379,7 +379,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
                 onChange={(event) => setSourcesText(event.target.value)}
               />
               <div className="market-edit-hint">
-                一行一个源：名字, GitHub 仓库地址（或返回 index.json 清单的地址）
+                一行一个源：名字、GitHub 仓库地址，或返回 index.json 清单的地址
               </div>
               <button className="btn-primary" onClick={saveSources}>
                 保存市场源
@@ -387,7 +387,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
             </div>
           )}
 
-          {marketLoading && market === null && <div className="settings-empty">正在抓取市场清单…</div>}
+          {marketLoading && market === null && <div className="settings-empty">正在获取市场清单…</div>}
           {market?.error !== undefined && market.items.length === 0 && (
             <div className="settings-note error">
               {market.error}
@@ -432,7 +432,7 @@ export function SkillsView(props: { proxy: RuntimeProxy; embedded?: boolean }): 
       )}
 
       <div className="skills-foot">
-        模型只能看到技能的名字和一句话说明；正文要点开后由模型自己取用，不常驻上下文。
+        模型仅能看到技能名称与一句话说明；正文按需读取，不常驻上下文。
       </div>
     </div>
   )

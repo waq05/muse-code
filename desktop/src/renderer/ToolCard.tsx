@@ -36,7 +36,10 @@ export function ToolCard({ call, defaultOpen = false }: { call: ToolCallView; de
         data-tip="点击展开参数与结果"
       >
         <span className="name">{call.name}</span>
-        <span style={{ color: 'var(--dsc-text-tertiary)' }}>{preview}{call.argsText.replace(/\s+/g, ' ').length > ARG_PREVIEW_LIMIT ? '…' : ''}</span>
+        <span className="preview">
+          {preview}
+          {call.argsText.replace(/\s+/g, ' ').length > ARG_PREVIEW_LIMIT ? '…' : ''}
+        </span>
         <span className="status">{STATUS_TEXT[status]}</span>
       </div>
       {open && (
