@@ -9,7 +9,7 @@
  *
  * @module dsc/core/tools/bash
  */
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import type { ToolEntry } from '../tools.js'
 import { classifyCommand } from '../command-policy.js'
 import { redact, scrubChildEnv } from '../secrets.js'
@@ -23,12 +23,39 @@ const OUTPUT_LIMIT = 8000
 const isWin = process.platform === 'win32'
 
 /**
+ * 收掉一整棵进程树（2026-09-29）：`child.kill` 只杀直系子进程——
+ * Windows 上 powershell.exe 被杀后里面跑的构建工具会变孤儿继续跑；
+ * POSIX 上 `sh -c` 收到 SIGKILL 也不会转发给孙进程。
+ * Windows 用 taskkill /T；POSIX 用 detached 进程组负数 pid 全组杀。
+ */
+function killTree(child: ChildProcess): void {
+  if (child.pid === undefined) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+  } else {
+    try {
+      process.kill(-child.pid, 'SIGKILL')
+    } catch {
+      child.kill('SIGKILL')
+    }
+  }
+}
+
+/**
  * 真正 spawn 并收输出。执行计划可能被沙箱的执行器缝改写
  * （容器后端会把 shell 换成 `docker run`），所以这里不认死 `powershell.exe`。
  */
 function spawnShell(plan: SpawnPlan, timeoutMs: number, signal: AbortSignal): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(plan.file, plan.args, { cwd: plan.cwd, env: plan.env })
+    const child = spawn(plan.file, plan.args, {
+      cwd: plan.cwd,
+      env: plan.env,
+      // stdin 直接关掉：等输入的命令立即失败退出，好过挂到超时才死；
+      // POSIX 上 detached 让子命令自成进程组，超时能整组收掉。
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      detached: process.platform !== 'win32',
+    })
     let output = ''
     const append = (chunk: Buffer | string): void => {
       if (output.length < OUTPUT_LIMIT * 2) output += String(chunk)
@@ -37,13 +64,13 @@ function spawnShell(plan: SpawnPlan, timeoutMs: number, signal: AbortSignal): Pr
     child.stderr?.on('data', append)
 
     const timer = setTimeout(() => {
-      child.kill('SIGKILL')
+      killTree(child)
       rejectPromise(new Error(`命令超时（${timeoutMs}ms）`))
     }, timeoutMs)
 
     const onAbort = (): void => {
       clearTimeout(timer)
-      child.kill('SIGKILL')
+      killTree(child)
       rejectPromise(new Error('命令被用户取消'))
     }
     signal.addEventListener('abort', onAbort, { once: true })

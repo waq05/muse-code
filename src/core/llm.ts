@@ -141,11 +141,14 @@ export class LlmError extends Error {
    * 此时一个字节都没收到，重发是安全的。HTTP 429 / 5xx 由 `status` 判定，不看这个标记。
    */
   readonly retryable: boolean
-  constructor(message: string, status?: number, retryable = false) {
+  /** 服务端 Retry-After 头解析出来的毫秒数（要求等多久再试）；没有就是 undefined。 */
+  readonly retryAfterMs?: number
+  constructor(message: string, status?: number, retryable = false, retryAfterMs?: number) {
     super(message)
     this.name = 'LlmError'
     this.status = status
     this.retryable = retryable
+    this.retryAfterMs = retryAfterMs
   }
 }
 
@@ -165,7 +168,8 @@ export async function streamChat(request: StreamRequest, handlers: StreamHandler
         error instanceof LlmError &&
         (error.retryable || (error.status !== undefined && (error.status === 429 || error.status >= 500)))
       if (!retryable) throw error
-      await delay(500 * 2 ** (attempt - 1), request.signal)
+      // 服务端明确要求等多久（Retry-After）就至少等那么久；没有才用指数退避。
+      await delay(Math.max(500 * 2 ** (attempt - 1), error.retryAfterMs ?? 0), request.signal)
     }
   }
 }
@@ -188,27 +192,46 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
   if (request.thinking !== undefined) body.thinking = { type: request.thinking }
   if (request.reasoningEffort !== undefined) body.reasoning_effort = request.reasoningEffort
 
-  const response = await fetch(`${request.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${request.apiKey}`,
-    },
-    body: JSON.stringify(body),
-    signal: request.signal,
-  }).catch((error: unknown) => {
-    throw new LlmError(
-      `连接失败：${error instanceof Error ? error.message : String(error)}`,
-      undefined,
-      true,
-    )
-  })
+  // 建连与响应头阶段单独设超时（2026-09-29）：端点卡死不能把整轮拖成永久等待。
+  // request.signal 的取消经桥接传进 controller，流读完才拆桥。
+  const controller = new AbortController()
+  const onOuterAbort = (): void => controller.abort()
+  if (request.signal?.aborted === true) controller.abort()
+  request.signal?.addEventListener('abort', onOuterAbort, { once: true })
+  const connectTimer = setTimeout(
+    () => controller.abort(new LlmError(`连接超时（${Math.round(CONNECT_TIMEOUT_MS / 1000)} 秒无响应）`, undefined, true)),
+    CONNECT_TIMEOUT_MS,
+  )
+  let response: Response
+  try {
+    response = await fetch(`${request.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${request.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    }).catch((error: unknown) => {
+      // 连接超时是 LlmError（retryable），原样上抛给 streamChat 的重试环；其余按连接失败归一。
+      if (error instanceof LlmError) throw error
+      throw new LlmError(
+        `连接失败：${error instanceof Error ? error.message : String(error)}`,
+        undefined,
+        true,
+      )
+    })
+  } finally {
+    clearTimeout(connectTimer)
+  }
 
   if (!response.ok || response.body === null) {
     const detail = await response.text().catch(() => '')
     throw new LlmError(
       `HTTP ${response.status}${detail === '' ? '' : `：${detail.slice(0, 300)}`}`,
       response.status,
+      false,
+      retryAfterMs(response.headers.get('retry-after')),
     )
   }
 
@@ -224,7 +247,7 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
   // 打断时保留已收到的部分内容（半截回复对"取消后接着看"有价值）；
   // 一字节未得的中途取消则照常抛错。
   try {
-    for await (const data of sseData(response.body)) {
+    for await (const data of sseData(response.body, STREAM_IDLE_TIMEOUT_MS)) {
       if (data === '[DONE]') break
       let chunk: {
         choices?: {
@@ -279,6 +302,8 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
       result.text !== '' || result.reasoning !== '' || callsByIndex.size > 0
     if (!(request.signal?.aborted === true && partial)) throw error
     result.finishReason = 'aborted'
+  } finally {
+    request.signal?.removeEventListener('abort', onOuterAbort)
   }
 
   result.toolCalls = [...callsByIndex.entries()].sort(([a], [b]) => a - b).map(([, call]) => call)
@@ -300,14 +325,45 @@ function serializeMessages(messages: ChatMessage[]): unknown[] {
   })
 }
 
+/** 连接超时（建连 + 响应头）：卡死的端点不能把整轮拖死。 */
+const CONNECT_TIMEOUT_MS = 30_000
+/** 流空闲超时：这么久一个字节都没到就判服务端挂起（SSE 心跳也是字节，会重置计时）。 */
+const STREAM_IDLE_TIMEOUT_MS = 180_000
+
+/** Retry-After 头：秒数或 HTTP 日期；认不出返回 undefined（封顶 2 分钟，防服务端给个大数）。 */
+function retryAfterMs(value: string | null): number | undefined {
+  if (value === null || value.trim() === '') return undefined
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 120_000)
+  const at = Date.parse(value)
+  if (!Number.isNaN(at)) return Math.min(Math.max(at - Date.now(), 0), 120_000)
+  return undefined
+}
+
+/** 读一块流数据；超过 idleMs 一个字节都没到就算服务端挂起（LlmError，不重试）。 */
+async function readWithTimeout<T>(readPromise: Promise<T>, idleMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const idle = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new LlmError(`流空闲超过 ${Math.round(idleMs / 1000)} 秒，判定服务端挂起`, undefined, false)),
+      idleMs,
+    )
+  })
+  try {
+    return await Promise.race([readPromise, idle])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** 把 SSE 字节流切成 data 行。 */
-async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+async function* sseData(body: ReadableStream<Uint8Array>, idleMs: number): AsyncGenerator<string> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   try {
     for (;;) {
-      const { done, value } = await reader.read()
+      const { done, value } = await readWithTimeout(reader.read(), idleMs)
       if (done) break
       buffer += decoder.decode(value, { stream: true })
       let newline = buffer.indexOf('\n')
@@ -319,6 +375,8 @@ async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string
       }
     }
   } finally {
+    // 提前结束（[DONE] 或出错）也把连接收掉：不 cancel 的话 socket 要挂到 GC 才释放。
+    await reader.cancel(undefined).catch(() => {})
     reader.releaseLock()
   }
 }
