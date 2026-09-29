@@ -31,7 +31,7 @@
              │  运行时子进程（node utilityProcess）              │
              │  lib/headless.js → host-stdio 插件               │
              │    └ createKernel() → cordis 上下文              │
-             │        内核插件 23 + 官方可开关 9 + 外部插件 N                     │
+             │        内核插件 23 + 官方可开关 14 + 外部插件 N                     │
              │  src/core/* 是纯能力，被插件包装后对外提供服务      │
              └──────────────────────────────────────────────────┘
 ```
@@ -53,8 +53,8 @@
 | 路径 | 规模 | 职责 |
 | --- | --- | --- |
 | `src/core/` | 42 个文件 ≈12600 行 | 纯能力：模型客户端、会话、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板 |
-| `src/core/tools/` | 4 个文件 ≈360 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep` |
-| `src/plugins/` | 36 个文件 ≈9400 行 | 每个服务一个 cordis 插件 + 九个官方可开关插件 |
+| `src/core/tools/` | 6 个文件 ≈560 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep` + 沙箱的一次性升权参数与命令执行器缝 |
+| `src/plugins/` | 41 个文件 ≈13800 行 | 每个服务一个 cordis 插件 + 十四个官方可开关插件 |
 | `src/host/kernel.ts` | 310 行 | 内核装配顺序与三档插件元数据 |
 | `src/contract.ts` | 730 行 | UI ⇄ 运行时的中性契约（`DscRuntime` + 视图类型） |
 | `src/services/types.ts` | 804 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
@@ -122,7 +122,7 @@ export const myPlugin: Plugin.Object = {
 | 档 | 判定 | 开关 | 现在有谁 |
 | --- | --- | --- | --- |
 | 自定义 | `source: 'external'`，文件在 `~/.dsc/plugins/*.js` | 可拨，默认开 | 用户自己的 |
-| 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 9 个 |
+| 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 14 个 |
 | 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关 | `llm`/`session`/`guards`/`surfaces`/`waiting`/`approval`/`hooks`/`tools`/`tools-default`/`transcript`/`commands`/`skills`/`prompt`/`mode`/`settings`/`compact`/`todo`/`plan`/`ask`/`agent`/`goal`/`memory`/`runtime` 共 23 个 |
 
 官方可开关插件（`src/host/kernel.ts` 的 `OFFICIAL_PLUGINS` + `OFFICIAL_OBJECTS`）：
@@ -138,8 +138,13 @@ export const myPlugin: Plugin.Object = {
 | `lifecycle-hooks` 生命周期钩子 | 关 | `lifecycle-hooks` | 读 `~/.dsc/lifecycle-hooks.json`，按 codex 的十二个事件名跑外部命令钩子 |
 | `mcp` MCP 客户端 | 关 | `mcp` | 连 stdio 或 streamable-http 的 MCP server，工具挂成 `mcp__服务器__工具` |
 | `tool-search` 工具渐进披露 | 关 | `tool-search` | 用 `tool_search` / `tool_describe` / `tool_call` 替下这一轮用不到的工具 schema |
+| `sandbox` 沙箱 | 开 | `sandbox` | 守卫链 order 8 的策略围栏（codex 路线）：三档模式、可写根白名单、受保护路径、命令前缀策略、一次性升权（`sandbox_permissions` + `justification` 成对）；容器后端可换真隔离，降级时照常执行 + 审批兜底并如实上报 |
+| `schedule` 定时任务 | 关 | `schedule` | `after`/`at`/`every`/`daily`/`weekly`/`cron` 六种选择器，到点把提醒投回原会话；至多一次、catch-up 补投、pre-dispatch 校验 |
+| `lsp` LSP 代码智能 | 关 | `lsp` | 连语言服务器查定义/引用/实现/悬停，并把本次编辑新引入的报错附在 write/edit 结果里 |
+| `browser` 浏览器自动化 | 关 | `browser` | DOM 级控制浏览器：无障碍快照 + ref 定位点击输入（`browser_look` 只读 / `browser` 动手），不是截图比坐标 |
+| `self-improve` 自我改进 | 关 | `self-improve` | 三条闭环：纠正捕获候选、复盘产技能草稿（默认停用待人启用）、技能自修 + 台账回滚 |
 
-默认开关按一条规矩定：会拉起外部进程、连外部服务器或改写每轮请求工具面的那几档默认关（`lifecycle-hooks`、`mcp`、`tool-search`）；提升安全与本地便利、且不配就完全无副作用的那几档默认开。
+默认开关按一条规矩定：会拉起外部进程、连外部服务器或改写每轮请求工具面的那几档默认关（`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`self-improve`）；提升安全与本地便利、且不配就完全无副作用的那几档默认开。沙箱是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
 
 内核清单在 `src/host/kernel.ts` 的 `BUILTIN_PLUGINS`。新增一档官方可开关插件的三步写在 [plugin-development.md §3.4](plugin-development.md)。
 
@@ -178,7 +183,7 @@ export const myPlugin: Plugin.Object = {
 
 | 常量 | 位置 | 当前值 | 什么时候动 |
 | --- | --- | --- | --- |
-| `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:67` | 4 | 插件能用的扩展点有增减 |
+| `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:71` | 5 | 插件能用的扩展点有增减 |
 | `HOST_PROTOCOL_VERSION` | `src/plugins/host-stdio.ts:25` + `desktop/electron/main/protocol.ts` | 2 | 协议消息种类或白名单语义变了 |
 
 两个版本都是「加载时对不上就报错」，不做静默兼容。插件可以声明 `apiVersion`，内核只拒绝
@@ -194,7 +199,7 @@ export const myPlugin: Plugin.Object = {
 | `credentials.yaml` | 用户 / 设置界面 | key 的第二来源（第一是 `apiKeyEnv` 指向的环境变量，第三是回退读 `~/.dsh`） |
 | `config.json` | 用户（可选） | 轻量覆盖：provider / model / temperature |
 | `settings.json` | 设置界面与 `ctx.settings`（`src/core/prefs.ts:15`） | 审批与思考强度默认值、市场源清单、关窗是否缩托盘、侧栏界面偏好（排序、工作区顺序与别名） |
-| `plugins.json` | 插件中心、`plugin_manager` 工具 | 条目树：`entries[{file, disabled, config}]` + `history` 版本记录（自动回滚靠它）。九个官方可开关插件各占一条，`config` 里存它们的可调值 |
+| `plugins.json` | 插件中心、`plugin_manager` 工具 | 条目树：`entries[{file, disabled, config}]` + `history` 版本记录（自动回滚靠它）。十四个官方可开关插件各占一条，`config` 里存它们的可调值 |
 | `skills.json` | 技能中心 | 每个技能的开关 |
 | `desktop.json` | 桌面主进程（`desktop/electron/main/dsc-core.ts:42-60`） | 最近工作目录（最多记 12 个）、托盘提示是否弹过 |
 | `.last-session` | 会话插件 | `--resume` 无参时指向上次的会话文件 |
@@ -214,6 +219,10 @@ export const myPlugin: Plugin.Object = {
 | `spill/` | spill 插件（`src/core/spill.ts`） | 工具输出超阈值时落盘的文件，目录 0700、文件 0600；按 mtime 保留 7 天、目录总量超上限从最旧的删 |
 | `lifecycle-hooks.json` | 用户 | codex 形态的十二事件外部命令钩子配置（lifecycle-hooks 插件读它，与安全钩子的 `hooks.json` 各读各的） |
 | `memory/` | memory 插件（内核，`src/core/memory.ts`） | 跨会话留下的长期事实：全局事实、用户偏好、当前工作区各一格 |
+| `sandbox/tmp/<会话或工作区哈希>/` | sandbox 插件 | 沙箱私有临时目录：`TMP`/`TEMP`/`HOME` 在工具执行期间被重定向到这里，按会话×工作区隔离 |
+| `schedule/` | schedule 插件 | `tasks.json` 任务定义（tmp+rename 原子替换）+ `runs.jsonl` 执行台账 + `.lock` 单实例互斥（pid + 启动时间指纹） |
+| `learnings/<工作区哈希>/candidates.jsonl` | self-improve 插件 | 纠正/失败候选（`dsc/turn-end` 落一条），**不进系统提示**，`/learnings promote` 才生效 |
+| `skills/.ledger.jsonl` 与 `skills/.archive/` | self-improve 插件 | 技能变更台账（前后 hash，`/skills-ledger rollback <id>` 可回滚）与归档区（只搬不删） |
 
 技能发现的优先级（rank 小的赢，`src/core/skills.ts:64-71`）：当前目录 `.dsc/skills` →
 当前目录 `.agents/skills` → `config.yaml` 的 `skills` 段自定义目录 → `~/.dsc/skills`。
@@ -258,8 +267,9 @@ summary  { text, keep? }                压缩产生的摘要；keep = 摘要之
 | 加一个 `/命令` | `ctx.commands.register()` | 命令名撞内置的会被拒 |
 | 往系统提示加一段 | `ctx.prompt.register(id, 取文本, { order })` | 插件关着时这段话自动消失；order 决定段次（模式条款 30、模型信息 890） |
 | 改写发给模型的消息 | `ctx.prompt.transformMessages()` | 只改请求体，不动会话日志（旧截图裁剪用的就是它） |
-| 工具动手之前拦一道 | `ctx.guards.register({ id, order, decide })` | 内置刻度：灾难地板 5、协作模式 10、安全钩子 20、生命周期钩子 25、审批 30；守卫自己抛错按「拒」处理 |
-| 改写工具的输出 | `ctx.guards.registerObserver({ id, order, observe })` | 内置刻度：密钥遮红 10、生命周期钩子 45、大输出溢出 50；order 小的先加工，后一位看到的是前一位的输出 |
+| 工具动手之前拦一道 | `ctx.guards.register({ id, order, decide })` | 内置刻度：灾难地板 5、沙箱 8、协作模式 10、LSP 写前留底 7、安全钩子 20、浏览器域名 20、生命周期钩子 25、审批 30；守卫自己抛错按「拒」处理 |
+| 改写工具的输出 | `ctx.guards.registerObserver({ id, order, observe })` | 内置刻度：密钥遮红 10、LSP 诊断注入 46、生命周期钩子 45、大输出溢出 50；order 小的先加工，后一位看到的是前一位的输出 |
+| 换掉命令的执行体（真隔离） | `registerCommandRunner()`（`src/core/tools/command-runner.ts`） | 随包发布的内置插件可用（外部插件拿不到）：沙箱的容器后端把 `powershell -Command X` 换成 `docker run … sh -c X`；没有注册者时行为与从前完全一致 |
 | 往界面快照加一块状态 | `ctx.surfaces.register(id, 取值)` | 先在 `contract.ts` 的 `RuntimeSurfaces` 上声明合并；快照装配层不认识具体功能 |
 | 有张卡片正等用户点 | `ctx.waiting.register(id, () => 是否在等)` | 会话目标的自动续跑据此刹车 |
 | 自己那块状态要跟着会话走 | `ctx.session.appendState(id, payload)` + `session.state(id)` | 先在 `SessionStateMap` 上声明合并；写进去是一条 `state` 记录 |
@@ -284,6 +294,13 @@ node shots/storage-check.mjs       # 会话存储与会话库
 node shots/llm-retry-check.mjs     # LLM 重试（连接失败 / 429 重试，400 与取消不重试）+ 版本号（10 条）
 node shots/model-caps-check.mjs    # 模型能力字段读写往返 + 档位 → 请求字段映射（23 条）
 node shots/order-check.mjs         # 侧栏工作区排序落点 + 按工作区树的层级（跑前先编 workspace-order.ts）
+node shots/sandbox-check.mjs       # 沙箱：路径围栏、命令策略、一次性升权、降级可见（193 条）
+node shots/schedule-check.mjs      # 定时任务：六种选择器、DST、至多一次、catch-up、原子落盘（207 条）
+node shots/lsp-check.mjs           # LSP：分帧、URI/UTF-16、服务器表、真握手（自带假语言服务器，167 条）
+node shots/browser-check.mjs       # 浏览器：CDP 消息层、ref 代际、快照截断、整树清理（210 条，本机有 Chrome/Edge 才跑真启动段）
+node shots/self-improve-check.mjs  # 自我改进：候选状态机、SKILL.md 硬校验、台账回滚、老化（181 条）
+node shots/integration-check.mjs   # 集成交付自检（既有：守卫链次序 + 灾难命令 + 压缩重放，95 条）
+node shots/m5-integration-check.mjs# 第五轮集成自检：五插件登记/挂载/热卸载/沙箱默认开不误伤（起四次真内核）
 node shots/seed-ui-home.mjs        # 造一份临时 HOME 的会话数据，配 DSC_DESKTOP_SHOT 拍侧栏/轨迹
 node shots/seed-model-home.mjs     # 造三个带能力字段的端点 + 一条带贴图的消息，拍模型设置与贴图
 node scripts/composer-test.mjs     # TUI 输入候选面板
@@ -382,7 +399,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 | 数值 | 值 | 出处 |
 | --- | --- | --- |
 | 压缩保留的最近消息条数 | 缺省 20 条，夹在 5~200；可配 `compact.keepRecent`，设置「上下文压缩」分区就能改 | `src/plugins/compact.ts:38-43`、`src/core/compact.ts:27` |
-| 审批卡等多久没人答 | 缺省 300 秒，夹在 10 秒~1 小时；可配 `approval.approvalTimeoutMs`，每次弹卡现读 | `src/plugins/approval.ts:42-56` |
+| 审批卡等多久没人答 | 缺省 300 秒，夹在 10 秒~1 小时；可配 `approval.approvalTimeoutMs`，每次弹卡现读。**没人能应答时不等这个值**：没有 `interactive` 服务（tui / host-stdio 登记）且本进程不是终端直连时，直接按拒处理并写明理由 | `src/plugins/approval.ts:42-56`、`:116-128` |
 | 模型一次最多问几题 / 每题几个选项 | 缺省 3 题 / 每题 4 项，都夹在 1~8；可配 `ask.maxQuestions` / `ask.maxOptions` | `src/plugins/ask.ts` |
 | 会话目标缺省轮次上限 / 一次放宽几轮 | 缺省 24 轮 / 8 轮，夹在 1~256 / 1~64；可配 `goal.defaultMaxRounds` / `goal.extendRoundsBy`，设置「会话目标」分区就能改；256 这个硬顶不可配 | `src/plugins/goal.ts:44`、`src/core/goal.ts:30` |
 | 说明书（AGENTS.md）字符预算 | 缺省 20000，夹在 4000~200000；可配 `prompt.instructionBudget` | `src/plugins/prompt.ts`、`src/core/prompt.ts:37` |
@@ -392,6 +409,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 | 压缩摘要的用户原话预算 | 缺省 8000 字符，夹在 1000~40000；可配 `compact.userQuoteBudgetChars` | `src/core/compact-anchors.ts:35`、`src/plugins/compact.ts:47` |
 | 灾难地板的命令长度上限 | 缺省 4000 字符，夹在 100~100000；更长的命令按「看不清要跑什么」拒；可配 `approval-floor.maxCommandLength` | `src/core/approval-floor.ts:34`、`:116` |
 | 灾难地板的熔断 | 连续被地板拒 5 次（1~100）后冷却 60000 毫秒（0~3600000），缺省开着；可配 `approval-floor.circuitBreakerThreshold` / `circuitBreakerCooldownMs` / `circuitBreakerEnabled` | `src/core/approval-floor.ts:35-36`、`:117-119` |
+| 「只读命令」的判据 | 不止「第一个词在只读名单里」：① 引号外的 `>`（`2>&1` 不算）算写盘，整段不算只读；② `node`/`python`/`perl` 这类解释器一律不算只读，python 只有 `-m pytest`/`-m unittest`/`-m json.tool` 例外；③ `env` 会被剥掉再看真正的命令；④ `find` 带 `-delete`/`-exec`/`-fprint` 不算；⑤ `sed` 的 `e`/`w`/`-i` 与 `awk` 的 `system(`/`popen(`/`>` 不算。只有 ① 是可配的（走白名单），其余是安全不变量 | `src/core/command-policy.ts:299-320`、`:506-563` |
 | 大输出溢出阈值与预览 | 缺省超过 4000 字符就落盘（200~4000000），预览留前 30 行（1~500），续读一次 200 行（1~2000）；可配 `spill.thresholdChars` / `keepLines` / `readChunkLines` | `src/core/spill.ts:31-39`、`:65-73` |
 | 溢出的落盘与清理 | 单文件上限 1048576 字节（4096~268435456）、按 mtime 保留 7 天（1~3650）、目录总量上限 67108864 字节（65536~8589934592，超了从最旧的删）、目录 `~/.dsc/spill/`；可配 `spill.maxBytes` / `retentionDays` / `maxTotalBytes` / `dir` | `src/core/spill.ts:31-39`、`:65-73` |
 | 会话检索返回几条 | 缺省 20 条，夹在 1~200；可配 `session-search.defaultLimit` | `src/core/session-index.ts:70` |
@@ -419,7 +437,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 
 ### 内核装配顺序
 
-`createKernel()` 依次挂 25 个内核插件：`llm` → `session` → 三个扩展点（`guards` / `surfaces` / `waiting`）→ `approval` → `tools` → `tools-default` → `transcript` → `commands` → `skills` → `prompt` → `mode` → `settings` → `hooks` → `compact` → `todo` → `plan` → `ask` → `agent` → `goal` → `memory` → `runtime` → `desktop-dock` → `plugin-manager`；末尾把九个官方可开关插件登记进热挂载表（`registerBuiltinMount`），再按 `plugins.json` 的条目决定本次挂不挂（`src/host/kernel.ts`）。
+`createKernel()` 依次挂 25 个内核插件：`llm` → `session` → 三个扩展点（`guards` / `surfaces` / `waiting`）→ `approval` → `tools` → `tools-default` → `transcript` → `commands` → `skills` → `prompt` → `mode` → `settings` → `hooks` → `compact` → `todo` → `plan` → `ask` → `agent` → `goal` → `memory` → `runtime` → `desktop-dock` → `plugin-manager`；末尾把十四个官方可开关插件登记进热挂载表（`registerBuiltinMount`），再按 `plugins.json` 的条目决定本次挂不挂（`src/host/kernel.ts`）。
 这个顺序里有两处是必须的，不只是好看：`approval` 早于 `mode`，因为换档广播 `dsc/mode-changed` 而审批要听（审批卡上得写当前档位）；`transcript` 早于 `plan`，因为恢复会话时要先把会话流清空，计划卡那条条目才不会被清掉。
 官方可开关插件之间还有一条硬约束：`tool-search` 必须排在 `mcp` 之后，否则它 apply 时 `ctx.get('mcp')` 是 `undefined`，MCP 工具的 schema 永远不会被撤下。
 注意 `desktop-dock` 与 `plugin-manager` 不显示在插件中心的「运行内核」清单里。
@@ -439,7 +457,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 | `events.ts` | `CoreEvent` 九个变体，是 core 唯一对外通道（`:10-22`） |
 | `compact.ts` | 见 §12 |
 | `compact-anchors.ts` | 摘要的机械加固件：锚点索引（正则抽 PR 号 / commit / 分支 / 文件 / 报错 / 链接）、用户原话逐字引用、细节找回指针。全是纯函数，可以脱离模型单独断言 |
-| `approval-floor.ts` | 灾难地板的判定：结构不可验证 → 灾难命令 → 用户 deny 黑名单 → 危险模式 → 命令白名单 → 无人值守，逐层给结论。配置读不通时守卫照样挂载却一律拒（挂不上等于链上没有地板，是 fail-open） |
+| `approval-floor.ts` | 灾难地板的判定：结构不可验证 → 灾难命令 → 用户 deny 黑名单 → 危险模式 → 命令白名单 → 无人值守，逐层给结论。配置读不通时守卫照样挂载却一律拒（挂不上等于链上没有地板，是 fail-open）。**只判「拒」或「不拒」**：命中白名单也只 `defer`，由 `approvalFloor` 服务把结论交给审批层免卡放行——地板自己 `pass` 会把 order 20 / 25 的安全钩子一并跳掉 |
 | `spill.ts` | 溢出落盘：建文件（目录 0700、文件 0600）、按整行截断并在文件末尾写明第几行没落盘、生成预览与续读写法、按 mtime 与目录总量扫目录 |
 | `session-index.ts` | 会话检索的旁路倒排索引：中文按 1-gram + 2-gram（所以「内存」这种 2 字词能命中），英文按整词小写；按 mtime + size 增量维护，落 `cache/session-index.json`，版本对不上就整表重建 |
 | `mcp.ts` | MCP 客户端底座：stdio 与 streamable-http 两种传输上的 JSON-RPC、`mcp__服务器__工具` 命名、子进程环境白名单筛选、Windows 上按 PATH + PATHEXT 解析启动命令 |

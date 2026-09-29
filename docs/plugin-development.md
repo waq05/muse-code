@@ -70,13 +70,13 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 - `config`：**透传给 `apply(ctx, config)` 第二参**——插件用它读自己的配置，不必再自建
   配置文件。取值统一走 `resolvePluginConfig('<file>', passed)`（`src/core/plugin-registry.ts:165`）：
   装配时那份作底，磁盘上这份覆盖它，所以设置分区保存后正在跑的插件下一次用值就是新值，不用重启宿主。
-  读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；九个官方可开关插件（`subagent`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`）也各读这一份，并把可调值挂进自己的设置分区。
+  读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；十四个官方可开关插件（`subagent`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`sandbox`、`schedule`、`lsp`、`browser`、`self-improve`）也各读这一份，并把可调值挂进自己的设置分区。
 - **启停热生效**：切换开关 → 内核卸载（调用 disposer）或重新挂载插件，无需重启宿主；
   文件内容变更后重新启用也会加载新代码（按 mtime 破坏模块缓存）。
 
 ### 3.2 版本管理（自动回滚）
 
-内核有 API 版本号（当前 `KERNEL_API_VERSION = 4`）。插件声明 `export const apiVersion = 2`：
+内核有 API 版本号（当前 `KERNEL_API_VERSION = 5`）。插件声明 `export const apiVersion = 2`：
 - 等于内核版本 → 正常挂载；
 - **高于**内核（插件要求更新的内核）→ 拒绝挂载、**自动写入停用**（回滚到可用状态），
   管理页显示原因；升级 dsc 后重新启用即可；
@@ -86,6 +86,7 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 |---|---|
 | 1 | 初始版本：工具、命令、事件、全部内核服务 |
 | 2 | 新增 `settings` 与 `skills` 服务：设置分区、技能来源、市场源三个扩展点；桌面端设置面板与技能中心 |
+| 5 | 新增一个可选服务 `sandbox`（当前档位、强制执行等级、可写根与路径判定；读它要用 `ctx.get('sandbox')`），并把「命令执行器缝」（`src/core/tools/command-runner.ts`，沙箱的容器后端换执行体用）开给随包发布的内置插件 |
 
 `apiVersion = 1` 的旧插件在 v2 内核上照常挂载（判定只拒绝**高于**内核的声明），不用改代码；
 但要用 §4.7 / §4.8 的扩展点就必须声明 `apiVersion = 2`。
@@ -108,7 +109,7 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 | 官方可开关 | `source: 'builtin'` 且 `toggleable: true` | 可拨，`defaultDisabled: true` 时默认关 |
 | 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关，页面只露 3 行，其余折叠 |
 
-现有的九个官方可开关插件：默认开的四个是 `web-search`（网页搜索）、`approval-floor`（审批灾难地板）、`spill`（大输出溢出）、`session-search`（会话全文检索）；默认关的五个是 `subagent`（子智能体团队）、`computer-use`（电脑操作）、`lifecycle-hooks`（生命周期钩子）、`mcp`（MCP 客户端）、`tool-search`（工具渐进披露）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
+现有的十四个官方可开关插件：默认开的五个是 `web-search`（网页搜索）、`approval-floor`（审批灾难地板）、`spill`（大输出溢出）、`session-search`（会话全文检索）、`sandbox`（沙箱——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写）；默认关的九个是 `subagent`（子智能体团队）、`computer-use`（电脑操作）、`lifecycle-hooks`（生命周期钩子）、`mcp`（MCP 客户端）、`tool-search`（工具渐进披露）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（按需拉起语言服务器子进程）、`browser`（拉起浏览器进程并连调试端口）、`self-improve`（会写技能文件与提示词面）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
 
 新增一档官方可开关插件要做的三件事：
 
@@ -327,7 +328,7 @@ ctx.session.current().state('myPanel')               // 恢复会话时读回来
 
 这四样都是**注册**，不是改内核：内置的协作模式闸门、审批卡、灾难地板、安全钩子、生命周期钩子、任务清单、计划评审、会话目标、密钥遮红、大输出溢出全都挂在这些点上，外部插件走同一扇门。
 
-有些服务是可选的（插件关着时整个不存在），读它们只能用 `ctx.get('<服务名>')`，不能写进 `inject` 也不能用 `ctx.<服务名>?.`：`team`（子智能体团队）、`mcp`（MCP 客户端）、`sessionSearch`（会话全文检索）。例如 tool-search 读 MCP 工具目录就是 `const mcp = ctx.get('mcp')`，读到 `undefined` 就当没接 MCP。
+有些服务是可选的（插件关着时整个不存在，或者只在某些入口才登记），读它们只能用 `ctx.get('<服务名>')`，不能写进 `inject` 也不能用 `ctx.<服务名>?.`：`team`（子智能体团队）、`mcp`（MCP 客户端）、`sessionSearch`（会话全文检索）、`approvalFloor`（灾难地板的只读视图，插件关着时不存在）、`interactive`（界面可达性，只有 tui 与 host-stdio 入口才登记）、`sandbox`（沙箱）、`lsp`（LSP 代码智能）。例如 tool-search 读 MCP 工具目录就是 `const mcp = ctx.get('mcp')`，读到 `undefined` 就当没接 MCP；审批插件读 `ctx.get('interactive')`，读到 `undefined` 且不是终端直连就当「没人能回答审批卡」。
 
 ## 5. 事件
 

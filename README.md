@@ -93,7 +93,7 @@ src/core/           自研引擎（零 UI 依赖、零 dsh 依赖）
 src/adapter/        core 事件 → 快照投影（transcript 折叠 + core-runtime）
 src/contract.ts     UI ⇄ 运行时 的中性契约（DscRuntime）
 src/host/kernel.ts  内核装配顺序 + 三档插件清单（运行内核 / 官方可开关 / 自定义）
-src/plugins/        每个服务一个 cordis 插件（含两个默认关的官方插件：子智能体团队、电脑操作）
+src/plugins/        每个服务一个 cordis 插件（含十四个可开关的官方插件，见 §4 表）
 src/app/            ink UI（App/ChatView/Composer/ToolCard/ApprovalCard/SessionPicker/StatusBar）
 desktop/            Electron 桌面端：主进程 + 独立运行时子进程 + React renderer
 scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scripts/composer-test.mjs，16 项断言）
@@ -101,11 +101,11 @@ scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scrip
 
 与 dsh 的取舍：复用其**设计**（turn 语义、事件流、审批分级、JSONL 落盘、压缩），不复用其**实现**（无沙箱、无检查点修复、无投影事件语义——个人版不需要）。
 
-官方可开关插件共 **9 个**（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索；默认关：子智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露），在插件中心里手动开关；长期记忆是默认开的内核插件。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
+官方可开关插件共 **14 个**（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索、沙箱；默认关：子智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露、定时任务、LSP 代码智能、浏览器自动化、自我改进），在插件中心里手动开关；长期记忆是默认开的内核插件。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
 
 ## 已知限制
 
-- 无沙箱：bash/写文件全权限，靠审批卡兜底，只在个人机器上用。
+- 沙箱是策略围栏（默认开的 sandbox 插件：可写根白名单、受保护路径、命令前缀策略、一次性升权），拦得住 dsc 自己发起的工具调用，**拦不住命令内部的任意写**——那要选容器后端；最终兜底仍是审批卡，只在个人机器上用。
 - 插件能加工具、命令、事件监听、设置分区和技能来源，但拿不到 DOM：界面扩展只接受可 JSON 序列化的控件声明。
 - Windows 中文输入法可能拦截审批卡的 y/n 键（输入法切英文即可）。
 - 跨进程的路由状态（当前模型/思考强度）不落盘，重启宿主后回到配置默认值。

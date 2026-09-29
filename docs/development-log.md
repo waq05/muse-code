@@ -325,3 +325,41 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 `src/plugins/settings.ts` 原先让分区 `save()` 与 `action()` 共用同一个 `mutate()`，把返回的字符串一律当成**成功提示**；而 `src/services/types.ts` 的 `SettingsSectionSpec.save` 注释写的是「抛错或返回字符串 = 失败原因」。于是 `web-search`、`compact`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`tool-search` 这些按注释契约写、把校验错误当字符串返回的分区，校验失败时界面弹的是绿色提示条，错值却已经落盘。
 改法是给 `save()` 单开一条 `mutateSave()`（返回字符串即失败原因），`mutate()` 留给 `action()` 与 `saveProvider()` / `removeProvider()`——后面那几条的返回值确实是完成提示（例如「已添加端点 X」），不能一起改成错误语义。`src/plugins/mcp.ts` 原先靠抛错绕开这层语义差，改完两条路等价，它的写法不用动。
 回归断言写在 `shots/integration-check.mjs` 的「设置写入的返回值契约」一节：注册一个探针分区，分别验 `save()` 返回字符串按失败处理、`save()` 不返回按成功处理、`action()` 返回字符串仍按成功提示处理。
+
+---
+
+## 阶段 12：安全判定的五个洞与「没人能应答」的审批卡
+
+第一轮交付后按同一份红线复查判定层，用真内核实测出五个洞。判定层的共同毛病是**用一个信号替代了整件事**：只读与否只看第一个词，包装与重定向没参与判定；正则的边界写错一个字符，规则就静默失效。
+
+| 决策 | 理由 |
+| --- | --- |
+| 灾难地板只判「拒」或「不拒」，命中白名单也走 `defer` | 守卫链是「第一位非 defer 的赢」，地板 `pass` 会连带跳掉 order 20 的安全钩子与 order 25 的生命周期钩子，那不是白名单的本意。改由 `ctx.provide('approvalFloor', …)` 把结论交给审批层免卡放行，用户自己的钩子照常被问到 |
+| 去掉灾难地板对协作模式的依赖 | 地板原先在白名单命中时还要再问一次模式闸门；改成只 defer 之后，模式闸门（order 10）本来就会自己说话，地板再问一遍是重复判定。顺带把 `ApprovalFloorOptions.mode` 与 `SHELL_HEADS` 之外的注入都收掉 |
+| 只读判定不看「第一个词」，要看「这段到底会不会动东西」 | 实测「计划模式 + 仅查看权限」下 `python -c` 删根、`find . -delete`、`sed "e …"`、`echo x > 任意文件` 全部被 `pass` 执行。补齐四类判据：重定向（引号外的 `>`，`2>&1` 除外）、解释器（`node`/`python`/`perl` 等，python 仅 `-m pytest`/`-m unittest`/`-m json.tool` 例外）、`env` 剥壳、以及 `find` / `sed` / `awk` 的写与执行开关 |
+| 白名单放行要保留「跑测试」这条日常路径 | 把 `python` 整体踢出只读名单会连 `python -m pytest` 一起拦住，而计划模式的提示词明确说可以跑测试。所以 python 走子命令白名单，而不是一刀切 |
+| 审批卡「没人能应答」由入口登记判定，不靠 `process.stdin.isTTY` 猜 | `tui` 与 `host-stdio` 各登记一份 `interactive` 服务，`reachable()` 是各自的传输状态（标准输入关了 / 父端口还在）。审批层读不到登记且本进程不是终端直连时，直接按拒并写明理由。`approval-floor.ts` 原来那句「dsc 没有可靠的宿主交互信号」是错的：入口是确定的 |
+| 灾难命令的自检断言必须连带验耗时 | 只断言 `deny` 会放过「等审批超时按拒」这条路径——第一轮交付里 `format C:` 就是这么判成通过的，同时把 `integration-check` 拖成 300.6 秒。改成「是地板当场拒且 < 1 秒」，那 300 秒立刻变成红灯 |
+
+改动落在 `src/core/command-policy.ts`（正则、`HARDLINE`、只读判定、`CommandSegment.redirect`）、`src/core/approval-floor.ts`（`SHELL_HEADS` 补 `cmd`、白名单改 defer、`whitelist()`）、`src/services/types.ts`（两个新服务类型）、`src/plugins/approval.ts`（白名单免卡 + 无人应答快速拒）、`src/plugins/approval-floor.ts`（登记服务）、`src/plugins/tui.ts` 与 `src/plugins/host-stdio.ts`（登记界面可达性，`Transport` 加 `reachable()`）。自检改动：`shots/integration-check.mjs` 加四节（只读判定、白名单不截断链、没有界面时的审批卡、界面可达性按兄弟插件接线），`shots/approval-floor-check.mjs` 里按旧行为写的五条断言改成新语义。
+
+---
+
+## 阶段 13：第五轮官方插件（沙箱 / 定时任务 / LSP / 浏览器 / 自我改进）
+
+一次补齐对标清单上 T8、T9、T11、T12 四项，全部做成官方可开关插件（共十四个），内核只开了一条缝。分批落盘：内核缝与沙箱 → schedule → lsp → browser → self-improve（含登记）→ 文档。
+
+| 决策 | 理由 |
+| --- | --- |
+| 沙箱走 codex 路线（策略面 + 降级为审批兜底），不走 dsh 的 fail-closed | 沙箱默认开，fail-closed 会在强制层不可用时把用户的所有写入拒掉，那不是「更安全」是「更难用」；codex 的语义是「说拦得住和真拦得住是两件事，如实上报 `enforced`」。受限令牌后端明确不做：纯 TS 拿不到，`runas /trustlevel` 只降令牌完整性、不改 ACL，隔离是假的 |
+| 真隔离只留一条路：容器后端，且默认不启用 | 容器里只有 sh，Windows 的 PowerShell 语法跑不通，只有用户显式选择才启用；执行体替换靠内核新增的命令执行器缝（`src/core/tools/command-runner.ts`），没有注册者时 bash 行为与从前完全一致 |
+| 沙箱守卫 order 8，早于协作模式 10 | 沙箱管「能不能」，审批管「要不要问」；一次调用先过物理围栏再谈交互，拒绝理由里带档位、可写根与「怎么合法地做」 |
+| 可写根按每次调用的 `input.cwd` 算，不用挂载时的 `process.cwd()` | 同进程里不同会话的工作目录不同，拿挂载时的 cwd 当基准会把别的会话的合法写入误判成越界（集成自检真实逮到过） |
+| schedule 的至多一次：先落盘推进 `nextRunAt` 再投递 | 崩在投递中途靠 `pendingSlot` 恢复一次，重启不重复投；catch-up 只补最近一次错过的，不补积压（一次恢复炸上下文比漏一条提醒更糟） |
+| 定时投递明写「不是用户指令，不构成授权」 | 定时输入 ≠ 用户授权（codex `UserInputOrigin` 的分级）；投递前问 `ctx.waiting.any`，不改 goal 的 rounds、不给 goal 上膛，不隔着一挂卡硬推 |
+| LSP 只做导航四件事，诊断走注入不走工具 | rename/codeAction/format 要 ApplyEdit + 审批且与 write/edit 重复；「本次编辑新引入的 ERROR」才是模型当下需要的（照 hermes 的 reporter 收敛体积）。无状态同步（读盘→didOpen→请求→didClose）天然没有脏文档 |
+| 浏览器快照发 ref、动作只收 ref，且加 ref 代际校验 | 坐标方案对布局漂移太脆；无障碍树浏览器已算好 role/name，不自算。代际校验（动作前 `DOM.describeNode` 复核）是三家成熟实现都没做干净的一处，页面一变就报「重新 snapshot」而不是点错 |
+| 自我改进先立写入门再谈自写 | dsc 的技能原本只读：`skill_write` 强制 read-before-write、`.bak` 备份、台账可回滚、威胁扫描不过就还原、archive 只搬不删；L2 产物**默认停用**待人启用；L1 候选**不进系统提示**——这三道门是「模型能写」与「模型能污染」之间的全部距离 |
+| 内核 API 升到 v5，但只加一条缝 + 一个可选服务 | `ctx.get('sandbox')` 是唯一的新插件可见能力；命令执行器缝只开给随包发布的内置插件。五插件各自一个独立目录（`src/core/{sandbox,schedule,lsp,cdp,learnings}/`），互不 import |
+
+验收：五个单元自检全绿（sandbox 193 / schedule 207 / lsp 167 / browser 210 / self-improve 181，全部 0 FAIL，跑在临时 HOME 上），两份集成自检全绿（既有 95 条 + 新增 m5：起四次真内核验登记/挂载/热卸载/沙箱不误伤），全套既有回归 15 个脚本 0 FAIL。过程中自检真实逮到并修掉的实现 bug：LSP 的 pending 结账先清表后 settle（挂着的请求永不落地、进程 exit 13）、启动失败不透传 stderr 尾巴、PATHEXT 候选顺序错；self-improve 的 store 重复声明会话状态键（项目编译失败）；沙箱可写根误用挂载 cwd。

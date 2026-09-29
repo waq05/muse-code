@@ -185,15 +185,35 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 | 项 | 状态 | 落地与验收证据 |
 | --- | --- | --- |
 | T1 压缩子系统 | 已落地 | 重放折叠按 `keep` 字段接回尾部（`src/core/session.ts` 的 `case 'summary'`）、切点退到 `safeCut`（`src/core/compact.ts`）、锚点索引 / 用户原话 / 找回指针在 `src/core/compact-anchors.ts`、两个字符预算进 `compact` 设置分区。`node shots/compact-check.mjs` 53 PASS / 0 FAIL；`integration-check` 另用真 `Session.load` 验了新老两种日志 |
-| T2 审批灾难地板 | 已落地 | `approval-floor` 插件挂在守卫 order 5（`src/core/approval-floor.ts` + `src/plugins/approval-floor.ts`），含命令白名单、deny glob 黑名单、熔断、无人值守。`node shots/approval-floor-check.mjs` 90 PASS / 0 FAIL；`integration-check` 在真守卫链上拒掉 `rm -rf /`、`format C:`、fork 炸弹与写 `/dev/sda` |
+| T2 审批灾难地板 | 已落地 | `approval-floor` 插件挂在守卫 order 5（`src/core/approval-floor.ts` + `src/plugins/approval-floor.ts`），含命令白名单、deny glob 黑名单、熔断、无人值守。`node shots/approval-floor-check.mjs` 95 PASS / 0 FAIL；`integration-check` 在真守卫链上当场拒掉 `rm -rf /`、`format C:`、`cmd /c format C:`、`Format-Volume`、`Clear-Disk`、fork 炸弹与写 `/dev/sda`。**第二轮补了五个漏**，见 §5.2 |
 | T3 spill | 已落地 | 观察者 order 50，落 `~/.dsc/spill/`，`read` 工具跳过，目录按 mtime 与总量清理。`node shots/spill-check.mjs` 53 PASS / 0 FAIL |
 | T4 生命周期钩子 | 已落地（十二个事件里八个接通） | `lifecycle-hooks` 插件读 `~/.dsc/lifecycle-hooks.json`：PreToolUse → 守卫 25、PostToolUse → 观察者 45，其余走事件与 `transformMessages`；PermissionRequest / PreCompact / SubagentStart / SubagentStop 没有可挂的扩展点，配了不执行并把理由写进报告。`node shots/lifecycle-hooks-check.mjs` 81 PASS / 0 FAIL |
 | T5 MCP 客户端 + Tool Search | 已落地 | `mcp` 插件支持 stdio 与 streamable-http，工具挂成 `mcp__服务器__工具`，结果过围栏，子进程环境按白名单筛；`tool-search` 提供三个桥接工具与手写 BM25，`tool_call` 按真名重走守卫链。`node shots/mcp-check.mjs` 75 PASS / 0 FAIL；`node shots/tool-search-check.mjs` 94 PASS / 0 FAIL |
 | T6 中文会话检索 | 已落地 | 没上 SQLite：`src/core/session-index.ts` 是纯 TS 倒排索引（中文 1-gram + 2-gram，英文整词），落 `~/.dsc/cache/session-index.json`，按 mtime + size 增量维护；工具 `session_search` + `/search` 命令。`node shots/session-search-check.mjs` 70 PASS / 0 FAIL |
 | T7 记忆内核化 | 已落地（不在本轮） | `src/plugins/memory.ts` + `src/core/memory.ts` 是默认开的内核插件，带 `memory` 设置分区与三格额度 |
-| T8–T12 | 未动 | schedule、沙箱、PTC、自我改进闭环、LSP / 浏览器自动化 / checkpoint 都还停在计划上，§6 的红线照旧 |
+| T8 schedule 定时跟进 | 已落地（第五轮） | `src/plugins/schedule.ts` + `src/core/schedule/{rule,store,runner}.ts`：六种选择器（cron 只收五字段 Vixie）、显式 IANA 时区与 DST 两规则、**先落盘推进 `nextRunAt` 再投递**的至多一次语义、重启 catch-up（grace 半周期夹 120s~2h，不补积压）、pre-dispatch 校验（凭据不可解析就标 blocked，一次模型请求都不发）、`.lock` 互斥、投递文本明写「定时触发不是用户指令不构成授权」且投前问 `ctx.waiting.any`。宿主无常驻进程，靠自重排 `setTimeout`（unref）+ 重启补投，界面写明「关机时段不触发」；**没有用 `schtasks` 兜底**（§3 判它是后门高危）。`node shots/schedule-check.mjs` 207 PASS / 0 FAIL |
+| T9 沙箱 | 已落地（第五轮，**codex 路线**，非本节原先写的 dsh fail-closed 路线） | `src/plugins/sandbox.ts` + `src/core/sandbox/{policy,execpolicy,backends}.ts`，守卫 order 8：三档模式（默认 workspace-write）、可写根白名单（`realpathSync.native` 规范化 + 祖先包含 + 最深存在祖先回退）、受保护元数据名、NT 命名空间前缀守卫（resolve 之前判原始串）、8.3/ADS/junction、命令前缀 allow/prompt/forbidden（含内层脚本再拆一层）、一次性升权（`sandbox_permissions`+`justification` 必须成对、只对本次生效、照常弹审批卡）、**降级照 codex：强制层不可用不 fail-closed，改为照常执行 + 审批兜底并如实上报 `enforced: full/partial`**。容器后端（docker，探测通过且用户显式选择才启用）经命令执行器缝（`src/core/tools/command-runner.ts`，内核 API v5）真换执行体。不做受限令牌后端（纯 TS 拿不到，`runas /trustlevel` 隔离是假的）。`node shots/sandbox-check.mjs` 193 PASS / 0 FAIL |
+| T11 自我改进闭环 | 已落地（第五轮，三条闭环先立写入门） | `src/plugins/self-improve.ts` + `src/core/learnings/{store,ledger,skill-write}.ts`：L1 纠正捕获（`dsc/turn-end` 落候选，**不进系统提示**，`/learnings promote` 才生效）；L2 复盘产技能草稿（迭代数 ≥12 触发，走 `agent.followup`，落盘即写进 `skills.json` disabled **默认停用**）；L3 `skill_write` 工具（read-before-write 硬校验、`.bak` 备份、`.ledger.jsonl` 台账可回滚、威胁扫描不过就还原、archive 只搬不删）。写入走 `ctx.approval.decide`；cron/队友/插件发起的写直接拒（判不出的退审批门，宁严不松）。`node shots/self-improve-check.mjs` 181 PASS / 0 FAIL |
+| T12 LSP + 浏览器自动化 | 已落地（第五轮，checkpoint 仍未动） | LSP：`src/core/lsp/{framing,uri,servers,client}.ts` + 单工具按 operation 分发（定义/引用含声明/实现/悬停，100 条 + 16000 字符双上限），无状态同步（读盘→didOpen→请求→didClose），idle 回收 + 破键退避，诊断经 `registerObserver` 只报本次编辑新引入的 ERROR；`node shots/lsp-check.mjs` 167 PASS / 0 FAIL。浏览器：`src/core/cdp/{transport,launch,snapshot,actions}.ts`，无障碍树文本化 + 行内 ref、**ref 代际校验**（动作前 `DOM.describeNode` 复核）、独立临时 profile + `DevToolsActivePort`、对话框三策略、`browser_look`（read）/`browser`（exec）分档、`taskkill /T /F` 整树清理；`node shots/browser-check.mjs` 210 PASS / 0 FAIL |
 
-集体验收：`node shots/integration-check.mjs` 起两次真内核（默认态 + 打开三个默认关的档位），62 PASS / 0 FAIL，顺带验了守卫链次序、打开后的灾难命令仍被拒、以及压缩重放的端到端回归。
+集体验收：`node shots/integration-check.mjs` 起两次真内核（默认态 + 打开三个默认关的档位），95 PASS / 0 FAIL，顺带验了守卫链次序、打开后的灾难命令仍被拒、以及压缩重放的端到端回归。第五轮另起一份 `node shots/m5-integration-check.mjs`：起四次真内核，验五个新插件的登记/默认开关/挂载/工具面/热卸载无残留，以及「沙箱默认开不误伤只读命令、不挡正常工作区写入」。
+
+### 5.2 第二轮补漏（安全判定的五个洞）
+
+第一轮交付后按同一份红线复查判定层，实测出五个洞并修掉。前四个都是「本该拦住却没拦住」，第五个是「拦得太宽」：
+
+| 洞 | 实测现象 | 根因与修法 |
+| --- | --- | --- |
+| Windows 格式化漏网 | `format C:` 没被地板拦下，在「完全访问」权限模式下 `pass` 放行；默认配置下它要等满 300 秒审批超时才被拒 | `src/core/command-policy.ts` 的 `mkfs` 正则末尾多写了一个 `\b`，而 `format C:` 的 `:` 后面就是行尾，`\b` 永不成立。改成正则只给词尾成立的分支加边界 |
+| 清盘命令根本没规则 | `Format-Volume`、`Clear-Disk`、`Initialize-Disk`、`Remove-Partition` 全都不在任何规则里，满权限下直接放行 | `HARDLINE` 补一条 `ps-wipe-disk` |
+| `cmd /c` 不算包装 | `cmd /c format C:` 被当地板眼里的「明文命令」审 | `SHELL_HEADS` 漏了 `cmd`，而 `/c` 早已在 `INLINE_FLAGS` 里。补一个词即可（`baseName` 会去掉 `.exe`） |
+| 只读白名单把解释器当只读 | 「计划模式 + 仅查看权限」下 `python -c "import shutil; shutil.rmtree('/')"`、`find . -delete`、`sed "e ..."`、`echo x > 任意文件` 全部 `pass` 执行 | `isReadOnlySegment` 只认第一个词，而 `node` 早被单独排除、同类解释器没排除；重定向也没参与判定。补齐：解释器、`env` 剥壳、`find` 的 `-delete/-exec/-fprint`、`sed` 的 `e/w/-i`、`awk` 的 `system(`、以及引号外的 `>` |
+| 白名单把整条链截断 | 命中默认白名单的 `pnpm run build` 不经过用户的 `hooks`（order 20）与 `lifecycle-hooks`（order 25） | 地板原来直接 `pass`，而守卫链是「第一位非 defer 的赢」。改成只 `defer` 并登记 `approvalFloor` 服务，由审批层免卡放行；顺带去掉地板对协作模式的依赖 |
+
+同一轮还修了一个可用性坑：**没有任何界面能回答审批卡时，卡会白等满一次超时**（默认 300 秒）。`approval-floor.ts` 的注释原本写「dsc 没有可靠的宿主交互信号」，实际上入口是确定的——`tui` 与 `host-stdio` 各登记一份 `interactive` 服务，审批层读不到且本进程不是终端直连时，直接按拒处理并写明理由。`shots/integration-check.mjs` 因此从 300.6 秒降到 0.5 秒，并且加了一条反向断言：登记了界面之后这张卡照旧挂着等人答。
+
+自检同步加严：灾难命令的断言从「结果是 deny」改成「**必须是地板当场拒**（< 1 秒）」。老写法放过了「等审批超时才拒」，正是它把 `format C:` 判成通过的原因。
+
 
 ---
 
