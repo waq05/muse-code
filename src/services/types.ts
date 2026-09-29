@@ -691,6 +691,60 @@ export interface ApprovalFloorService {
 }
 
 /**
+ * 沙箱档位（形制照 codex 的 `sandbox_mode`）：
+ *   read-only            只读：任何写盘与越界命令都拒；
+ *   workspace-write      工作区可写：工作区 + 沙箱私有临时目录可写，越界拒（默认档）；
+ *   danger-full-access   不设围栏（等同关掉沙箱）。
+ */
+export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+
+/**
+ * 沙箱的强制执行等级——「说拦得住」和「真拦得住」是两件事，这个字段说的就是后者：
+ *   full     执行体真被换掉了（容器后端：网络与文件系统由内核隔离）；
+ *   partial  进程内策略围栏：拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写；
+ *   none     沙箱插件关着，或当前档位不设围栏。
+ */
+export type SandboxEnforcement = 'full' | 'partial' | 'none'
+
+/** 一次路径判定的结果。 */
+export interface SandboxCheck {
+  allowed: boolean
+  /** 被拒时说明命中哪条规则。 */
+  reason?: string
+  /** 放行时，是被哪个可写根覆盖的。 */
+  root?: string
+}
+
+/**
+ * 沙箱（sandbox 插件提供；插件关着时这个服务不存在，读它要用 `ctx.get('sandbox')`）。
+ *
+ * 对外只给「查」和「判」两类能力：别的功能（将来的 PTC、无人值守的定时任务）
+ * 要问「我现在能不能写这个路径」，不必自己重算一遍白名单——白名单只有持有者该认识。
+ */
+export interface SandboxService {
+  /** 当前档位。 */
+  readonly mode: SandboxMode
+  /** 强制执行等级（见 {@link SandboxEnforcement}）。 */
+  readonly enforcement: SandboxEnforcement
+  /** 本次会话的可写根（绝对路径，已规范化）。 */
+  readonly writableRoots: readonly string[]
+  /** 网络是否放行（声明式开关；策略后端只能靠环境变量与容器后端落实）。 */
+  readonly networkAccess: boolean
+  /** 沙箱私有临时目录（本次会话；`TMP/TEMP/HOME` 被重定向到这里）。 */
+  readonly tmpDir: string
+  /**
+   * 判一个路径能不能写；解析失败保守拒绝。
+   * @param path - 目标路径（相对路径按 cwd 展开）。
+   * @param cwd - 会话工作目录（可写根的基准）；省略时用最近一次工具调用看到的工作目录。
+   *   为什么要有这个参数：可写根随会话走，同一进程里不同会话的 cwd 不同；
+   *   拿挂载时的 `process.cwd()` 当基准，会把别的会话的合法写入误判成越界。
+   */
+  canWrite(path: string, cwd?: string): SandboxCheck
+  /** 当前策略的一句话摘要（系统提示与诊断用）。 */
+  describe(): string
+}
+
+/**
  * 界面可达性：tui / host-stdio 这类「有人在看」的入口登记一份，没有登记就是没人能回答审批卡。
  * 审批插件据此决定是弹卡还是立刻按拒处理，不再白等一次审批超时。
  */
@@ -749,6 +803,8 @@ declare module '@deepseek-ai/cordis' {
     approvalFloor?: ApprovalFloorService
     /** 界面可达性（tui / host-stdio 入口登记；脚本环境里不存在，读它要用 `ctx.get('interactive')`）。 */
     interactive?: InteractiveService
+    /** 沙箱（sandbox 插件提供；插件没开时不存在，读它要用 `ctx.get('sandbox')`）。 */
+    sandbox?: SandboxService
     /** desktop-dock 服务（桌面端面板的工作区文件系统 + git）。 */
     dock: DockService
     /**

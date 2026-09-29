@@ -66,9 +66,12 @@ export function getPluginMeta(file: string): PluginMeta | undefined {
  * 工具动手之前的闸门与工具输出的改写）、快照片段（`ctx.surfaces.register`，界面每块状态
  * 由那个功能点自己登记）、等人登记（`ctx.waiting.register`，哪张卡片正挂着等用户）；
  * 会话记录也在此版多了按 id 存取状态这一对（`ctx.session.appendState` / `session.state`）。
- * 1 到 3 的插件照常挂载（版本检查只拦「高于内核」的声明）。
+ * 5 = 新增一个可选服务 `sandbox`（当前档位、强制执行等级、可写根与路径判定；
+ * 插件关着时不存在，读它要用 `ctx.get('sandbox')`），并把「命令执行器缝」开给随包发布的
+ * 内置插件（`src/core/tools/command-runner.ts`：沙箱的容器后端靠它把本机 shell 换成容器）。
+ * 1 到 4 的插件照常挂载（版本检查只拦「高于内核」的声明）。
  */
-export const KERNEL_API_VERSION = 4
+export const KERNEL_API_VERSION = 5
 
 /** 条目树的一项。 */
 export interface PluginEntry {

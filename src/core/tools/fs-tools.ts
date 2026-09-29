@@ -9,6 +9,7 @@ import { promises as fs } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import type { ToolEntry } from '../tools.js'
 import { noteRead, noteWrite, readBlockReason, staleOverwriteReason, writeHardBlockReason } from '../path-policy.js'
+import { sandboxPermissionProperties } from './sandbox-args.js'
 
 const READ_LINE_LIMIT = 2000
 
@@ -66,6 +67,7 @@ export const writeTool: ToolEntry = {
     properties: {
       path: { type: 'string', description: '目标文件路径' },
       content: { type: 'string', description: '完整文件内容' },
+      ...sandboxPermissionProperties,
     },
     required: ['path', 'content'],
   },
@@ -96,6 +98,7 @@ export const editTool: ToolEntry = {
       path: { type: 'string', description: '目标文件路径' },
       old: { type: 'string', description: '要被替换的原文（必须唯一匹配）' },
       new: { type: 'string', description: '替换后的内容' },
+      ...sandboxPermissionProperties,
     },
     required: ['path', 'old', 'new'],
   },

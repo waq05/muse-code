@@ -13,6 +13,8 @@ import { spawn } from 'node:child_process'
 import type { ToolEntry } from '../tools.js'
 import { classifyCommand } from '../command-policy.js'
 import { redact, scrubChildEnv } from '../secrets.js'
+import { finishCommand, planCommand, type SpawnPlan } from './command-runner.js'
+import { sandboxPermissionProperties } from './sandbox-args.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const MAX_TIMEOUT_MS = 120_000
@@ -20,12 +22,13 @@ const OUTPUT_LIMIT = 8000
 
 const isWin = process.platform === 'win32'
 
-function runShell(command: string, cwd: string, timeoutMs: number, signal: AbortSignal): Promise<string> {
+/**
+ * 真正 spawn 并收输出。执行计划可能被沙箱的执行器缝改写
+ * （容器后端会把 shell 换成 `docker run`），所以这里不认死 `powershell.exe`。
+ */
+function spawnShell(plan: SpawnPlan, timeoutMs: number, signal: AbortSignal): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const { env } = scrubChildEnv(process.env)
-    const child = isWin
-      ? spawn('powershell.exe', ['-NoProfile', '-Command', command], { cwd, env })
-      : spawn('sh', ['-c', command], { cwd, env })
+    const child = spawn(plan.file, plan.args, { cwd: plan.cwd, env: plan.env })
     let output = ''
     const append = (chunk: Buffer | string): void => {
       if (output.length < OUTPUT_LIMIT * 2) output += String(chunk)
@@ -60,6 +63,24 @@ function runShell(command: string, cwd: string, timeoutMs: number, signal: Abort
   })
 }
 
+/**
+ * 执行一条命令：先问执行器缝拿最终执行计划，再 spawn，最后让改写过的那几位收尾。
+ * 没有沙箱插件注册执行器时，计划就是上面的默认那份，行为与以前完全一致。
+ */
+async function runShell(command: string, cwd: string, timeoutMs: number, signal: AbortSignal): Promise<string> {
+  const { env } = scrubChildEnv(process.env)
+  const base: SpawnPlan = isWin
+    ? { file: 'powershell.exe', args: ['-NoProfile', '-Command', command], env, cwd }
+    : { file: 'sh', args: ['-c', command], env, cwd }
+  const run = { command, cwd, timeoutMs, signal }
+  const { plan, changed } = await planCommand(run, base)
+  try {
+    return await spawnShell(plan, timeoutMs, signal)
+  } finally {
+    await finishCommand(run, plan, changed)
+  }
+}
+
 export const bashTool: ToolEntry = {
   name: 'bash',
   description: isWin
@@ -76,6 +97,7 @@ export const bashTool: ToolEntry = {
     properties: {
       command: { type: 'string', description: '要执行的命令' },
       timeoutMs: { type: 'number', description: `超时毫秒数（默认 ${DEFAULT_TIMEOUT_MS}，上限 ${MAX_TIMEOUT_MS}）` },
+      ...sandboxPermissionProperties,
     },
     required: ['command'],
   },
