@@ -128,6 +128,7 @@ export function bindAll(ffi: WinFfi) {
     setTokenInformation: bind(adv, 'SetTokenInformation', 'int', ['uintptr_t', 'uint32', 'void *', 'uint32']),
     createRestrictedToken: bind(adv, 'CreateRestrictedToken', 'int', ['uintptr_t', 'uint32', 'uint32', 'uintptr_t', 'uint32', 'uintptr_t', 'uint32', 'void *', 'void *']),
     setEntriesInAclW: bind(adv, 'SetEntriesInAclW', 'uint32', ['uint32', 'void *', 'uintptr_t', 'void *']),
+    logonUserW: bind(adv, 'LogonUserW', 'int', ['void *', 'void *', 'void *', 'uint32', 'uint32', 'void *']),
     initializeAcl: bind(adv, 'InitializeAcl', 'int', ['void *', 'uint32', 'uint32']),
     addMandatoryAce: bind(adv, 'AddMandatoryAce', 'int', ['void *', 'uint32', 'uint32', 'uint32', 'void *']),
     setNamedSecurityInfoW: bind(adv, 'SetNamedSecurityInfoW', 'uint32', ['void *', 'uint32', 'uint32', 'uintptr_t', 'uintptr_t', 'uintptr_t', 'uintptr_t']),

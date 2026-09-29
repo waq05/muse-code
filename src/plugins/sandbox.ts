@@ -38,6 +38,9 @@ import { readSandboxRequest } from '../core/tools/sandbox-args.js'
 import type { ToolGuard } from '../core/tool-guards.js'
 import { createDockerRunner, probeDocker } from '../core/sandbox/backends.js'
 import { createWindowsTokenRunner, probeWindowsToken, type WindowsTokenRunnerHandle } from '../core/sandbox/win/backend.js'
+import { readSetupState } from '../core/sandbox/win/account.js'
+import { runSetupElevated } from '../core/sandbox/win/setup.js'
+import { doctorWindowsNetwork } from '../core/sandbox/win/doctor.js'
 import { evaluateCommand } from '../core/sandbox/execpolicy.js'
 import {
   checkWrite,
@@ -117,6 +120,10 @@ export const sandboxPlugin: Plugin.Object = {
     let offRunner: (() => void) | null = null
     /** 受限令牌后端的收尾（回收私有临时目录的能力 ACE）。 */
     let offWinDispose: (() => void) | null = null
+    /** 网络第二级体检结论（doctor）：布防完整 full / 任一项缺 partial。 */
+    let networkTier: 'full' | 'partial' = 'partial'
+    /** 体检的逐项明细（√/× 每项一句话）。 */
+    let networkTierDetail = '尚未体检'
     /** 探测代次：异步探测回来时后端已经又换过一次，那就作废这次结果。 */
     let generation = 0
     let disposed = false
@@ -266,7 +273,7 @@ export const sandboxPlugin: Plugin.Object = {
           `网络：${config.networkAccess ? '开' : '关（要联网的命令会被直接拒）'}`,
       )
       if (config.backend === 'windows-token') {
-        lines.push('当前后端是 Windows 受限令牌：命令内部的越界写（脚本里的 fs.writeFile 这类）会被系统层直接拒绝；读不受限；网络管控取决于是否完成提权 setup（/sandbox 里看现状）。')
+        lines.push(`当前后端是 Windows 受限令牌：命令内部的越界写（脚本里的 fs.writeFile 这类）会被系统层直接拒绝；读不受限；网络第二级体检 ${networkTier}（明细见 /sandbox）。`)
       } else {
         lines.push('策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写（脚本里的 fs.writeFile 这类）；要真隔离，请在「设置 → 沙箱」把后端换成 Windows 受限令牌（本机即可，无需 docker）或容器。')
       }
@@ -316,22 +323,31 @@ export const sandboxPlugin: Plugin.Object = {
           ctx.emit('dsc/changed')
           return backendDetail
         }
+        // 账本在 = 提权 setup 成功过：走账号分支（runner 以专用账号跑命令，网络过白名单代理）
+        const setupState = readSetupState(DSC_HOME)
+        const account = setupState !== null && setupState.ok
+          ? { name: setupState.state.account, sid: setupState.state.sid, dscHome: DSC_HOME, proxyPort: setupState.state.proxyPort }
+          : undefined
         const handle: WindowsTokenRunnerHandle = createWindowsTokenRunner({
           mode: config.mode === 'read-only' ? 'read-only' : 'workspace-write',
           cwd: currentCwd(),
           tmpDir: sandboxTmpDir(DSC_HOME, currentCwd(), currentSessionId()),
           extraRoots: config.extraWritableRoots,
           networkAccess: () => readConfig().config.networkAccess,
+          networkAllowlist: () => readConfig().config.networkAllowlist,
+          ...(account === undefined ? {} : { account }),
           onDetail: (message) => {
             if (!disposed) ctx.transcript.system(`沙箱：${message}`)
           },
         })
         offRunner = registerCommandRunner(handle.runner)
         offWinDispose = handle.dispose
-        // 如实上报：写越界已是系统层强制，但硬链接别名/读不受限是结构性缺口，
-        // 网络强制要第二级提权 setup——整体仍按 partial 报，缺口在 backendDetail 里说透
-        enforcement = 'partial'
-        backendDetail = `Windows 受限令牌：命令内部越界写被系统层拦截（${handle.describe()}）`
+        // 如实上报：账号分支在位 = FS 与网络双层锁死（full）；只有受限令牌时
+        // 硬链接别名/读不受限是结构性缺口，网络只有软墙（partial），缺口在 detail 说透
+        enforcement = handle.networkEnforced ? 'full' : 'partial'
+        backendDetail = account === undefined
+          ? `Windows 受限令牌：命令内部越界写被系统层拦截（${handle.describe()}）`
+          : `Windows 受限令牌 + 专用账号（${account.name}）：越界写与越界出网都被系统层拦截（${handle.describe()}）`
         ctx.emit('dsc/changed')
         return backendDetail
       }
@@ -373,6 +389,24 @@ export const sandboxPlugin: Plugin.Object = {
       return `${head}${tail}${warn}`
     }
 
+    /** 跑一次网络第二级体检（不抛：任何异常都变成明细里的一条）。 */
+    const refreshNetworkTier = async (): Promise<void> => {
+      if (process.platform !== 'win32') {
+        networkTier = 'partial'
+        networkTierDetail = '非 Windows 平台：网络第二级不适用'
+        ctx.emit('dsc/changed')
+        return
+      }
+      try {
+        const result = await doctorWindowsNetwork(DSC_HOME)
+        networkTier = result.tier
+        networkTierDetail = result.details.join('；')
+      } catch (error) {
+        networkTierDetail = `体检失败：${error instanceof Error ? error.message : String(error)}`
+      }
+      ctx.emit('dsc/changed')
+    }
+
     // ── 设置分区 ─────────────────────────────────────────────────────────────
 
     /** `/sandbox` 与设置页共用的一份现状文本。 */
@@ -386,7 +420,8 @@ export const sandboxPlugin: Plugin.Object = {
       for (const root of policy.roots) lines.push(`  ${root}`)
       lines.push(`只读子路径（${String(policy.readOnlySubpaths.length)}）：${policy.readOnlySubpaths.length === 0 ? '无' : ''}`)
       for (const sub of policy.readOnlySubpaths) lines.push(`  ${sub}`)
-      lines.push(`网络：${config.networkAccess ? '开' : '关'}｜沙箱私有临时目录：${policy.tmpDir}`)
+      lines.push(`网络：${config.networkAccess ? '开' : '关'}｜出网白名单 ${String(config.networkAllowlist.length)} 项｜沙箱私有临时目录：${policy.tmpDir}`)
+      if (process.platform === 'win32') lines.push(`网络第二级：${networkTier} —— ${networkTierDetail}`)
       lines.push('最近 3 次拒绝：')
       if (denials.length === 0) lines.push('  （还没有）')
       for (const one of denials) lines.push(`  [${clockOf(one.at)}] ${one.tool} · ${one.rule} —— ${one.why}`)
@@ -483,6 +518,25 @@ export const sandboxPlugin: Plugin.Object = {
             help: '按上面的后端选项现探一次：容器可不可用、降级到哪一档，结果就在按钮下面那句提示里。',
           },
         ]
+        if (process.platform === 'win32') {
+          list.push(
+            { type: 'info', label: '网络第二级（提权布防）', text: `${networkTier} —— ${networkTierDetail}` },
+            {
+              type: 'button',
+              action: 'setup',
+              label: '提权安装网络管控（UAC 一次）',
+              style: 'ghost',
+              help: '创建专用离线账号、按账号 SID 出网阻断（防火墙 5 规则 + WFP 12 条持久 filter）、密码 DPAPI 落盘；账号先禁用、布防全部成功才解禁。需要你在 UAC 弹窗点一次允许。',
+            },
+            {
+              type: 'button',
+              action: 'doctor',
+              label: '体检网络第二级',
+              style: 'ghost',
+              help: '逐项核对：FFI、状态文件、账号、密码可解、防火墙规则、WFP 子层；全绿即 full。',
+            },
+          )
+        }
         if (problems.length > 0) {
           list.push({
             type: 'info',
@@ -551,8 +605,19 @@ export const sandboxPlugin: Plugin.Object = {
         ctx.emit('dsc/changed')
       },
       async action(name): Promise<string | void> {
-        if (name !== 'probe') return `这个分区没有这个按钮：${name}`
-        return await refreshBackend()
+        if (name === 'probe') return await refreshBackend()
+        if (name === 'doctor') {
+          await refreshNetworkTier()
+          return `网络第二级：${networkTier} —— ${networkTierDetail}`
+        }
+        if (name === 'setup') {
+          if (process.platform !== 'win32') return '网络第二级只适用于 Windows'
+          const result = await runSetupElevated(DSC_HOME)
+          await refreshNetworkTier()
+          const verdict = result.ok ? '提权 setup 完成' : '提权 setup 未完成'
+          return `${verdict}：${result.detail}｜体检：${networkTier} —— ${networkTierDetail}`
+        }
+        return `这个分区没有这个按钮：${name}`
       },
     }
     const offSection = ctx.settings.registerSection(section)
@@ -615,6 +680,8 @@ export const sandboxPlugin: Plugin.Object = {
       .catch((error: unknown) => {
         if (!disposed) ctx.transcript.system(`沙箱后端探测失败（照常执行 + 审批卡兜底）：${errText(error)}`)
       })
+    // 网络第二级体检（异步，结论进设置页与 /sandbox；不写会话流，避免挂载信息过载）
+    void refreshNetworkTier()
 
     return () => {
       disposed = true

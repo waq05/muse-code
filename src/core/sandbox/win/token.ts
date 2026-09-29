@@ -152,6 +152,12 @@ export interface RestrictedTokenInput {
   mode: 'read-only' | 'workspace-write'
   /** 可写根（工作区/附加根/私用临时目录）的能力 SID 串；read-only 模式给空数组。 */
   rootSids: readonly string[]
+  /**
+   * 基底令牌（网络第二级账号分支用）：runner 已经 LogonUserW 拿到的专用账号令牌。
+   * 给了它就不再开「当前进程令牌」，受限化在账号令牌上做——pass-1 用账号的
+   * 普通权限（工作区靠账号 ACE），pass-2 照旧走能力 SID 交集。收尾时会连它一起关。
+   */
+  accountToken?: number
 }
 
 export interface RestrictedToken {
@@ -166,14 +172,21 @@ export interface RestrictedToken {
  * 调用方（runner）绝不回落成「未受限 spawn」。
  */
 export function buildRestrictedToken(bound: BoundWin32, input: RestrictedTokenInput): RestrictedToken {
-  // 1. 开自己进程的令牌（koffi 拿不到伪句柄地址，老实 OpenProcess）
-  const processHandle = Number(bound.openProcess(PROCESS_QUERY_INFORMATION, 0, process.pid))
-  if (processHandle === 0) throwLastError(bound, 'OpenProcess')
-  const tokenSlot = slotUintPtr(bound)
-  if (Number(bound.openProcessToken(processHandle, TOKEN_ACCESS, tokenSlot.slot)) === 0) {
-    throwLastError(bound, 'OpenProcessToken')
+  // 1. 基底令牌：账号分支用 LogonUserW 拿到的令牌；默认分支开自己进程的令牌
+  //   （koffi 拿不到伪句柄地址，老实 OpenProcess）
+  let processHandle = 0
+  let token: number
+  if (input.accountToken !== undefined) {
+    token = input.accountToken
+  } else {
+    processHandle = Number(bound.openProcess(PROCESS_QUERY_INFORMATION, 0, process.pid))
+    if (processHandle === 0) throwLastError(bound, 'OpenProcess')
+    const tokenSlot = slotUintPtr(bound)
+    if (Number(bound.openProcessToken(processHandle, TOKEN_ACCESS, tokenSlot.slot)) === 0) {
+      throwLastError(bound, 'OpenProcessToken')
+    }
+    token = tokenSlot.get()
   }
-  const token = tokenSlot.get()
 
   // 2. 保活组与能力组（顺序照 dsh：保活组在前）
   const logon = logonSidBuffer(bound, token)
@@ -212,7 +225,9 @@ export function buildRestrictedToken(bound: BoundWin32, input: RestrictedTokenIn
     dispose(): void {
       try { bound.closeHandle(restricted) } catch { /* 收尾失败不遮真实结果 */ }
       try { bound.closeHandle(token) } catch { /* 同上 */ }
-      try { bound.closeHandle(processHandle) } catch { /* 同上 */ }
+      if (processHandle !== 0) {
+        try { bound.closeHandle(processHandle) } catch { /* 同上（账号分支没开进程句柄，跳过） */ }
+      }
     },
   }
 }

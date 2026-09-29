@@ -34,6 +34,8 @@ import {
   JOBOBJECT_EXTENDED_LIMIT_SIZE,
   JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
   JobObjectExtendedLimitInformation,
+  LOGON32_LOGON_INTERACTIVE,
+  LOGON32_PROVIDER_DEFAULT,
   PI_OFFSETS,
   PROCESS_INFORMATION_SIZE,
   SI_OFFSETS,
@@ -57,6 +59,8 @@ import {
 } from './ffi.js'
 import { buildRestrictedToken, type RestrictedToken } from './token.js'
 import { verifySidForPath } from './workspace-sid.js'
+import { accountBlobPath, unprotectSecret } from './account.js'
+import { readFileSync } from 'node:fs'
 
 /** runner 自身失败签名（宿主诊断认这一行）。 */
 export const RUNNER_SIGNATURE = 'dsc-sandbox-run: '
@@ -76,6 +80,11 @@ export interface RunnerArgs {
   tempDir: string
   /** 授权过的可写根：SID ↔ 路径成对（temp 自己也在里面）。 */
   roots: ReadonlyArray<{ sid: string; path: string }>
+  /**
+   * 网络第二级账号分支（可选）：`--account <名> --dsc-home <目录>` 成对给。
+   * 给了就以专用离线账号跑命令：解密 account.bin → LogonUserW → 受限化账号令牌。
+   */
+  account?: { name: string; dscHome: string }
   /** `--` 之后的受限命令 argv。 */
   childArgv: readonly string[]
 }
@@ -84,6 +93,8 @@ export interface RunnerArgs {
 export function parseRunnerArgs(argv: readonly string[]): RunnerArgs {
   let mode: RunnerArgs['mode'] | undefined
   let tempDir: string | undefined
+  let account: { name: string; dscHome: string } | undefined
+  let dscHome: string | undefined
   const roots: Array<{ sid: string; path: string }> = []
 
   const separator = argv.indexOf('--')
@@ -122,12 +133,33 @@ export function parseRunnerArgs(argv: readonly string[]): RunnerArgs {
       roots.push({ sid, path })
       continue
     }
+    if (flag === '--account') {
+      const value = flags[++index]
+      if (value === undefined || value === '') throw new Error('--account 需要一个账号名')
+      if (account !== undefined) throw new Error('--account 给重复了')
+      account = { name: value, dscHome: '' }
+      continue
+    }
+    if (flag === '--dsc-home') {
+      const value = flags[++index]
+      if (value === undefined || value === '') throw new Error('--dsc-home 需要一个目录')
+      if (dscHome !== undefined) throw new Error('--dsc-home 给重复了')
+      dscHome = value
+      continue
+    }
     throw new Error(`不认识的 runner 参数：「${flag}」`)
   }
   if (mode === undefined) throw new Error('缺少 --mode')
   if (tempDir === undefined) throw new Error('缺少 --temp')
   if (mode === 'workspace-write' && roots.length === 0) {
     throw new Error('workspace-write 模式至少要有一个 --root（可写根）')
+  }
+  // 账号分支成对校验：只给 --account 不给 --dsc-home（或反过来）都找不到密码文件，必拦
+  if (account !== undefined || dscHome !== undefined) {
+    if (account === undefined || dscHome === undefined) {
+      throw new Error('--account 与 --dsc-home 必须成对给（密码文件按 <dsc-home>/sandbox/account.bin 定位）')
+    }
+    account = { name: account.name, dscHome }
   }
 
   // SID ↔ 路径逐对复算：调用方把 SID 拼错就等于凭空多一个可写根（受限令牌的
@@ -154,7 +186,9 @@ export function parseRunnerArgs(argv: readonly string[]): RunnerArgs {
     if (seen.has(key)) throw new Error(`--root 给重复了：「${root.path}」`)
     seen.add(key)
   }
-  return { mode, tempDir, roots, childArgv }
+  // ⚠ account 必须出现在返回值里：漏了它的话账号分支会被「静默跳过」——
+  // 命令照常以当前用户受限令牌跑、退出码一切正常，网络第二级等于悄悄失效
+  return { mode, tempDir, roots, ...(account === undefined ? {} : { account }), childArgv }
 }
 
 /** 路径等价判定：大小写不敏感、末尾分隔符不算数（Windows 口径）。 */
@@ -255,6 +289,29 @@ async function drainPipe(bound: BoundWin32, handle: number, sink: NodeJS.WriteSt
 }
 
 /** 入口：参数 → 环境 → 令牌 → 管道 → 挂起 spawn → 作业 → 放行 → 排水 → 等待 → 镜像退出码。 */
+/**
+ * 账号分支：解密 DPAPI 密码 → LogonUserW 拿专用离线账号的主令牌。
+ *
+ * 密码文件在 `<dsc-home>/sandbox/account.bin`（提权 setup 落盘的 DPAPI CurrentUser blob，
+ * 同用户可解）。失败照 runner 语义抛（`dsc-sandbox-run: …` + 127）——绝不回落成当前用户。
+ */
+function logonAccount(bound: BoundWin32, account: { name: string; dscHome: string }): number {
+  const blob = readFileSync(accountBlobPath(account.dscHome))
+  const password = unprotectSecret(bound, blob)
+  const slot = slotUintPtr(bound)
+  if (Number(bound.logonUserW(
+    utf16Buffer(account.name),
+    utf16Buffer('.'),
+    utf16Buffer(password),
+    LOGON32_LOGON_INTERACTIVE,
+    LOGON32_PROVIDER_DEFAULT,
+    slot.slot,
+  )) === 0) {
+    throwLastError(bound, 'LogonUserW')
+  }
+  return slot.get()
+}
+
 async function main(): Promise<number> {
   const args = parseRunnerArgs(process.argv.slice(2))
   const ffi = loadFfi()
@@ -272,10 +329,14 @@ async function main(): Promise<number> {
     throwLastError(bound, 'SetEnvironmentVariableW(TEMP)')
   }
 
-  // 令牌：restricting 列表 = [logon, Everyone, …可写根 SID]（temp 的 SID 也在 roots 里）
+  // 令牌：restricting 列表 = [logon, Everyone, …可写根 SID]（temp 的 SID 也在 roots 里）。
+  // 账号分支（--account）：解密 account.bin → LogonUserW → 在账号令牌上受限化——
+  // pass-1 用账号的普通权限（可写根靠账号 ACE），pass-2 照旧走能力 SID 交集
+  const accountToken = args.account === undefined ? undefined : logonAccount(bound, args.account)
   const token: RestrictedToken = buildRestrictedToken(bound, {
     mode: args.mode,
     rootSids: args.roots.map((root) => root.sid),
+    ...(accountToken === undefined ? {} : { accountToken }),
   })
 
   // 三对匿名管道；只给子进程端打继承位（父端要立刻关掉，否则排水永远等不到 EOF）

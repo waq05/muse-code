@@ -42,6 +42,8 @@ import {
   EXPLICIT_ACCESS_SIZE,
   FILE_ATTRIBUTE_NORMAL,
   FILE_DELETE_CHILD,
+  FILE_GENERIC_EXECUTE,
+  FILE_GENERIC_READ,
   FILE_SHARE_READ,
   FILE_SHARE_WRITE,
   GENERIC_READ,
@@ -323,6 +325,57 @@ export function grantWrite(bound: BoundWin32, path: string, sid: string, lockDir
           /* 描述符释放失败不该遮住真实结果：进程退出时内核兜底 */
         }
       }
+    }
+  })
+}
+
+/**
+ * 给目录补「账号 SID 的读写执行 Allow ACE」（网络第二级账号分支专用）。
+ *
+ * 为什么要它：专用离线账号没有当前用户的权限，工作区里它连**读**都不行——
+ * pass-1（普通 SID 检查）就过不去，命令在仓库里什么都干不了。假能力 SID 的
+ * 三件套只解决 pass-2（写受限交集），pass-1 得靠这条 ACE 补上。
+ *
+ * 掩码 = 读 + 执行 + GRANT_MASK（写/删），仍刻意不含 WRITE_DAC/WRITE_OWNER；
+ * 幂等口径与三件套一致（精确命中即跳过整树重传播）。
+ */
+export function grantAccountAccess(bound: BoundWin32, path: string, accountSid: string, lockDir: string): GrantOutcome {
+  const capability = sidStringToBuffer(bound, accountSid)
+  const name = utf16Buffer(path)
+  const accountMask = (FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | GRANT_MASK) >>> 0
+  return withPathLock(bound, lockDir, path, () => {
+    const ownerSlot = slotUintPtr(bound)
+    const groupSlot = slotUintPtr(bound)
+    const daclSlot = slotUintPtr(bound)
+    const saclSlot = slotUintPtr(bound)
+    const sdSlot = slotUintPtr(bound)
+    const readCode = Number(bound.getNamedSecurityInfoW(
+      name, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+      ownerSlot.slot, groupSlot.slot, daclSlot.slot, saclSlot.slot, sdSlot.slot,
+    ))
+    if (readCode !== 0) throwWin32(bound, 'GetNamedSecurityInfoW(账号授权)', readCode)
+    try {
+      const daclPointer = daclSlot.get()
+      const already = walkAces(readAclBytes(bound, daclPointer) ?? new Uint8Array()).some((ace) =>
+        ace.type === ACCESS_ALLOWED_ACE_TYPE &&
+        ace.flags === (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) &&
+        ace.mask === accountMask && sameSid(ace.sid, capability))
+      if (already) return { applied: false, detail: '账号 ACE 已在（幂等跳过）' }
+
+      const entry = packExplicitAccessSid(bound, {
+        mask: accountMask, mode: GRANT_ACCESS, inheritance: OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE, sid: capability,
+      })
+      const newDaclSlot = slotUintPtr(bound)
+      const code = Number(bound.setEntriesInAclW(1, entry, daclPointer, newDaclSlot.slot))
+      if (code !== 0) throwWin32(bound, 'SetEntriesInAclW(账号授权)', code)
+      const writeCode = Number(bound.setNamedSecurityInfoW(
+        name, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+        0, 0, newDaclSlot.get(), 0,
+      ))
+      if (writeCode !== 0) throwWin32(bound, 'SetNamedSecurityInfoW(账号授权)', writeCode)
+      return { applied: true, detail: '已补账号读写执行 ACE' }
+    } finally {
+      try { bound.localFree(sdSlot.get()) } catch { /* 描述符为空时忽略 */ }
     }
   })
 }

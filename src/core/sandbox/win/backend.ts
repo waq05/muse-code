@@ -26,9 +26,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DSC_HOME } from '../../path-policy.js'
 import type { CommandRunner, SpawnPlan } from '../../tools/command-runner.js'
-import { grantWrite, revokeWrite, type GrantOutcome } from './acl.js'
+import { grantAccountAccess, grantWrite, revokeWrite, type GrantOutcome } from './acl.js'
 import { type BoundWin32, bindAll, tryLoadFfi } from './ffi.js'
 import { rootWriteSid, tempWriteSid } from './workspace-sid.js'
+import { createNetProxy, proxyEnvVars, type NetProxy } from '../net-proxy.js'
 
 /** 执行器 id（宿主诊断与 `enforcement` 上报用这个键）。 */
 export const WINDOWS_TOKEN_RUNNER_ID = 'sandbox-windows-token'
@@ -90,6 +91,20 @@ export interface WindowsTokenRunnerOptions {
   extraRoots?: readonly string[]
   /** 网络开关（每次都现取，改设置立即生效）。 */
   networkAccess: () => boolean
+  /**
+   * 网络第二级账号分支（可选，来自 setup 状态文件）：给了它，runner 以专用离线
+   * 账号跑命令（LogonUserW + 受限化账号令牌），可写根补账号读写执行 ACE；
+   * 网络开关开时起本地白名单代理并把子进程指向它（WFP 已按账号 SID 堵死其余出口）。
+   */
+  account?: {
+    readonly name: string
+    readonly sid: string
+    readonly dscHome: string
+    /** 代理监听端口（与 setup 防火墙放行的端口一致，默认 3128）。 */
+    readonly proxyPort: number
+  }
+  /** 出网白名单现取值（代理用；账号分支且开网时生效）。 */
+  networkAllowlist?: () => readonly string[]
   /** 降级与回收失败的一句话，交给插件报给用户。 */
   onDetail?: (message: string) => void
 }
@@ -101,6 +116,11 @@ export interface WindowsTokenRunnerHandle {
   dispose(): void
   /** 给用户看的一句话：强制了什么、哪些不管。 */
   describe(): string
+  /**
+   * 网络第二级是否已随本执行器生效（账号分支在位）：插件据此把 enforcement
+   * 报成 full（FS 由账号 ACL + 交集双重锁死，网络由 WFP + 白名单代理锁死）。
+   */
+  readonly networkEnforced: boolean
 }
 
 /** 一条目录 ↔ 能力 SID 的配对。 */
@@ -144,6 +164,8 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
   let bound: BoundWin32 | null = null
   let authorized = false
   let degraded = false
+  /** 本地白名单代理（账号分支且开网时惰性起，dispose 时收）。 */
+  let proxy: NetProxy | null = null
 
   /** 惰性物化授权：true = 可以换执行体，false = 已降级（此后 plan 一律返回 null）。 */
   const ensureAuthorized = (): boolean => {
@@ -168,6 +190,13 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
           throw new Error(`给可写根「${root.path}」（能力 SID ${root.sid}）打 ACL 失败：${describeError(error)}`)
         }
       }
+      // 账号分支：每个可写根再补一条「账号 SID 读写执行」ACE——专用账号没有当前
+      // 用户的权限，pass-1（普通 SID 检查）靠它才过得去；pass-2 仍走上面的能力 SID
+      if (options.account !== undefined) {
+        for (const root of roots) {
+          grants.set(`${root.path}#account`, grantAccountAccess(boundNow, root.path, options.account.sid, LOCK_DIR))
+        }
+      }
       authorized = true
       return true
     } catch (error) {
@@ -177,21 +206,51 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
     }
   }
 
+  /**
+   * 账号分支的网络出口：起本地白名单代理并返回要注入的环境变量。
+   * 代理起不来时返回 null（调用方回落软墙）——此时 WFP 把账号的一切出口堵死，
+   * 子进程等于离线，这是 fail-closed 的正确姿态，绝不静默放开。
+   */
+  const ensureProxy = async (): Promise<Record<string, string> | null> => {
+    if (proxy !== null) return proxyEnvVars(proxy.url)
+    if (options.account === undefined) return null
+    try {
+      proxy = await createNetProxy({
+        port: options.account.proxyPort,
+        online: () => options.networkAccess(),
+        allowlist: () => options.networkAllowlist?.() ?? [],
+      })
+      options.onDetail?.(`出网白名单代理已起：${proxy.url}（账号的其余出口已被 WFP 堵死）`)
+      return proxyEnvVars(proxy.url)
+    } catch (error) {
+      options.onDetail?.(`白名单代理起不来（账号出网将被 WFP 全拦，子进程等于离线）：${describeError(error)}`)
+      return null
+    }
+  }
+
   const runner: CommandRunner = {
     id: WINDOWS_TOKEN_RUNNER_ID,
     order: RUNNER_ORDER,
-    plan(run, current): SpawnPlan | null {
+    async plan(run, current): Promise<SpawnPlan | null> {
       if (!ensureAuthorized()) return null
       // 已经是本后端换过的计划（别人套第二次）：不套两层
       if (current.file === process.execPath && current.args[0] === entry) return null
 
-      // 网络关时叠一级软墙：不改调用方给的 env 对象，改复制品
-      const env = options.networkAccess() ? current.env : { ...current.env, ...OFFLINE_ENV }
+      // 网络：账号分支开网走白名单代理（WFP 只给账号留了回环代理口），关网或
+      // 没有账号分支时叠一级软墙；不改调用方给的 env 对象，改复制品
+      let env = current.env
+      const netOn = options.networkAccess()
+      if (options.account !== undefined) {
+        env = { ...env, ...(netOn ? (await ensureProxy()) ?? OFFLINE_ENV : OFFLINE_ENV) }
+      } else if (!netOn) {
+        env = { ...env, ...OFFLINE_ENV }
+      }
       const args = [
         entry,
         '--mode', options.mode,
         '--temp', options.tmpDir,
         ...roots.flatMap((root) => ['--root', `${root.sid}=${root.path}`]),
+        ...(options.account === undefined ? [] : ['--account', options.account.name, '--dsc-home', options.account.dscHome]),
         '--',
         current.file,
         ...current.args,
@@ -204,6 +263,9 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
   return {
     runner,
     dispose(): void {
+      // 代理先收（在途连接断掉，端口让出来）
+      proxy?.close()
+      proxy = null
       // 临时目录是会话级授权：回收能力 ACE。工作区与附加根是常驻授权，不回收。
       // 这里是尽力而为——回收失败只记一句，绝不影响会话结果（残留的假 SID ACE 惰性无害，
       // 没有任何真实账号持有它）
@@ -215,13 +277,20 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
       }
     },
     describe(): string {
+      const net = options.account !== undefined
+        ? '网络：账号分支在位——出网只过白名单代理，其余出口被 WFP 按账号 SID 堵死'
+        : '网络真管控要第二级提权 setup（本层只在断网时叠代理环境变量软墙）'
       if (roots.length === 0) {
         return '文件系统写：read-only 档，令牌不含能力 SID，任何目录都写不了；未对工作区做任何 ACL 改动；读与进程可见性不受限'
       }
       const list = roots.map((root) => root.path).join('、')
+      const readGap = options.account !== undefined
+        ? '读与进程可见性被账号权限限死（账号只有可写根内的读执行）'
+        : '读与进程可见性一概不受限'
       return `文件系统写：只允许写 ${list}（ACL 能力 SID + WRITE_RESTRICTED 交集检查，` +
         `命令在受限令牌的 runner 子进程里跑）；已知缺口：硬链接别名可指到写根外仍能写、` +
-        `读与进程可见性一概不受限、网络真管控要第二级提权 setup（本层只叠代理环境变量软墙）`
+        `${readGap}；${net}`
     },
+    networkEnforced: options.account !== undefined,
   }
 }

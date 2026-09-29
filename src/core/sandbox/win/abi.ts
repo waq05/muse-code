@@ -48,6 +48,10 @@ export const WRITE_DAC = 0x00040000
 export const WRITE_OWNER = 0x00080000
 /** FILE_GENERIC_WRITE（SYNCHRONIZE|READ_CONTROL|append|write_data|write_attr|write_ea）。 */
 export const FILE_GENERIC_WRITE = 0x120116
+/** FILE_GENERIC_READ（SYNCHRONIZE|READ_CONTROL|read_data|read_attr|read_ea）。 */
+export const FILE_GENERIC_READ = 0x120089
+/** FILE_GENERIC_EXECUTE（SYNCHRONIZE|READ_CONTROL|execute|read_attr|read_ea... 掩码 0x1200A0）。 */
+export const FILE_GENERIC_EXECUTE = 0x1200a0
 /** 目录上的「删除子项」位。 */
 export const FILE_DELETE_CHILD = 0x00000040
 /** STANDARD_RIGHTS_WRITE = READ_CONTROL。 */
@@ -164,6 +168,13 @@ export const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 /** JOBOBJECT_EXTENDED_LIMIT_INFORMATION 在 x64 上 144 字节，LimitFlags 在 16。 */
 export const JOBOBJECT_EXTENDED_LIMIT_SIZE = 144
 export const JOBOBJ_LIMIT_FLAGS_OFFSET = 16
+
+// ── 账号登录（网络第二级：runner 以专用离线账号跑命令）────────────────────────
+
+/** LogonUserW 的登录类型：交互式。 */
+export const LOGON32_LOGON_INTERACTIVE = 2
+/** LogonUserW 的提供者：默认。 */
+export const LOGON32_PROVIDER_DEFAULT = 0
 
 // ── 等待与错误 ──────────────────────────────────────────────────────────────
 
