@@ -97,8 +97,9 @@ jsonl 本体**。
 - 设置分区：插件调 `ctx.settings.defineSection()` 注册一个分区，控件只有
   `text`/`number`/`select`/`switch`/`info`/`button` 六种（`src/contract.ts:261-267`），
   样式由桌面端统一决定，插件**拿不到 DOM**；
-- 值存 `settings.json` 的 `pluginConfig[插件 file][key]`，不塞进插件条目树的 `config`
-  里（那个 `config` 是给内核装配看的）。
+- 值存 `plugins.json` 条目里的 `config`（`writePluginConfig`），不塞进插件条目树的 `config`
+  之外的第二份状态文件里（这条最初写的是 `settings.json` 的 `pluginConfig`，后来统一到
+  `plugins.json` 那份：装配时喂给 `apply()` 的和设置分区写回的是同一个地方，少一条通路）。
 
 ## 阶段 6：插件中心分三档
 
@@ -164,6 +165,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | --- | --- |
 | `node shots/team-check.mjs` | 角色文件、任务板、队友日志隔离、插件登记与配置、桌面护栏、旧截图裁剪、内核装配、侧栏清单与只读查看（98 条） |
 | `node shots/storage-check.mjs` | 会话存储与会话库操作 |
+| `node shots/llm-retry-check.mjs` | LLM 重试（连接失败与 429 会重试，400 与已取消不重试）与版本号读取（10 条） |
 | `node shots/order-check.mjs` | 侧栏工作区块排序落盘 |
 | `node scripts/composer-test.mjs` | TUI 输入候选面板 |
 | `node shots/seed-peek-home.mjs <目录>` | 给「队友只读查看」这张截图铺临时 HOME |
@@ -191,17 +193,25 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 「启用」算）、把 `toggleable` / `enabled` 猜成了 `canToggle` / `disabled`、以为
 `createKernel()` 返回的对象带 `dispose()`（它返回的是 cordis `Context`，没有这个方法）。
 
-### 复核出来的两处「注释这么说，代码不是这么做」
+### 复核出来的三处「注释这么说，代码不是这么做」
 
-这轮写文档时逐行核对发现的，两处都还没修，先记在这里：
+这轮写文档时逐行核对发现的。台账保留原始观察，只在每条后面补上现在的状态：
 
 1. **压缩后的会话重新打开会变长**。压缩在内存里把历史换成「一条摘要 + 最近 20 条」
    （`src/core/compact.ts:70-71`），但重新加载时 `Session.load` 碰到 `summary` 记录只是再
    push 一条 user 消息，前面那批原始记录一条都没丢（`src/core/session.ts:120-122`）。
-   `src/core/compact.ts:7` 写的「重放时等价折叠」目前没有对应实现。
-2. **网络错误不会重试**。`src/core/llm.ts:8` 的文件头注释说连接失败也重试，实际可重试条件
-   要求错误带 HTTP 状态码且是 429 或 5xx（`src/core/llm.ts:99-103`）；fetch 抛出的网络异常
-   造出的 `LlmError` 不带 status（`src/core/llm.ts:135-137`），因此直接上抛。
+   `src/core/compact.ts` 文件头写的「重放时等价折叠」当时没有对应实现。
+   **已修（阶段 11）**：`summary` 记录加 `keep` 字段记「尾部保留了几条」，重放时按它接回。
+2. **网络错误不会重试**。`src/core/llm.ts` 的文件头注释说连接失败也重试，实际可重试条件
+   要求错误带 HTTP 状态码且是 429 或 5xx；fetch 抛出的网络异常造出的 `LlmError` 不带
+   status，因此直接上抛。
+   **已修**：`LlmError` 增加 `retryable` 标记，连接失败（此时一个字节都没收到，重发安全）
+   与 429 / 5xx 一起进退避重试；流已开始、或用户已取消，都不重试。
+   回归见 `node shots/llm-retry-check.mjs`。
+3. **设置「关于」里的版本号恒为 `0.0.0`**。`version.ts` 上溯 `package.json` 时按
+   `name === 'dsc-tui'` 认包，而包已经改名 `muse-code`（打包时 [prepare-runtime.mjs](../desktop/scripts/prepare-runtime.mjs)
+   把这份清单原样拷进 `dsc-core/`），于是永远匹配不上，上溯到盘根返回 `'0.0.0'`。
+   **已修**：包名收进 `PACKAGE_NAMES = ['muse-code', 'dsc-tui']`，旧名留着兼容。
 
 ### 环境坑
 
@@ -210,6 +220,43 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
   清掉这个变量。
 - **PowerShell 的 `Start-Process` 没有 `-Timeout`**。等进程要么 `-Wait`，要么
   `Start-Process -PassThru` + `Wait-Process -Timeout`。
+
+## 阶段 10：功能点封装
+
+这轮不改行为，只改「谁认识谁」。起因是一份只读体检：功能点之间互相点名，加一个新模式或
+新卡片要回头改内核循环、改快照装配、改协议白名单，桌面端还自己抄了一份权限档位与模式档位
+的文案。六刀切下去之后，四类新增功能各自只改自己那个插件。
+
+| 刀 | 切之前 | 切之后 |
+| --- | --- | --- |
+| 声明出来的注入 | 6 个插件用 `ctx.get('mode')` 这类运行期取名，还有两个服务（compact、ui）压根没进 `Context` | 全部改成 `inject` 声明；`ctx.get` 只留给可能整个没挂的 `team`，`shots/modes-security-check.mjs` 有一条扫描脚本守这条 |
+| 工具守卫链 | 循环按名字认识审批、模式闸门、遮红三个槽；审批卡反过来查当前模式（`mode` 已依赖 `approval`，反向就是环） | `ctx.guards.register()`：模式 10、审批 30，循环只问一条链；换档改由 `dsc/mode-changed` 事件通知 |
+| 任务面拆开 | `plugins/tasks.ts` 一个 470 行插件管清单、计划、提问、目标，谁要用都得注入它 | 四个插件（`todo`/`plan`/`ask`/`goal`）各管一张卡片，服务也拆成四个 |
+| 快照片段注册表 | `transcript` 装配快照时点名读模式、清单、计划、目标、提问五块 | 各功能点自己 `ctx.surfaces.register(id, 取值)`，装配层只问注册表 |
+| 状态记录统一 | 会话日志里四种记录（`mode`/`todo`/`plan`/`goal`）各写各的，`Session` 上四对读写方法 | 统一成 `{type:'state', id, payload}` 一对（`appendState` / `state(id)`），老记录继续读得回来 |
+| 旋钮进配置 | 审批超时、提问数上限、目标默认轮次、说明书预算、快照节流间隔写死在代码里 | 五处都改读各自插件的配置，并带上下限夹取；压缩保留条数与自动压缩触发线随后也挪了出来 |
+
+顺手补的两处漏：`host-stdio.ts` 那份手写方法清单改成从 `keyof DscRuntime` 推（漏一个方法名
+编译就报错，不再是运行期回一句「协议不允许调用」），桌面端 `RuntimeProxy` 同理改成映射类型。
+
+`KERNEL_API_VERSION` 升到 **4**，因为多出了三个能被外部插件使用的扩展点（守卫链、快照片段、
+等人登记）。
+
+### 10.1 补刀：配置改完不必重启，两处旋钮进了界面
+
+配置读法有个坑：内核挂载时把 `getPluginConfig('goal')` 当第二参数传进去，插件里写成
+`passed ?? getPluginConfig(...)`，于是永远拿到挂载那一刻那份——设置分区保存了新值，
+正在跑的插件却看不见（`subagent`、`computer-use` 的分区也一样中招）。现在统一走
+`resolvePluginConfig(file, passed)`（`src/core/plugin-registry.ts:165`）：装配那份作底，
+磁盘那份覆盖它，插件每次用值时现调，改完立刻生效。`compact` 与 `goal` 的两个数值各自
+注册成设置分区（`src/plugins/compact.ts:140`、`src/plugins/goal.ts:259`），并在内核清单里声明
+`settingsSection`（`src/host/kernel.ts:112`、`:117`），于是它们出现在插件中心那两条「运行内核」
+详情的配置区里——设置面板按既定分工只列内核自己的六个分区，不收插件贡献的分区。
+`GoalStore` 的缺省轮次改成取值函数（`src/core/goal.ts:35`），新建的目标马上用新上限。
+
+审批卡的等待时限没做成分区：设置插件要用审批（「通用」分区里那个权限模式下拉框读写它的
+档位），审批再反过来注入设置就是环，两个方向都等对方挂载会挂不起来。这一项留在手写配置里，
+每次弹卡现读，改文件后下一张卡生效。
 
 ## 决策台账
 
@@ -225,6 +272,12 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | 示例插件**保留并改名** `computer_demo` | 删了就没人手写插件的参照；改名避免和内置插件撞 file 键 |
 | 写/执行类**不留持久授权** | 对齐 one-shot 语义。个人机器上「上次同意过」不该等于永久同意 |
 | 归档状态放 sidecar 不进 jsonl | jsonl 保持纯追加，重放逻辑不被界面状态污染 |
+| 守卫自己抛错按「拒」处理 | 安全链上「算不出来」不能等于放行；原因原样回给模型比偷偷放过好收拾 |
+| `ctx.get` 只允许用于可能没挂的插件（目前只有 `team`） | 运行期取名会把「用了谁」藏起来，漏声明就是运行期炸一次；扫描脚本守住这条 |
+| 界面快照里各功能点那块状态由各功能点自己登记（`surfaces`），不塞进 `status` 行 | `status` 只放跨功能点都认的几样（会话、模型、档位、回合状态）；加一块卡片不必回头改装配层 |
+| 提示词段次用固定刻度（0/10/20/30/60/200/210/890/900），工具清单不随模式变 | 模型提供方的提示词缓存要求前缀稳定；模式只改「模式条款」那一段 |
+| 插件取值走 `resolvePluginConfig`（磁盘那份覆盖装配那份） | 设置分区写的是磁盘：只在挂载时读一次的插件，改了数值要么重启宿主要么重挂插件；每次用值时现读，界面和文件说的就是同一句话 |
+| 旋钮的分区由那个功能点自己注册，做不到就不做 | 让设置插件替审批写配置等于界面层跨功能点写别人的值；审批注入设置又和现有的 `settings → approval` 成环，两头互相等会挂不起来，于是审批的等待时限只走手写配置（每次弹卡现读） |
 
 ## 欠账
 
@@ -243,3 +296,32 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 - Windows 中文输入法可能吃掉审批卡的 y/n；
 - 队友的运行记录不进会话列表，也没有搜索入口，只能从侧栏「队友」档点进去；
 - 电脑操作只在 Windows 上可用（PowerShell + Win32）。
+
+## 阶段 11：压缩重放、灾难地板与六个新插件
+
+这一轮落地了两件事：压缩子系统（修重放 bug + 借 hermes 的 lean 压缩提质），以及六个新的官方可开关插件——`approval-floor`（审批灾难地板）、`spill`（大输出溢出）、`session-search`（会话全文检索）、`lifecycle-hooks`（codex 十二事件钩子）、`mcp`（MCP 客户端）、`tool-search`（工具渐进披露）。前三个默认开，后三个默认关。配套新增了各自的自检脚本，另加一份起真内核跑两遍装配的 `shots/integration-check.mjs`——功能点自己的自检用假 `ctx` 验判定逻辑，没人验过「登记进 `kernel.ts` 之后还挂不挂得上、守卫次序对不对、工具真进没进注册表」，这份补的就是这一段。
+
+阶段 9 那份台账里「压缩后的会话重新打开会变长」这轮修掉了，改法与理由见下表。
+
+| 决定 | 理由 |
+| --- | --- |
+| 摘要记录加 `keep` 字段记「尾部保留了几条」，重放时按它接回 | 日志是 append-only，摘要之前的原始记录一条都没删：只改成「遇到 `summary` 就把消息清空」的话，清空之后没法知道压缩当时留了哪几条尾部，最近几轮对话会被一起丢掉。`keep` 是唯一能从日志还原「摘要 + 保留尾部」的凭据；老日志没这个字段按 0 走，退化成「摘要 + 摘要之后的记录」，比把原文整段读回来（压缩等于白压）好 |
+| 压缩切点先退到安全边界（`safeCut`） | 协议要求每条 `tool` 消息紧跟在带同 id `tool_calls` 的 assistant 消息后面，从中间切开会让压缩后的第一次请求直接 HTTP 400；退到那条 assistant 上，工具调用与它的结果一起留在尾部 |
+| 锚点索引与用户原话直接附在摘要消息里 | 模型写的叙述会漏 SHA、文件路径、报错原文与用户原话，这三样换成正则抽取与逐字引用，不经模型改写。它们全是纯函数（`src/core/compact-anchors.ts`），可以脱开模型单独断言 |
+| 灾难地板排在守卫链 order 5（模式 10、安全钩子 20、审批 30 之前） | 守卫链是「第一位给出 deny 或 pass 的赢」：模式闸门对只读工具、只读命令与工作区内的写直接返回 pass（`src/core/modes.ts:104`、`:135`），它一返回 pass，后面的安全钩子与审批就再也拿不到发言权；权限模式的「完全访问」还会在审批层直接放行（`src/plugins/approval.ts:334-337`）。所以「灾难命令连满权限也不许跑」只能由排在它们前面的一位自己完成 |
+| 地板自己判定，不注入 `mode` 服务；配置读不通时照样挂载却一律拒 | 注入会让地板在模式插件没挂时压根不 mount，挂不上等于链上根本没有地板（fail-open）；配置读坏的处置同理——全部拒掉让用户看见问题去改，比静默放过安全 |
+| 溢出观察者排在遮红之后（order 50 > 10） | 标记链按 order 从小到大加工，后一位看到前一位的输出：先遮红再落盘，磁盘上写的是脱敏文本。反序会把脱敏前的原文留在磁盘上，而回给模型的预览是脱敏的，泄漏悄无声息。`shots/spill-check.mjs` 把顺序故意反着挂了一次，断言原密钥真的会落进文件，证明验的是顺序不是巧合 |
+| 溢出跳过 `read` 工具 | read 的结果就是模型点名要的那一段，再落盘只会让它照预览里的续读写法再去 read 一次，又溢出、又落盘，形成活锁 |
+| MCP 的 `deferSchemas()` 只撤动手类（write / exec）工具的 schema | 只读 MCP 工具靠 `risk: 'read'` 免审批；把它们一起撤下，模型每次只读都得走 `tool_call`，而 `tool_call` 自己是 exec 档、每次都要过审批卡，「只读免审批」反倒变成「每次只读都弹卡」 |
+| `tool-search` 必须排在 `mcp` 之后装配 | tool-search 在 apply 时用 `ctx.get('mcp')` 取 MCP 服务；排在前面拿到的 `undefined`，它自己的目录里只剩撤下的注册表工具，MCP 的 schema 永远不会被撤 |
+| `tool_call` 执行前按真名重走一遍守卫链 | 桥接工具看到的工具名不能是 `tool_call`：模式闸门、安全钩子、审批卡与会话日志要记的是真实工具名与真实风险，否则「谁被批准了」事后查不出来 |
+| 默认开关的规矩：会拉起外部进程、连外部服务器或改写每轮请求工具面的默认关，提升安全与本地便利、不配也不影响别人的默认开 | 默认关的是 `lifecycle-hooks`（跑外部命令）、`mcp`（连外部服务器）、`tool-search`（改写每轮工具面），加上原有的 `subagent`、`computer-use`；默认开的是 `approval-floor`、`spill`、`session-search` 与 `web-search` |
+| 生命周期钩子单读一份 `lifecycle-hooks.json`，不复用安全钩子的 `hooks.json` | 安全钩子是 dsc 自己的四个事件，这份是 codex 的十二个事件名。共用一份文件等于两个插件抢同一份配置，谁也读不到完整的一份 |
+| 十二个事件按 wired / partial / unwired 显式声明能力与理由 | 用户不该猜哪个事件配了会跑：PermissionRequest / PreCompact / SubagentStart / SubagentStop 在 dsc 里没有可挂的扩展点，配了也不执行，只把原因写进报告 |
+| 会话检索自己写倒排索引，不引 `node:sqlite` | 个人版零新增依赖；中文按 1-gram + 2-gram 切词，「内存」这种 2 字词因此能命中，trigram 会漏。索引是旁路缓存，删了下次重新回填，会话 jsonl 一个字节都不动 |
+
+### 设置分区 save() 返回值的不一致（本轮已修）
+
+`src/plugins/settings.ts` 原先让分区 `save()` 与 `action()` 共用同一个 `mutate()`，把返回的字符串一律当成**成功提示**；而 `src/services/types.ts` 的 `SettingsSectionSpec.save` 注释写的是「抛错或返回字符串 = 失败原因」。于是 `web-search`、`compact`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`tool-search` 这些按注释契约写、把校验错误当字符串返回的分区，校验失败时界面弹的是绿色提示条，错值却已经落盘。
+改法是给 `save()` 单开一条 `mutateSave()`（返回字符串即失败原因），`mutate()` 留给 `action()` 与 `saveProvider()` / `removeProvider()`——后面那几条的返回值确实是完成提示（例如「已添加端点 X」），不能一起改成错误语义。`src/plugins/mcp.ts` 原先靠抛错绕开这层语义差，改完两条路等价，它的写法不用动。
+回归断言写在 `shots/integration-check.mjs` 的「设置写入的返回值契约」一节：注册一个探针分区，分别验 `save()` 返回字符串按失败处理、`save()` 不返回按成功处理、`action()` 返回字符串仍按成功提示处理。

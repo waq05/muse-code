@@ -177,6 +177,8 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 - 步骤时间线的竖线是**中性色**（`color-mix(in srgb, var(--dsc-base) 10%, transparent)`），
   不要用带品牌色的 `--dsc-stroke-1`——浅色主题下会变成一条很吵的蓝线。
 - 审批卡（`ApprovalCard.tsx`）停在对话流里，不抢焦点、不自动展开面板。
+- 用户气泡里的贴图（`.entry-user-images img`）用 132×96 固定框 + `object-fit: contain`：
+  截图和 1×1 的小图都占同一格，点开是原图；输入框上方那排待发贴图（`.attach-strip`）同理由，56×56。
 - 后台事件（工具结果、队友完工）只更新角标和缓存，**不许替换前台正文或抢焦点**（原则 6）。
 
 ## 6. 反馈：加载、空态、错误、确认

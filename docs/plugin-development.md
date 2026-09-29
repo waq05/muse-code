@@ -67,14 +67,16 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 ```
 
 - `disabled`：停用开关（桌面端「插件」页切换的就是它）；不在 entries 里的文件默认启用。
-- `config`：**原样透传给 `apply(ctx, config)` 第二参**——插件用它读自己的配置，
-  不必再自建配置文件。
+- `config`：**透传给 `apply(ctx, config)` 第二参**——插件用它读自己的配置，不必再自建
+  配置文件。取值统一走 `resolvePluginConfig('<file>', passed)`（`src/core/plugin-registry.ts:165`）：
+  装配时那份作底，磁盘上这份覆盖它，所以设置分区保存后正在跑的插件下一次用值就是新值，不用重启宿主。
+  读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；九个官方可开关插件（`subagent`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`）也各读这一份，并把可调值挂进自己的设置分区。
 - **启停热生效**：切换开关 → 内核卸载（调用 disposer）或重新挂载插件，无需重启宿主；
   文件内容变更后重新启用也会加载新代码（按 mtime 破坏模块缓存）。
 
 ### 3.2 版本管理（自动回滚）
 
-内核有 API 版本号（当前 `KERNEL_API_VERSION = 2`）。插件声明 `export const apiVersion = 2`：
+内核有 API 版本号（当前 `KERNEL_API_VERSION = 4`）。插件声明 `export const apiVersion = 2`：
 - 等于内核版本 → 正常挂载；
 - **高于**内核（插件要求更新的内核）→ 拒绝挂载、**自动写入停用**（回滚到可用状态），
   管理页显示原因；升级 dsc 后重新启用即可；
@@ -106,17 +108,19 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 | 官方可开关 | `source: 'builtin'` 且 `toggleable: true` | 可拨，`defaultDisabled: true` 时默认关 |
 | 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关，页面只露 3 行，其余折叠 |
 
-现有的两个官方可开关插件：`subagent`（子智能体团队，`subagent` + `team_task` 两个工具）、
-`computer-use`（电脑操作，`computer` / `computer_look`）。两个都默认关。
+现有的九个官方可开关插件：默认开的四个是 `web-search`（网页搜索）、`approval-floor`（审批灾难地板）、`spill`（大输出溢出）、`session-search`（会话全文检索）；默认关的五个是 `subagent`（子智能体团队）、`computer-use`（电脑操作）、`lifecycle-hooks`（生命周期钩子）、`mcp`（MCP 客户端）、`tool-search`（工具渐进披露）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
 
 新增一档官方可开关插件要做的三件事：
 
 1. 在 `dsc/src/host/kernel.ts` 的 `OFFICIAL_PLUGINS` 里登记元数据，带上
-   `toggleable: true`、`defaultDisabled: true`、`settingsSection: '<分区 id>'`；
-2. 插件自己在 `apply()` 末尾 `ctx.provide('<服务名>', {...})`，把自己挂上来的东西给出去；
+   `toggleable: true`、`settingsSection: '<分区 id>'`（该默认关的再加 `defaultDisabled: true`），
+   并把插件对象填进同文件的 `OFFICIAL_OBJECTS`——少填这一处，内核装配时会直接跳过它，
+   开关拨了也不挂载；
+2. 插件如果要对外提供服务，在 `apply()` 末尾 `ctx.provide('<服务名>', {...})`；
+   没有对外服务的（例如 `approval-floor`、`spill`）跳过这一步；
 3. **不要**把这个可选服务写进 `inject`：插件关着时它不存在，写了 `inject` 会让整个挂载失败。
-   别人（比如 runtime 的 `listTeammates`）要用 cordis 的 `ctx.get('<服务名>')` 去读，
-   读不到就是 `undefined`。直接写 `ctx.<服务名>?.` 也会被代理拦下抛
+   别人（比如 runtime 的 `listTeammates`、tool-search 读 MCP 工具目录）要用 cordis 的
+   `ctx.get('<服务名>')` 去读，读不到就是 `undefined`。直接写 `ctx.<服务名>?.` 也会被代理拦下抛
    `cannot get property "xxx" without inject`——`?.` 救不了，属性访问本身就先抛了。
 
 配置存在条目树里（`writePluginConfig(file, patch)`）。只改配置值不会把插件点亮：
@@ -189,6 +193,8 @@ ctx.llm.listModels(): ModelChoiceView[] // [{ value: '端点/模型', provider, 
 ctx.session.current(): Session          // Session.meta: { id, cwd, createdAt }；Session.messages: 协议消息数组
 ctx.session.open(filePath?: string): Promise<void>  // undefined=新建；传入 jsonl 路径=恢复
 ctx.session.refresh(): Promise<void>    // 刷新会话列表缓存（ctx.session.sessions）
+ctx.session.appendState(id, payload)    // 自己那块状态写进会话记录（见 §4.9 的键表）
+ctx.session.current().state(id)         // 恢复会话时读回来；没写过就是 undefined
 
 ctx.agent.followup(text: string)        // 以用户身份投递一条消息（触发完整 Agent 回合）
 ctx.agent.interrupt()                   // 取消当前回合
@@ -274,6 +280,55 @@ return () => { offProvider(); offMarket() }
 - 来源清单变了要发 `ctx.emit('dsc/skills-changed')`，桌面端与模型可见目录都会重取；
 - 正文会原样进入模型上下文，别塞密钥；描述写清「做什么 + 何时用」，模型据此决定是否调用。
 
+### 4.9 guards / surfaces / waiting —— 内核的三个挂入点
+
+内核 API v4 加的三个扩展点，外加会话记录里那一块自己的状态。共同点：`register(...)` 返回
+退订函数，插件卸载就在下一次判定 / 下一次装配快照前生效；同 id 再注册算顶掉前一份。
+
+```js
+// 1) 工具动手之前拦一道。order 小的先问：灾难地板 5、协作模式 10、安全钩子 20、审批 30。
+//    裁决三种：deny（当场拒，reason 原样回给模型）/ pass（免问直接执行）/ defer（问下一位）。
+//    守卫自己抛错按 deny 处理——坏掉的闸门不该等于放行。
+const offGuard = ctx.guards.register({
+  id: 'my-plugin',
+  order: 20,
+  decide(input) {
+    // input: { toolName, risk, cwd, args, target?, command?, signal }
+    if (input.toolName === 'bash' && /sudo/.test(input.command ?? '')) {
+      return { action: 'deny', reason: '这个插件不许代你跑 sudo' }
+    }
+    return { action: 'defer' }
+  },
+})
+
+// 2) 改写工具的输出（进会话日志与回显之前）。内置刻度：密钥遮红 10、大输出溢出 50。
+const offWatch = ctx.guards.registerObserver({
+  id: 'my-plugin',
+  order: 50,
+  observe: (toolName, text) => text.replace(/秘密/g, '██'),
+})
+
+// 3) 界面快照里的一块状态投影：先在 contract.ts 的 RuntimeSurfaces 上声明合并这个键，
+//    再来登记取值函数。装配快照的那一层不认识你的功能，它只问注册表要全部片段。
+const offFace = ctx.surfaces.register('myPanel', () => ({ open: panelOpen }))
+
+// 4) 有张卡片正挂着等用户点：登记一个「现在是否在等」的问法。
+//    会话目标的自动续跑会看 ctx.waiting.any 刹车，免得卡片挂着没答就自己往下跑。
+const offWaiting = ctx.waiting.register('my-plugin', () => panelOpen)
+```
+
+自己那块状态要跟着会话走，就写进会话记录（先在 `src/core/session.ts` 的 `SessionStateMap`
+上声明合并这个键，`appendState` 与 `state()` 的类型才对得上）：
+
+```js
+ctx.session.appendState('myPanel', { open: true })   // 写一条 { type:'state', id, payload }
+ctx.session.current().state('myPanel')               // 恢复会话时读回来
+```
+
+这四样都是**注册**，不是改内核：内置的协作模式闸门、审批卡、灾难地板、安全钩子、生命周期钩子、任务清单、计划评审、会话目标、密钥遮红、大输出溢出全都挂在这些点上，外部插件走同一扇门。
+
+有些服务是可选的（插件关着时整个不存在），读它们只能用 `ctx.get('<服务名>')`，不能写进 `inject` 也不能用 `ctx.<服务名>?.`：`team`（子智能体团队）、`mcp`（MCP 客户端）、`sessionSearch`（会话全文检索）。例如 tool-search 读 MCP 工具目录就是 `const mcp = ctx.get('mcp')`，读到 `undefined` 就当没接 MCP。
+
 ## 5. 事件
 
 `ctx.on(事件名, 处理器)` 监听、`ctx.emit(事件名, 载荷)` 发布（插件可发布自定义事件，
@@ -287,12 +342,16 @@ return () => { offProvider(); offMarket() }
 | `dsc/exit` | — | 请求收尾；监听器须同步执行 |
 | `dsc/open-picker` | — | 命令请求打开会话选择面板 |
 | `dsc/skills-changed` | — | 技能清单或启停状态变化（桌面端技能中心据此重取） |
+| `dsc/mode-changed` | `(mode: CollaborationMode)` | 协作模式换档（含启动时那一次）。审批卡据此在卡上写当前档位，不必反过来问模式服务 |
+| `dsc/turn-end` | `(reason: 'completed' \| 'aborted' \| 'error')` | 一个回合结束。只有 `completed` 会触发会话目标的自动续跑 |
+| `dsc/plan` | `(plan: PlanView)` | 计划交付卡的内容有变（写出来、被批准或被驳回） |
 
 ## 6. 示例
 
-> **综合参考**：`examples/plugins/memory.js`——Hermes 风格记忆插件，覆盖了工具注册（4 个）、
-> 命令注册、快照监听（prefetch 注入 + 回合结束自动沉淀）、session.messages 滚动注入、
-> `llm.route()` 直连 chat/completions、文件存储与 Markdown 导出。写复杂插件前先读它。
+> **综合参考**：`examples/plugins/browser-control.js`——外部插件里最长的一份：单工具 `browser`
+> 按 action 分发、自己起受控浏览器子进程、经 CDP 的 WebSocket 收发、截图以图像返回模型，
+> 带私有状态与卸载清理。要写「拉外部进程 + 返回图像」这类插件先读它；同类参照还有
+> `examples/plugins/computer-use.js`（PowerShell 驱动 Windows 桌面）。
 >
 > **界面扩展参考**：`examples/plugins/settings-demo.js`——一个插件同时注册设置分区
 > （含 switch/select/text/button）、一个虚拟技能来源、一个私有市场源。
