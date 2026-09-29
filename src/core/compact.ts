@@ -12,7 +12,7 @@
  * @module dsc/core/compact
  */
 import type { ChatMessage } from './llm.js'
-import { contentChars, contentText, streamChat } from './llm.js'
+import { contentText, streamChat } from './llm.js'
 import type { Session } from './session.js'
 import {
   buildAnchorIndex,
@@ -43,16 +43,41 @@ export const DEFAULT_COMPACT_LIMITS: CompactLimits = {
   userQuoteChars: DEFAULT_USER_QUOTE_BUDGET_CHARS,
 }
 
-/** 粗略 token 估算（中文场景 chars/3 够用；图像按 4000 字符/张估算）。 */
+/**
+ * 粗略 token 估算（2026-09-29 从 chars/3 改为 CJK 分开算）：
+ * 中文一个字约 0.6~0.7 token，chars/3 会把中文低估约一半——自动压缩要等真实用量
+ * 冲到窗口 100% 以上才触发，直接爆窗。这里中文按 0.65、其余按 0.33（≈3 字符/token）
+ * 估，整体宁可高估（早压一次很便宜）也不低估（报错结束回合）。
+ */
+const CJK_CHAR = /[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4CF\uAC00-\uD7FF\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF]/
+
+function estimateTextTokens(text: string): number {
+  let cjk = 0
+  let other = 0
+  for (const char of text) {
+    if (CJK_CHAR.test(char)) cjk += 1
+    else other += 1
+  }
+  return cjk * 0.65 + other * 0.33
+}
+
 export function estimateTokens(messages: readonly ChatMessage[]): number {
-  let chars = 0
+  let tokens = 0
   for (const message of messages) {
-    chars += contentChars(message.content)
+    const content = message.content
+    if (typeof content === 'string') {
+      tokens += estimateTextTokens(content)
+    } else if (content !== null) {
+      for (const part of content) {
+        // 图像每张按 1000 token 估（与原 chars/3 时代的 4000 字符/张同口径）。
+        tokens += part.type === 'text' ? estimateTextTokens(part.text) : 1_000
+      }
+    }
     for (const call of message.tool_calls ?? []) {
-      chars += call.function.name.length + call.function.arguments.length
+      tokens += estimateTextTokens(call.function.name + call.function.arguments)
     }
   }
-  return Math.ceil(chars / 3)
+  return Math.ceil(tokens)
 }
 
 export type CompactOutcome = 'compacted' | 'noop'
@@ -114,9 +139,11 @@ export async function compactSession(
   extra?: string,
   /** 三个上限；compact 插件把它的配置值传进来。 */
   limits: CompactLimits = DEFAULT_COMPACT_LIMITS,
+  /** 爆窗重试用：忽略「历史太短」的 noop 检查直接压一次（切点退到 0 时仍放弃）。 */
+  force = false,
 ): Promise<CompactOutcome> {
   const messages = session.messages
-  if (messages.length <= limits.keepRecent + 2) return 'noop'
+  if (!force && messages.length <= limits.keepRecent + 2) return 'noop'
   const cut = safeCut(messages, messages.length - limits.keepRecent)
   // 切点退到 0 = 整个历史都是工具结果，没有可折的内容（正常历史首条必然是用户消息）
   if (cut === 0) return 'noop'

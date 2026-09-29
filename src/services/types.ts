@@ -407,6 +407,11 @@ export interface CompactService {
   /** 手动压缩（/compact），结果经 dsc/notice 反馈。 */
   run(): Promise<void>
   /**
+   * 请求报「上下文装不下」时的强制压缩：忽略触发线与「历史太短」检查直接折叠一次。
+   * @returns true = 确实压缩了（调用方可以重试请求）；false = 没压出空间（原样报错）。
+   */
+  forceCompact(): Promise<boolean>
+  /**
    * 登记一段「摘要之外必须原样带过去」的文本。
    * 任务清单、会话目标这类内容经摘要模型一转就会被改写走样，所以由功能点自己登记原文；
    * 压缩插件因此不认识任何具体功能。

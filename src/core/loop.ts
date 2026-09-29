@@ -33,6 +33,11 @@ export interface AgentDeps {
   /** 每轮请求前的一次维护动作（上下文压缩检查挂在这里）；缺省不启用。 */
   beforeRequest?(): Promise<void>
   /**
+   * 请求报「上下文装不下」（HTTP 400 的爆窗文案）时调：强制压缩一次历史。
+   * 返回 true = 压出了空间，循环重试这轮请求；false 或缺省 = 原错误照抛。
+   */
+  onContextOverflow?(): Promise<boolean>
+  /**
    * 组装好「发给模型的那份消息」之后的改写钩子（只影响请求体，不改会话日志）。
    * 插件用它丢掉过期截图之类「留在历史里只会撑上下文、对下一轮没用」的内容。
    */
@@ -40,6 +45,18 @@ export interface AgentDeps {
 }
 
 const errText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+/**
+ * 判定一个错误是不是「上下文装不下」：各家网关都把它报成 HTTP 400，措辞不一，多认几种。
+ * 只认 400——流开始之后不会再有 400（llm 层对已开始的流不重试），半截回复不走这条路。
+ */
+function isContextOverflowError(error: unknown): boolean {
+  if (!(error instanceof LlmError)) return false
+  if (error.status !== 400) return false
+  return /context.{0,24}(length|window)|maximum.{0,20}context|(prompt|input).{0,20}too long|too many (tokens|输入)|上下文.{0,10}(长度|超)|length limit/i.test(
+    error.message,
+  )
+}
 
 /** 单行摘要工具参数（审批卡/日志用）。 */
 function summarizeArgs(argsText: string): string {
@@ -118,7 +135,21 @@ export class MiniAgent {
       await this.deps.beforeRequest?.()
       if (abort.signal.aborted) throw new Error('aborted')
       for (;;) {
-        const result = await this.requestOnce(abort.signal)
+        let result: StreamResult
+        try {
+          result = await this.requestOnce(abort.signal)
+        } catch (error) {
+          // 上下文爆窗：强制压缩一次再重试这轮请求（只试一次，压不出空间就把原错误抛回去）。
+          if (
+            abort.signal.aborted ||
+            this.deps.onContextOverflow === undefined ||
+            !isContextOverflowError(error)
+          ) {
+            throw error
+          }
+          if (!(await this.deps.onContextOverflow())) throw error
+          result = await this.requestOnce(abort.signal)
+        }
         if (abort.signal.aborted) break
         if (result.toolCalls.length === 0) break
         await this.executeToolCalls(result, abort.signal)

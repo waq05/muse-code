@@ -126,6 +126,24 @@ export const compactPlugin: Plugin.Object = {
         if (outcome === 'compacted') ctx.emit('dsc/compacted')
       },
 
+      /** 请求已经因爆窗失败，强制压一次（2026-09-29）：压出空间返回 true，循环方重试请求。 */
+      async forceCompact() {
+        const outcome = await compactSession(
+          ctx.session.current(),
+          ctx.llm.route(),
+          new AbortController().signal,
+          carry(),
+          limits(),
+          true,
+        )
+        if (outcome === 'compacted') {
+          ctx.emit('dsc/notice', '上下文超出模型窗口：已自动压缩历史并重试')
+          ctx.emit('dsc/compacted')
+          return true
+        }
+        return false
+      },
+
       async run() {
         try {
           const outcome = await compactSession(

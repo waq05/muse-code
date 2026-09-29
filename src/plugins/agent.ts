@@ -45,6 +45,8 @@ export const agentPlugin: Plugin.Object = {
           ctx.transcript.emit(event)
         },
         beforeRequest: () => ctx.compact.check(),
+        // 请求因爆窗失败时压一次再重试（对齐 dsh 的溢出重试；压不出空间就把原错误抛回去）。
+        onContextOverflow: () => ctx.compact.forceCompact(),
         transformMessages: (messages) => ctx.prompt.rewrite(messages),
       },
       ctx.session.current(),
