@@ -28,11 +28,12 @@ import {
   type AgentRole,
   type TeammateApproval,
 } from '../core/agent-roles.js'
-import type { ApprovalDecision, ApprovalHandler } from '../core/approval.js'
-import { getPluginConfig, writePluginConfig } from '../core/plugin-registry.js'
+import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import { MiniAgent } from '../core/loop.js'
-import { Session, teammateRoot } from '../core/session.js'
-import type { ToolEntry } from '../core/tools.js'
+import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '../core/session.js'
+import { redact } from '../core/secrets.js'
+import { argsSummary, type ToolEntry } from '../core/tools.js'
+import { ToolGuardRegistry, toolApprovalGuard } from '../core/tool-guards.js'
 import {
   boardCreate,
   boardUpdate,
@@ -190,7 +191,7 @@ export const subagentPlugin: Plugin.Object = {
 
     // ── 配置 ────────────────────────────────────────────────────────────────
     const readConfig = (): SubagentConfig => {
-      const raw = (passed ?? getPluginConfig(CONFIG_KEY)) as Record<string, unknown>
+      const raw = resolvePluginConfig(CONFIG_KEY, passed)
       const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
         const num = Number(value)
         return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
@@ -286,18 +287,36 @@ export const subagentPlugin: Plugin.Object = {
       )
     }
 
-    /** 队友审批：全局上限与角色意愿取更严的那个，通过的请求在卡上署名。 */
-    const approvalFor = (teammate: Teammate): ApprovalHandler => ({
-      decide(request, signal): Promise<ApprovalDecision> {
-        const rank = Math.min(APPROVAL_RANK[config.approval], APPROVAL_RANK[teammate.badge.approval])
-        const canAsk = rank >= APPROVAL_RANK.foreground && (rank === APPROVAL_RANK.ask || !teammate.background)
-        if (!canAsk) return Promise.resolve('reject')
-        return ctx.approval.decide(
-          { ...request, toolName: `队友 ${teammate.name}（${teammate.role}）· ${request.toolName}` },
-          signal,
-        )
-      },
-    })
+    /**
+     * 队友自己那条工具守卫链：全局上限与角色意愿取更严的那个，通过的请求在卡上署名。
+     * 每条链只有一位审批守卫——队友不该被主会话的协作模式闸门管着，也不该跟主会话共用一条链。
+     */
+    const guardsFor = (teammate: Teammate): ToolGuardRegistry => {
+      const chain = new ToolGuardRegistry()
+      chain.register(
+        toolApprovalGuard({
+          id: `teammate:${teammate.name}`,
+          async approve(input) {
+            const rank = Math.min(APPROVAL_RANK[config.approval], APPROVAL_RANK[teammate.badge.approval])
+            const canAsk = rank >= APPROVAL_RANK.foreground && (rank === APPROVAL_RANK.ask || !teammate.background)
+            if (!canAsk) return false
+            const decision = await ctx.approval.decide(
+              {
+                toolName: `队友 ${teammate.name}（${teammate.role}）· ${input.toolName}`,
+                argsSummary: argsSummary(input.args),
+                args: input.args,
+                cwd: input.cwd,
+              },
+              input.signal,
+            )
+            return decision !== 'reject'
+          },
+          deniedReason: REJECTED_TOOL_TEXT,
+        }),
+      )
+      chain.registerObserver({ id: 'redact', order: 10, observe: (_toolName, text) => redact(text) })
+      return chain
+    }
 
     function startTeammate(input: {
       name: string
@@ -368,7 +387,7 @@ ${teammate.badge.tools === null ? '' : `你只被授权这些工具：${teammate
 ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需要授权的操作会被直接拒绝，不要反复尝试。' : '需要授权的操作可以向用户请求，审批卡上会写明是你（' + teammate.name + '）在请求。'}
 干完活用一段话交结果：做了什么、看到什么证据（文件名:行号）、还有什么没做。`,
           tools: () => toolsFor(teammate),
-          approval: approvalFor(teammate),
+          guards: guardsFor(teammate),
           emit: (event) => {
             if (event.type === 'message') {
               teammate.rounds += 1
@@ -397,7 +416,7 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
 
     /** 后台队友干完，把汇报交给派它的那一方。 */
     const reportHome = (teammate: Teammate): void => {
-      const state = teammate.state === 'idle' ? '已完工' : teammate.state === 'stopped' ? '被打断' : '失败'
+      const state = teammate.state === 'idle' ? '已完成' : teammate.state === 'stopped' ? '已停止' : '已失败'
       const body =
         teammate.state === 'failed'
           ? `（它失败了：${teammate.error ?? '未知错误'}）`
@@ -418,19 +437,19 @@ ${body}
           return
         }
       }
-      const line = `队友 ${teammate.name}（${teammate.role}）${state}`
+      const line = `队友 ${teammate.name}，角色 ${teammate.role}，${state}`
       const live = ctx.session.current() === teammate.parentSession
       if (config.notify === 'auto' && live) {
         ctx.agent.followup(notice)
-        ctx.transcript.system(`${line}，汇报已送进下一轮`)
+        ctx.transcript.system(`${line}，汇报已并入下一轮`)
       } else {
         // 静默，或者用户已经切去别的会话：话写进它所属的那个会话文件，
         // 等用户回到那个会话再说话时模型自然看到，不打断也不抢跑。
         teammate.parentSession.appendUser(notice)
         ctx.transcript.system(
           live
-            ? `${line}，汇报已写进会话（你下一条消息时模型会看到）`
-            : `${line}，汇报写进了派出它的那个会话`,
+            ? `${line}，汇报已写入会话，下一条消息时模型会看到`
+            : `${line}，汇报写入了派出它的会话`,
         )
       }
     }
@@ -751,41 +770,41 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
       {
         type: 'switch',
         key: 'allowDelegation',
-        label: '允许模型自主派活给队友',
-        help: '关掉后 subagent 与 team_task 两个工具连同提示词一起撤下，正在跑的队友会被收掉。',
+        label: '允许模型自主分派任务给队友',
+        help: '关闭后 subagent 与 team_task 工具连同提示词一并撤下，运行中的队友会被停止。',
       },
-      { type: 'number', key: 'maxTeammates', label: '同时干活的队友上限', min: 1, max: 8, step: 1, help: '干完的队友不占这个额度。派满再派会被直接拒绝，不排队。' },
-      { type: 'number', key: 'maxDepth', label: '允许层数', min: 0, max: 2, step: 1, help: '0 = 只有你能派队友，Lead 不许再往下派；1 = Lead 能派，队友不能派孙。' },
+      { type: 'number', key: 'maxTeammates', label: '同时运行的队友上限', min: 1, max: 8, step: 1, help: '已完成的队友不占用该额度；达到上限后再派会被直接拒绝，不排队。' },
+      { type: 'number', key: 'maxDepth', label: '允许层数', min: 0, max: 2, step: 1, help: '0 = 仅主会话可派队友，Lead 不可再下派；1 = Lead 可派队友，队友不可再下派。' },
       {
         type: 'select',
         key: 'approval',
-        label: '队友能不能向你要授权',
+        label: '队友是否可以请求授权',
         options: [
-          { value: 'forbid', label: '不允许（需要授权的操作直接失败，写进它的汇报）' },
-          { value: 'foreground', label: '只允许前台队友（你正在等它结果时）' },
-          { value: 'ask', label: '允许，审批卡上写明是哪个队友在请求' },
+          { value: 'forbid', label: '不允许，需要授权的操作直接失败并写入汇报' },
+          { value: 'foreground', label: '仅前台队友，即正在等待结果的队友' },
+          { value: 'ask', label: '允许，审批卡片标明请求的队友' },
         ],
-        help: '这是上限：角色文件里写的 approval 只会比它更严，不会更松。',
+        help: '此为上限：角色文件中声明的 approval 只会更严，不会更松。',
       },
       {
         type: 'select',
         key: 'notify',
-        label: '后台队友干完怎么交活',
+        label: '后台队友完成后的汇报方式',
         options: [
-          { value: 'auto', label: '自动把汇报接进 Lead 的下一轮' },
-          { value: 'quiet', label: '只写进会话，等你下次说话时模型再看到' },
+          { value: 'auto', label: '汇报自动并入 Lead 的下一轮' },
+          { value: 'quiet', label: '仅写入会话，下次对话时模型可见' },
         ],
       },
       { type: 'text', key: 'defaultModel', label: '队友默认模型', placeholder: '留空 = 跟随当前模型；形如 deepseek/deepseek-chat', help: '角色文件里写了 model 的角色用它自己的。' },
-      { type: 'info', label: '角色目录', text: DSC_AGENTS_DIR, mono: true, copyable: true, help: `出厂角色：${builtinRoleNames().join('、')}。改文件只影响之后新派的队友。` },
-      { type: 'button', action: 'new-role', label: '新建一个示例角色', style: 'ghost', help: '在角色目录写一个 starter.md，你照着改。' },
-      { type: 'button', action: 'clear-board', label: '清空共享任务板', style: 'ghost', help: '只清任务条目，不动队友的运行记录。' },
+      { type: 'info', label: '角色目录', text: DSC_AGENTS_DIR, mono: true, copyable: true, help: `内置角色：${builtinRoleNames().join('、')}。修改文件仅影响之后创建的队友。` },
+      { type: 'button', action: 'new-role', label: '新建示例角色', style: 'ghost', help: '在角色目录创建 starter.md 供参考修改。' },
+      { type: 'button', action: 'clear-board', label: '清空共享任务板', style: 'ghost', help: '仅清空任务条目，不影响队友运行记录。' },
     ]
 
     const section: SettingsSectionSpec = {
       id: 'subagent',
       title: '子智能体',
-      subtitle: '把活拆给几个有明确授权的队友并行干',
+      subtitle: '将任务拆分给有明确授权的队友并行执行',
       order: 40,
       fields,
       values: (): Record<string, SettingsValue> => ({

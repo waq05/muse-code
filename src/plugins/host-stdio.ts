@@ -16,10 +16,26 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
-import type { RuntimeSnapshot } from '../contract.js'
+import { resolvePluginConfig } from '../core/plugin-registry.js'
+import type { DscRuntime, RuntimeSnapshot } from '../contract.js'
 
-/** 快照推送节流间隔。 */
-const SNAPSHOT_THROTTLE_MS = 80
+/** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
+const CONFIG_KEY = 'host-stdio'
+
+/** 快照推送节流间隔的缺省值（配置没给时用；界面靠它决定最多多久刷一帧）。 */
+const DEFAULT_SNAPSHOT_THROTTLE_MS = 80
+
+/**
+ * 取快照推送节流间隔：夹在 16 毫秒到 1 秒之间。
+ * 再小就是一帧一帧追着渲染器跑（白烧 CPU），再大就是点完按钮半天没反应。
+ * @param passed - 装配时直接传进来的配置（内核挂载时的第二参数）。
+ */
+function readThrottle(passed: unknown): number {
+  const raw = resolvePluginConfig(CONFIG_KEY, passed)
+  const num = Number(raw.snapshotThrottleMs)
+  if (!Number.isFinite(num)) return DEFAULT_SNAPSHOT_THROTTLE_MS
+  return Math.min(Math.max(Math.round(num), 16), 1_000)
+}
 
 /** 协议版本（破坏性变更时递增，宿主据此拒绝）。 */
 export const HOST_PROTOCOL_VERSION = 2
@@ -40,8 +56,20 @@ export type RuntimeToHostMessage =
   /** dock 终端输出流（desktop-dock 服务 → 桌面端面板）。 */
   | { type: 'dock-data'; id: string; data: string }
 
-/** 允许经协议调用的 DscRuntime 方法白名单。 */
-const INVOKABLE_METHODS = new Set([
+/**
+ * 只能在宿主进程里成立、不经协议转发的方法：
+ * 订阅与快照走下面的 `snapshot` 消息流，退出与清理由宿主动手（进程就是这么关掉的）。
+ */
+type LocalOnlyMethod = 'subscribe' | 'getSnapshot' | 'exit' | 'dispose'
+
+/** 协议允许调用的方法 = `DscRuntime` 去掉那几个本地方法，不另立一份接口。 */
+type InvokableMethod = Exclude<keyof DscRuntime, LocalOnlyMethod>
+
+/**
+ * 这份清单就是协议的全部可调用面：写成 `satisfies` 是为了让编译器逐条核对方法名，
+ * 拼错一个字母当场报错，而不是等到运行时才「协议不允许调用」。
+ */
+const INVOKABLE_METHODS = [
   'submit',
   'interrupt',
   'openSession',
@@ -58,9 +86,16 @@ const INVOKABLE_METHODS = new Set([
   'setPolicy',
   'dock',
   'answerApproval',
-  // 会话库：归档 / 恢复 / 删除 / 改名 / 置顶 / 分叉 / 界面偏好
+  // 协作模式、任务清单、计划评审、目标、模型提问
+  'setMode',
+  'clearTodos',
+  'goalAction',
+  'answerQuestion',
+  'answerPlan',
+  // 会话库：归档 / 恢复 / 删除 / 改名 / 置顶 / 分叉 / 用量 / 界面偏好
   'archiveSessions',
   'listArchivedSessions',
+  'usageStats',
   'restoreSessions',
   'purgeSessions',
   'renameSession',
@@ -86,7 +121,24 @@ const INVOKABLE_METHODS = new Set([
   'removeProvider',
   'setProviderKey',
   'setDefaultModel',
-])
+] as const satisfies readonly InvokableMethod[]
+
+/** 这份清单漏了哪个方法（本地那几样之外）：漏一个就报下面那个元组类型，编不过。 */
+type UnlistedInvokable = Exclude<InvokableMethod, (typeof INVOKABLE_METHODS)[number]>
+
+/**
+ * 编译期兜底：往 `DscRuntime` 加一个方法而这份清单没跟上时，这里报错。
+ * 没有这一行，新方法会静静地在协议上不通（渲染器调它得到「不允许调用」），很难查。
+ */
+const INVOKE_COVERAGE: UnlistedInvokable extends never ? true : ['这些方法还没进协议白名单：', UnlistedInvokable] =
+  true
+void INVOKE_COVERAGE
+
+/** 查表用的集合（`isInvokableMethod` 拿它把线上来的字符串收窄成方法名）。 */
+const INVOKABLE_SET: ReadonlySet<string> = new Set<string>(INVOKABLE_METHODS)
+
+/** 把线上来的方法名收窄成「协议允许调用的方法」。 */
+const isInvokableMethod = (method: string): method is InvokableMethod => INVOKABLE_SET.has(method)
 
 // ── 传输抽象 ──────────────────────────────────────────────────────────────────
 
@@ -95,6 +147,11 @@ interface Transport {
   send(message: RuntimeToHostMessage): void
   /** 收到 host→runtime 消息。 */
   onMessage(handler: (message: HostToRuntimeMessage) => void): void
+  /**
+   * 宿主那头还有人在吗（审批插件据此决定弹卡还是立刻按拒）。
+   * 两条传输各自的判据：stdio 看 stdin 关没关，parentPort 由 Electron 管生命周期，恒为 true。
+   */
+  reachable(): boolean
   /** 收尾（移除监听、暂停 stdin）。 */
   dispose(): void
 }
@@ -118,6 +175,8 @@ function pickTransport(): Transport {
           }
         })
       },
+      // 父端口存不存在由 Electron 决定，这中间接不到「窗口关了」的信号，按连着处理。
+      reachable: () => true,
       dispose: () => {
         /* MessagePort 由 Electron 生命周期管理 */
       },
@@ -153,13 +212,23 @@ function stdioTransport(): Transport {
   }
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', onStdin)
+  // stdin 关了就是宿主那头没人了：审批卡再挂着也等不到答案（`node lib/headless.js` 手测结束就是这种）。
+  let ended = false
+  const onEnd = (): void => {
+    ended = true
+  }
+  process.stdin.on('end', onEnd)
+  process.stdin.on('close', onEnd)
   return {
     send: (message) => writeRef.write(message),
     onMessage: (next) => {
       handler = next
     },
+    reachable: () => !ended,
     dispose: () => {
       process.stdin.removeListener('data', onStdin)
+      process.stdin.removeListener('end', onEnd)
+      process.stdin.removeListener('close', onEnd)
       process.stdin.pause()
     },
   }
@@ -170,9 +239,15 @@ function stdioTransport(): Transport {
 export const hostStdioPlugin: Plugin.Object = {
   name: 'host-stdio',
   inject: ['ui'],
-  apply(ctx) {
+  apply(ctx, passed) {
     const runtime = ctx.ui
+    const throttleMs = readThrottle(passed)
     const transport = pickTransport()
+
+    // ---- 界面可达性 ----
+    // 宿主那头还有人（stdio 的 stdin 没关 / parentPort 还在）就登记成「有人能回答审批卡」，
+    // 审批插件据此决定是弹卡还是立刻按拒，不再白等一次审批超时。
+    const offInteractive = ctx.provide('interactive', { kind: 'host' as const, reachable: () => transport.reachable() })
 
     // ---- 快照节流推送 ----
     let pendingSnapshot = false
@@ -185,21 +260,21 @@ export const hostStdioPlugin: Plugin.Object = {
         if (!pendingSnapshot) return
         pendingSnapshot = false
         transport.send({ type: 'snapshot', snapshot: runtime.getSnapshot() })
-      }, SNAPSHOT_THROTTLE_MS)
+      }, throttleMs)
     }
     const unsubscribe = runtime.subscribe(scheduleSnapshot)
 
     // ---- 请求处理 ----
     const invoke = async (id: number, method: string, args: unknown[]): Promise<void> => {
-      if (!INVOKABLE_METHODS.has(method)) {
+      if (!isInvokableMethod(method)) {
         transport.send({ type: 'result', id, ok: false, error: `协议不允许调用的方法：${method}` })
         return
       }
       try {
-        const value = await (runtime as unknown as Record<string, (...parts: unknown[]) => unknown>)[
-          method
-        ](...args)
-        transport.send({ type: 'result', id, ok: true, value: value ?? null })
+        // 方法名已经收窄成 DscRuntime 的键，参数是线上来的 unknown：
+        // 通用调用只有这一处，靠 Reflect.apply 展开实参（渲染器那侧由 RuntimeProxy 的映射类型保证签名对得上）。
+        const value = Reflect.apply(runtime[method], runtime, args)
+        transport.send({ type: 'result', id, ok: true, value: (await value) ?? null })
       } catch (error) {
         transport.send({ type: 'result', id, ok: false, error: errText(error) })
       }
@@ -215,6 +290,7 @@ export const hostStdioPlugin: Plugin.Object = {
 
     ctx.on('dsc/exit', () => {
       unsubscribe()
+      offInteractive()
       if (timer !== null) clearTimeout(timer)
       transport.dispose()
     })

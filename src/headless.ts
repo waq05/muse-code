@@ -7,6 +7,7 @@
  */
 import { readConfig } from './core/config.js'
 import { migrateFromDsh } from './core/migrate.js'
+import { getPluginConfig } from './core/plugin-registry.js'
 import { createKernel, emitStartupNotes, loadExternalPlugins, readUiConfig } from './host/kernel.js'
 import { hostStdioPlugin } from './plugins/host-stdio.js'
 
@@ -21,12 +22,12 @@ async function main(): Promise<void> {
     resumeEnv === undefined || resumeEnv === '' ? null : resumeEnv === '1' ? 'auto' : resumeEnv
 
   const root = await createKernel({ config, resumeSessionPath })
-  await root.plugin(hostStdioPlugin)
+  await root.plugin(hostStdioPlugin, getPluginConfig('host-stdio'))
   await loadExternalPlugins(root, ui.plugins)
   emitStartupNotes(root, migration, config)
 }
 
 main().catch((error) => {
-  console.error('[dsc] headless 启动失败：', error)
+  console.error('[msc] headless 启动失败：', error)
   process.exit(1)
 })

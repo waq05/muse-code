@@ -51,17 +51,17 @@ type Values = SettingsValues
 /** 温度下拉（避免自由输入数字，也覆盖常见用法）。 */
 const TEMPERATURE_OPTIONS = [
   { value: 'follow', label: '跟随端点默认' },
-  { value: '0', label: '0（稳定复现）' },
-  { value: '0.3', label: '0.3（偏严谨）' },
-  { value: '0.7', label: '0.7（常用）' },
-  { value: '1', label: '1（偏发散）' },
+  { value: '0', label: '0，稳定复现' },
+  { value: '0.3', label: '0.3，偏严谨' },
+  { value: '0.7', label: '0.7，常用' },
+  { value: '1', label: '1，偏发散' },
 ]
 
 const POLICY_OPTIONS = [
-  { value: 'readonly', label: '只读（写文件/执行命令都要批准）' },
-  { value: 'auto-edit', label: '自动放行编辑（执行命令仍要批准）' },
-  { value: 'full-access', label: '完全访问（不再询问）' },
-  { value: 'ai-review', label: 'AI 审阅（拿不准时问模型）' },
+  { value: 'readonly', label: '只读，写文件与执行命令均需批准' },
+  { value: 'auto-edit', label: '自动放行编辑，执行命令仍需批准' },
+  { value: 'full-access', label: '完全访问，不再询问' },
+  { value: 'ai-review', label: 'AI 审阅，不确定时询问模型' },
 ]
 
 const EFFORT_OPTIONS = [
@@ -120,6 +120,23 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       }
     }
 
+    /**
+     * 分区 `save()` 专用的那一条：返回值含义与 {@link mutate} 相反。
+     *
+     * 契约见 `SettingsSectionSpec.save`——「抛错或返回字符串 = 失败原因」，而字符串当
+     * 成功提示是 `action()` 与 `saveProvider()` 那几条路的规矩。两条共用一个 mutate，
+     * 校验失败会显示成绿色的成功提示条，错值还会被存进去。
+     */
+    async function mutateSave(work: () => string | void | Promise<string | void>): Promise<SettingsMutation> {
+      try {
+        const failure = await work()
+        if (typeof failure === 'string' && failure !== '') return { ok: false, error: failure }
+        return { ok: true }
+      } catch (error) {
+        return { ok: false, error: err(error) }
+      }
+    }
+
     // ── 内置分区：通用 ────────────────────────────────────────────────────────
     const general: SettingsSectionSpec = {
       id: 'general',
@@ -128,14 +145,14 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       order: 0,
       fields(): SettingsField[] {
         return [
-          { type: 'select', key: 'policy', label: '权限模式', options: POLICY_OPTIONS, help: '决定工具执行前是否要你点一次授权；改动同时成为下次启动的默认值' },
+          { type: 'select', key: 'policy', label: '权限模式', options: POLICY_OPTIONS, help: '决定工具执行前是否需要人工授权；修改后同时作为下次启动的默认值' },
           { type: 'select', key: 'effort', label: '思考强度', options: EFFORT_OPTIONS, help: '发给端点的 thinking 开关与档位' },
           { type: 'select', key: 'temperature', label: '采样温度', options: TEMPERATURE_OPTIONS, help: `写入 ${CONFIG_FILE} 的 temperature` },
           {
             type: 'switch',
             key: 'closeToTray',
             label: '关窗缩到托盘',
-            help: '点窗口右上角 X 只隐藏窗口，dsc 继续在后台跑；关掉这个开关就是点 X 直接退出',
+            help: '点击窗口关闭按钮时仅隐藏窗口，应用继续在后台运行；关闭该开关后点击关闭按钮即退出应用',
           },
           { type: 'info', label: '配置文件', text: CONFIG_FILE, mono: true, copyable: true },
         ]
@@ -211,6 +228,17 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       values: () => ({}),
     }
 
+    // ── 内置分区：用量统计（热力图 / 趋势 / 模型占比由桌面端画，数据走 usageStats） ──
+    const usageSection: SettingsSectionSpec = {
+      id: 'usage',
+      title: '用量统计',
+      subtitle: 'Token 活动热力图、趋势与模型占比',
+      order: 25,
+      custom: true,
+      fields: () => [],
+      values: () => ({}),
+    }
+
     // ── 内置分区：关于 ────────────────────────────────────────────────────────
     const about: SettingsSectionSpec = {
       id: 'about',
@@ -219,11 +247,11 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       order: 900,
       fields(): SettingsField[] {
         return [
-          { type: 'info', label: 'dsc 版本', text: packageVersion() },
-          { type: 'info', label: '内核 API 版本', text: String(KERNEL_API_VERSION), help: '外部插件声明 apiVersion 高于它会被自动停用' },
+          { type: 'info', label: 'Muse Code 版本', text: packageVersion() },
+          { type: 'info', label: '内核 API 版本', text: String(KERNEL_API_VERSION), help: '外部插件声明的 apiVersion 高于此值时会被自动停用' },
           { type: 'info', label: '配置目录', text: DSC_HOME, mono: true, copyable: true },
           { type: 'info', label: '模型配置', text: CONFIG_FILE, mono: true, copyable: true },
-          { type: 'info', label: '凭据库', text: CREDENTIALS_FILE, mono: true, copyable: true, help: 'API key 只存在这里，界面永不回显' },
+          { type: 'info', label: '凭据库', text: CREDENTIALS_FILE, mono: true, copyable: true, help: 'API key 仅存储于此，界面不回显' },
           { type: 'info', label: '技能目录', text: DSC_SKILLS_DIR, mono: true, copyable: true },
           { type: 'info', label: '插件目录', text: DSC_PLUGINS_DIR, mono: true, copyable: true },
         ]
@@ -241,7 +269,7 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       }
     }
 
-    for (const section of [general, models, skillsSection, archiveSection, about]) register(section, true)
+    for (const section of [general, models, skillsSection, archiveSection, usageSection, about]) register(section, true)
 
     const service: SettingsService = {
       kernelApiVersion: KERNEL_API_VERSION,
@@ -275,7 +303,7 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
         if (section === undefined) return { ok: false, error: `没有名为 ${id} 的设置分区` }
         if (builtinIds.has(id) && section.save === undefined) return { ok: false, error: `${id} 分区不接受写入` }
         if (section.save === undefined) return { ok: false, error: `${section.title} 分区没有实现写入` }
-        return mutate(async () => {
+        return mutateSave(async () => {
           const result = await section.save?.(key, value)
           ctx.transcript.touch()
           return result

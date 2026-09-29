@@ -3,8 +3,13 @@
  * boot（终端）与 headless（桌面端宿主）共用；UI 插件由各自入口追加。
  *
  * 装配顺序即依赖顺序（cordis 也会按 inject 声明等待服务就绪）：
- *   llm → session → approval → tools → tools-default → transcript
- *   → commands → skills → settings → compact → agent → runtime → [UI] → 外部插件
+ *   llm → session → 三个扩展点（guards / surfaces / waiting）→ approval → tools
+ *   → tools-default → transcript → commands → skills → prompt → mode → settings → hooks
+ *   → compact → todo → plan → ask → agent → goal → runtime → [UI] → 外部插件
+ *
+ * 两处顺序是有原因的，不只是好看：
+ *   - approval 早于 mode：模式换档广播 `dsc/mode-changed`，审批要听（审批卡上写当前档位）；
+ *   - transcript 早于 plan：恢复会话时先把会话流清空，计划卡那条条目才不会被清掉。
  *
  * @module dsc/host/kernel
  */
@@ -20,7 +25,18 @@ import { pluginManagerPlugin } from '../plugins/plugin-manager.js'
 import { desktopDockPlugin } from '../plugins/desktop-dock.js'
 import { llmPlugin } from '../plugins/llm.js'
 import { sessionPlugin } from '../plugins/session.js'
+import { guardsPlugin } from '../plugins/guards.js'
+import { surfacesPlugin } from '../plugins/surfaces.js'
+import { waitingPlugin } from '../plugins/waiting.js'
 import { approvalPlugin } from '../plugins/approval.js'
+import { hooksPlugin } from '../plugins/hooks.js'
+import { promptPlugin } from '../plugins/prompt.js'
+import { modePlugin } from '../plugins/mode.js'
+import { todoPlugin } from '../plugins/todo.js'
+import { planPlugin } from '../plugins/plan.js'
+import { askPlugin } from '../plugins/ask.js'
+import { goalPlugin } from '../plugins/goal.js'
+import { memoryPlugin } from '../plugins/memory.js'
 import { toolsPlugin } from '../plugins/tools.js'
 import { toolsDefaultPlugin } from '../plugins/tools-default.js'
 import { transcriptPlugin } from '../plugins/transcript.js'
@@ -32,6 +48,13 @@ import { agentPlugin } from '../plugins/agent.js'
 import { runtimePlugin } from '../plugins/runtime.js'
 import { subagentPlugin } from '../plugins/subagent.js'
 import { computerUsePlugin } from '../plugins/computer-use.js'
+import { webSearchPlugin } from '../plugins/web-search.js'
+import { approvalFloorPlugin } from '../plugins/approval-floor.js'
+import { spillPlugin } from '../plugins/spill.js'
+import { sessionSearchPlugin } from '../plugins/session-search.js'
+import { lifecycleHooksPlugin } from '../plugins/lifecycle-hooks.js'
+import { mcpPlugin } from '../plugins/mcp.js'
+import { toolSearchPlugin } from '../plugins/tool-search.js'
 
 const err = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -43,7 +66,7 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   {
     file: 'subagent',
     name: '子智能体团队',
-    description: '把活拆给几个有明确授权的队友并行干（subagent / team_task 两个工具）',
+    description: '将任务拆分给有明确授权的队友并行执行，提供 subagent 与 team_task 工具',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'subagent',
@@ -51,10 +74,65 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   {
     file: 'computer-use',
     name: '电脑操作',
-    description: '截屏、点击、输入这台 Windows 桌面（每次动手都要审批）',
+    description: '控制 Windows 桌面：截屏、点击、输入，每次操作均需审批',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'computer-use',
+  },
+  {
+    file: 'web-search',
+    name: '网页搜索',
+    description: '提供 web_search 工具，经配置的搜索提供方检索网页，支持 Tavily、博查、Serper',
+    toggleable: true,
+    settingsSection: 'web-search',
+  },
+  // 下面这批默认开关按一条规矩定：会拉起外部进程、连外部服务器或改写每轮请求
+  // 工具面的那几档默认关（`defaultDisabled: true`），使用者按需打开；
+  // 提升安全与本地便利、且不配就完全无副作用的那几档默认开。
+  {
+    file: 'approval-floor',
+    name: '审批灾难地板',
+    description: '任何协作模式与权限模式下都不放行的灾难命令硬拒，外加白名单自动放行与黑名单拦截',
+    toggleable: true,
+    settingsSection: 'approval-floor',
+  },
+  {
+    file: 'spill',
+    name: '大输出溢出',
+    description: '工具输出超长时落到临时文件，只把前几行与文件路径回给模型，防止上下文被长日志撑爆',
+    toggleable: true,
+    settingsSection: 'spill',
+  },
+  {
+    file: 'session-search',
+    name: '会话全文检索',
+    description: '给历史会话建中文可用的全文索引，提供 session_search 工具与 /search 命令',
+    toggleable: true,
+    settingsSection: 'session-search',
+  },
+  {
+    file: 'lifecycle-hooks',
+    name: '生命周期钩子',
+    description: '读 ~/.dsc/lifecycle-hooks.json，按 Codex 的十二个生命周期事件跑外部命令钩子',
+    toggleable: true,
+    defaultDisabled: true,
+    settingsSection: 'lifecycle-hooks',
+  },
+  {
+    file: 'mcp',
+    name: 'MCP 客户端',
+    description: '连接 MCP server（stdio / streamable-http），把它们的工具挂成 mcp__服务器__工具',
+    toggleable: true,
+    defaultDisabled: true,
+    settingsSection: 'mcp',
+  },
+  {
+    file: 'tool-search',
+    name: '工具渐进披露',
+    description: '用 tool_search / tool_describe / tool_call 三个检索型工具替代把全部工具 schema 塞进每轮请求',
+    toggleable: true,
+    defaultDisabled: true,
+    settingsSection: 'tool-search',
   },
 ]
 
@@ -62,6 +140,13 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
 const OFFICIAL_OBJECTS: Readonly<Record<string, Plugin.Object>> = {
   subagent: subagentPlugin,
   'computer-use': computerUsePlugin,
+  'web-search': webSearchPlugin,
+  'approval-floor': approvalFloorPlugin,
+  spill: spillPlugin,
+  'session-search': sessionSearchPlugin,
+  'lifecycle-hooks': lifecycleHooksPlugin,
+  mcp: mcpPlugin,
+  'tool-search': toolSearchPlugin,
 }
 
 export interface KernelOptions {
@@ -74,15 +159,36 @@ export interface KernelOptions {
 export const BUILTIN_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   { file: 'llm', name: '模型路由', description: '配置端点间切换模型与思考强度' },
   { file: 'session', name: '会话', description: '会话存储、恢复与列表' },
+  { file: 'guards', name: '工具守卫链', description: '工具动手之前该问谁：模式闸门与审批卡各占一环' },
+  { file: 'surfaces', name: '快照片段注册表', description: '界面快照里每块状态投影由那个功能点自己登记' },
+  { file: 'waiting', name: '等人登记表', description: '哪张卡片正挂着等用户做决定，一问就知道' },
   { file: 'approval', name: '审批', description: '工具执行前的人工授权' },
+  {
+    file: 'hooks',
+    name: '安全钩子',
+    description: '工具动手之前按用户自己登记的规则与脚本拦一道，能直接拦下或强制问人',
+    settingsSection: 'hooks',
+  },
   { file: 'tools', name: '工具注册表', description: '工具的注册与查找' },
   { file: 'tools-default', name: '内置工具', description: 'bash / read / write / edit / glob / grep' },
   { file: 'transcript', name: '会话流', description: '事件折叠成对话条目与快照' },
   { file: 'commands', name: '斜杠命令', description: '/ 命令注册与补全' },
   { file: 'skills', name: '技能', description: 'SKILL.md 发现、开关、市场与 skill 工具' },
+  { file: 'prompt', name: '提示词组装', description: '系统提示词分段注册表与请求体改写链' },
+  { file: 'mode', name: '协作模式', description: '执行 / 计划 / 探索 / 免打扰四档与工具闸门' },
   { file: 'settings', name: '设置', description: '设置分区注册表、模型配置与偏好' },
-  { file: 'compact', name: '压缩', description: '上下文超阈值自动压缩' },
+  { file: 'compact', name: '压缩', description: '上下文超阈值自动压缩', settingsSection: 'compact' },
+  { file: 'todo', name: '任务清单', description: '模型自己维护的清单与实时进度条' },
+  { file: 'plan', name: '计划交付', description: '写计划文件并弹评审卡等用户批' },
+  { file: 'ask', name: '模型提问', description: 'ask_user 工具与它的选项卡' },
   { file: 'agent', name: 'Agent 循环', description: 'ReAct 推理与工具调用循环' },
+  { file: 'goal', name: '会话目标', description: '跨轮自动续跑与它的刹车', settingsSection: 'goal' },
+  {
+    file: 'memory',
+    name: '长期记忆',
+    description: '跨会话留下的事实：全局事实、用户偏好、当前工作区各一格，注入给模型的就是这些',
+    settingsSection: 'memory',
+  },
   { file: 'runtime', name: '运行时适配器', description: '把服务织成 UI 消费的 DscRuntime' },
 ]
 
@@ -93,15 +199,29 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   for (const meta of OFFICIAL_PLUGINS) registerPluginMeta({ ...meta, source: 'builtin' })
   await root.plugin(llmPlugin, options.config)
   await root.plugin(sessionPlugin, { resumeSessionPath: options.resumeSessionPath })
-  await root.plugin(approvalPlugin)
+  // 三个内核扩展点先挂：后面每个功能点都要往它们上面登记自己那一块。
+  await root.plugin(guardsPlugin)
+  await root.plugin(surfacesPlugin)
+  await root.plugin(waitingPlugin)
+  await root.plugin(approvalPlugin, getPluginConfig('approval'))
   await root.plugin(toolsPlugin)
   await root.plugin(toolsDefaultPlugin)
   await root.plugin(transcriptPlugin)
   await root.plugin(commandsPlugin)
   await root.plugin(skillsPlugin)
+  await root.plugin(promptPlugin, getPluginConfig('prompt'))
+  await root.plugin(modePlugin)
   await root.plugin(settingsPlugin, options.config)
+  // 安全钩子排在设置之后：它既要往设置里挂自己的分区，又要把闸门挂到守卫链上。
+  await root.plugin(hooksPlugin)
   await root.plugin(compactPlugin)
+  await root.plugin(todoPlugin)
+  await root.plugin(planPlugin)
+  await root.plugin(askPlugin, getPluginConfig('ask'))
   await root.plugin(agentPlugin)
+  await root.plugin(goalPlugin, getPluginConfig('goal'))
+  // 长期记忆排在 agent 之后：轮次结束时它要用 agent.followup 启动一次记忆复盘。
+  await root.plugin(memoryPlugin, getPluginConfig('memory'))
   await root.plugin(runtimePlugin)
   await root.plugin(desktopDockPlugin, { cwd: process.cwd() })
   await root.plugin(pluginManagerPlugin)
@@ -166,10 +286,10 @@ export function emitStartupNotes(
 ): void {
   if (Object.keys(config.providers).length === 0) {
     root.transcript.system(
-      'dsc: 没有可用的模型端点。\n' +
+      'Muse Code：没有可用的模型端点。\n' +
         '请编辑 ~/.dsc/config.yaml 配置 providers（api: openai-completions 风格），\n' +
         'key 放到 apiKeyEnv 指向的环境变量或 ~/.dsc/credentials.yaml。\n' +
-        '若本机有 dsh 配置，可运行 `dsc config migrate --force` 迁移。',
+        '若本机有 dsh 配置，可运行 `msc config migrate --force` 迁移。',
     )
   }
   if (migration !== null) {

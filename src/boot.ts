@@ -1,6 +1,6 @@
 /**
  * dsc harness 的终端入口：cordis 内核装配 + ink TUI 插件。
- * 由 bin/dsc.js spawn；编译产物 lib/boot.js。
+ * 由 bin/dsc.js spawn（bin 键 msc）；编译产物 lib/boot.js。
  *
  * 万物皆插件：本文件只负责装配——base 服务集见 host/kernel.ts，
  * UI 由 config.yaml 的 ui 段选择（tui | headless），外部插件经
@@ -30,6 +30,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error('[dsc] 启动失败：', error)
+  console.error('[msc] 启动失败：', error)
   process.exit(1)
 })

@@ -14,9 +14,14 @@ export const tuiPlugin: Plugin.Object = {
   inject: ['ui'],
   apply(ctx) {
     const runtime = ctx.ui
+    // 有人在看：审批插件据此弹人工审批卡；没有这个登记时它按「无人应答」立刻拒掉，不白等超时。
+    const offInteractive = ctx.provide('interactive', { kind: 'tui' as const, reachable: () => true })
     // exitOnCtrlC=false：Ctrl+C 交给 App（一次打断 / 双击退出）。
     const instance: Instance = render(React.createElement(App, { runtime }), { exitOnCtrlC: false })
     ctx.on('dsc/exit', () => instance.unmount())
-    return () => instance.unmount()
+    return () => {
+      offInteractive()
+      instance.unmount()
+    }
   },
 }

@@ -12,7 +12,7 @@
  * @module dsc/adapter/transcript
  */
 import type { CoreEvent } from '../core/events.js'
-import { contentText, type ChatMessage } from '../core/llm.js'
+import { contentImages, contentText, type ChatMessage } from '../core/llm.js'
 import type { TokenUsageView, ToolCallView, ToolStatus, TranscriptEntry } from '../contract.js'
 
 /** 工具卡条目（替换对象实现不可变更新）。 */
@@ -63,6 +63,20 @@ export class Transcript {
     this.list.push({ kind: 'system', id: this.seq++, text })
   }
 
+  /**
+   * 记一份计划（提交评审、批准、拒绝都走这里）。
+   * 同一份计划（按文件路径认）只保留一张卡：批完之后原位更新结论，别叠两张。
+   */
+  plan(view: Extract<TranscriptEntry, { kind: 'plan' }>['plan']): void {
+    const at = this.list.findIndex((entry) => entry.kind === 'plan' && entry.plan.file === view.file)
+    if (at >= 0) {
+      const previous = this.list[at]
+      if (previous?.kind === 'plan') this.list[at] = { ...previous, plan: view }
+      return
+    }
+    this.list.push({ kind: 'plan', id: this.seq++, plan: view })
+  }
+
   /** 清空（开新会话/恢复会话时）。 */
   clear(): void {
     this.list = []
@@ -84,9 +98,16 @@ export class Transcript {
     let changed = false
     for (const message of messages) {
       switch (message.role) {
-        case 'user':
-          changed = this.reduce({ type: 'user', text: contentText(message.content) }) || changed
+        case 'user': {
+          const images = contentImages(message.content)
+          changed =
+            this.reduce({
+              type: 'user',
+              text: contentText(message.content),
+              ...(images.length > 0 ? { images } : {}),
+            }) || changed
           break
+        }
         case 'assistant':
           changed =
             this.reduce({
@@ -131,8 +152,19 @@ export class Transcript {
     switch (event.type) {
       case 'user': {
         const last = this.list[this.list.length - 1]
-        if (last !== undefined && last.kind === 'user' && last.text === event.text) return false
-        this.list.push({ kind: 'user', id: this.seq++, text: event.text })
+        const imageCount = event.images?.length ?? 0
+        const sameAsLast =
+          last !== undefined &&
+          last.kind === 'user' &&
+          last.text === event.text &&
+          (last.images?.length ?? 0) === imageCount
+        if (sameAsLast) return false
+        this.list.push({
+          kind: 'user',
+          id: this.seq++,
+          text: event.text,
+          ...(imageCount > 0 ? { images: event.images } : {}),
+        })
         return true
       }
       case 'message': {

@@ -20,7 +20,7 @@ export const BUILT_IN_COMMANDS: CommandSpec[] = [
   { name: 'new', args: '', description: '新建会话' },
   { name: 'resume', args: '', description: '恢复历史会话' },
   { name: 'compact', args: '', description: '压缩上下文' },
-  { name: 'model', args: '<[端点/]模型名>', description: '切换模型（下一次请求生效）' },
+  { name: 'model', args: '<[端点/]模型名>', description: '切换模型，下一次请求生效' },
   { name: 'help', args: '', description: '查看帮助' },
   { name: 'exit', args: '', description: '退出' },
 ]
@@ -157,7 +157,7 @@ export const commandsPlugin: Plugin.Object = {
       ({ ui }) => ui.openPicker(),
     )
     service.register(
-      { name: 'model', args: '<[端点/]模型名>', description: '切换模型（下一次请求生效）' },
+      { name: 'model', args: '<[端点/]模型名>', description: '切换模型，下一次请求生效' },
       ({ args, runtime, ui }) => {
         const model = args[0]
         if (model === undefined || model === '') {
@@ -168,8 +168,8 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'effort', args: '', description: '（已移除）推理强度' },
-      ({ ui }) => ui.notice('v2 已移除 /effort（OpenAI 协议不含该参数）'),
+      { name: 'effort', args: '', description: '推理强度，已移除' },
+      ({ ui }) => ui.notice('已移除 /effort，思考强度改在设置页调整'),
     )
     service.register(
       { name: 'exit', args: '', description: '退出' },

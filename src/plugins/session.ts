@@ -26,6 +26,7 @@ import {
   trashRoot,
 } from '../core/session.js'
 import { patchSessionMeta } from '../core/session-meta.js'
+import type { SessionListItem } from '../core/session.js'
 import { errText } from '../adapter/transcript.js'
 import type {
   ArchivedPage,
@@ -99,16 +100,12 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
         loading = true
         ctx.emit('dsc/changed')
         try {
-          sessions = listSessions().map(
-            (item): SessionSummary => ({
-              id: item.path,
-              cwd: item.cwd,
-              createdAt: item.createdAt,
-              updatedAt: item.updatedAt,
-              ...(item.title !== undefined ? { title: item.title } : {}),
-              ...(item.pinnedAt !== undefined ? { pinnedAt: item.pinnedAt } : {}),
-            }),
-          )
+          // 归档区的会话也进这份缓存：侧栏的「筛选会话」要能原地在活动区与归档区之间切，
+          // 由面板按 archivedAt 决定显示哪些。归档相关的写操作仍只认活动区路径。
+          sessions = [
+            ...listSessions().map((item) => toSummary(item)),
+            ...listArchivedSessions().map((item) => toSummary(item, item.archivedAt ?? item.updatedAt)),
+          ]
         } catch (error) {
           ctx.emit('dsc/notice', `会话列表读取失败：${errText(error)}`)
         }
@@ -215,4 +212,17 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
 /** 会话 jsonl 的 `<uuid>.jsonl` 文件名 → uuid（sidecar 的键）。 */
 function uuidOf(filePath: string): string {
   return basename(filePath, '.jsonl')
+}
+
+/** 会话库扫描结果 → 侧栏与选择器用的一行；传 archivedAt 表示它来自归档区。 */
+function toSummary(item: SessionListItem, archivedAt?: number): SessionSummary {
+  return {
+    id: item.path,
+    cwd: item.cwd,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    ...(item.title !== undefined ? { title: item.title } : {}),
+    ...(item.pinnedAt !== undefined ? { pinnedAt: item.pinnedAt } : {}),
+    ...(archivedAt !== undefined ? { archivedAt } : {}),
+  }
 }

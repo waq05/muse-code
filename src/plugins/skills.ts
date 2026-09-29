@@ -355,11 +355,11 @@ export const skillsPlugin: Plugin.Object = {
     })
 
     // ── /skills：清单与用法 ──
-    ctx.commands.register({ name: 'skills', args: '', description: '查看技能清单（技能中心可启停）' }, ({ ui }) => {
+    ctx.commands.register({ name: 'skills', args: '', description: '查看技能清单，可在技能中心启停' }, ({ ui }) => {
       const items = service.list()
       if (items.length === 0) {
         ui.notice(
-          `还没有技能。\n把 <名字>/SKILL.md 放进 ${DSC_SKILLS_DIR}（或项目的 .dsc/skills）即可，` +
+          `还没有技能。\n将 <名字>/SKILL.md 放入 ${DSC_SKILLS_DIR} 或项目的 .dsc/skills 即可，` +
             '桌面端「技能」页也能从市场安装。',
         )
         return

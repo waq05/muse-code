@@ -14,6 +14,9 @@
  * @module dsc/services
  */
 import type { ApprovalDecision, ApprovalHandler, ApprovalRequest } from '../core/approval.js'
+import type { AuditRecord } from '../core/audit.js'
+import type { HookJudgement, HooksDoc, HookTrust } from '../core/hooks.js'
+import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryWriteResult, WriteOptions } from '../core/memory.js'
 import type { ProviderConfig } from '../core/config.js'
 import type { Session } from '../core/session.js'
 import type { ChatMessage } from '../core/llm.js'
@@ -21,21 +24,35 @@ import type { ToolEntry } from '../core/tools.js'
 import type { CoreEvent } from '../core/events.js'
 import type { SkillDefinition, SkillSummary } from '../core/skills.js'
 import type { DscPrefs } from '../core/prefs.js'
+import type { ToolGuard, ToolGuardChain, ToolObserver } from '../core/tool-guards.js'
+import type { GoalStore } from '../core/goal.js'
+import type { PromptContribution } from '../core/prompt.js'
+import type { TodoWriteResult } from '../core/todo.js'
 import type {
   ApprovalAnswer,
   ApprovalPolicy,
   ApprovalRequestView,
   ArchivedPage,
   ArchivedSessionView,
+  AskUserView,
+  CollaborationMode,
   DscRuntime,
   EffortLevel,
+  GoalView,
   MarketBrowseResult,
   MarketSkillView,
   ModelChoiceView,
   ModelConfigView,
+  Modality,
+  ModeSurface,
+  PlanDecision,
+  PlanView,
+  PolicySurface,
   ProviderDraft,
   RuntimeSnapshot,
+  RuntimeSurfaces,
   TeammateView,
+  TodoView,
   TranscriptEntry,
   SessionForkResult,
   SessionSummary,
@@ -70,6 +87,8 @@ export interface LlmRoute {
   temperature?: number
   /** 思考开关注入；undefined = 不发 thinking 字段（端点默认行为）。 */
   thinking?: 'enabled' | 'disabled'
+  /** `reasoning_effort` 的线上值；undefined = 不发。与 thinking 二选一，看模型怎么声明。 */
+  reasoningEffort?: string
 }
 
 /** 模型端点路由服务（provider/model 热切换的唯一状态持有者）。 */
@@ -82,6 +101,8 @@ export interface LlmService {
   get effort(): EffortLevel
   /** 当前模型上下文窗口（未知模型按 128k）。 */
   get contextWindow(): number
+  /** 当前模型声明的输入模态（没勾照片时，图像在发请求前换成一句说明）。 */
+  get inputModalities(): Modality[]
   /** 组装当前路由；端点缺失时抛错（调用方负责转 system 条目）。 */
   route(): LlmRoute
   /**
@@ -91,7 +112,10 @@ export interface LlmService {
   routeTo(provider: string, model: string, effort: EffortLevel): LlmRoute
   /** 校验并切换端点/模型；失败抛错（消息可直接展示）。 */
   setModel(provider: string, model: string): void
-  /** 设置思考强度档位（off=关闭思考，low/high/max=开启思考）。 */
+  /**
+   * 设置思考强度档位（off=关闭思考，low/high/max=开启思考）。
+   * 当前模型没声明这一档时抛错（消息可直接展示），越界的旧档位会随模型切换退回「默认」。
+   */
   setEffort(effort: EffortLevel): void
   /** 可切换模型列表（/model 补全与校验数据源）。 */
   listModels(): ModelChoiceView[]
@@ -137,12 +161,164 @@ export interface SessionService {
 export interface ApprovalService extends ApprovalHandler {
   /** 当前权限模式。 */
   readonly policy: ApprovalPolicy
+  /** 权限模式投影（当前档 + 可切清单），界面画档位按钮的数据源。 */
+  surface(): PolicySurface
   /** 切换权限模式（写 system 条目告知模型与用户）。 */
   setPolicy(policy: ApprovalPolicy): void
   /** 当前挂起的审批视图；null = 无。 */
   pendingView(): ApprovalRequestView | null
   /** 应答当前挂起审批（无挂起时静默忽略）。 */
   answer(answer: ApprovalAnswer): void
+}
+
+// ── hooks（安全钩子）───────────────────────────────────────────────────────────
+
+/**
+ * 安全钩子服务：规则与脚本的清单、脚本批准状态、命中历史。
+ * 拦与问的动作发生在守卫链里（这个服务不负责裁决），它负责让界面与 `/hooks` 看得见现状。
+ */
+export interface HookService {
+  /** 当前配置（含读配置时发现的毛病）。 */
+  doc(): HooksDoc
+  /** 一条脚本的批准状态与「现在到底能不能跑」；找不到这条脚本返回 null。 */
+  trustOf(id: string): HookTrust | null
+  /** 只看规则会命中什么（不跑脚本），给 `/hooks` 与自检用。 */
+  previewRules(input: { toolName: string; command?: string; target?: string; args?: Record<string, unknown> }): HookJudgement[]
+  /** 最近若干条钩子命中记录（新的在前，从 `~/.dsc/audit.jsonl` 里挑）。 */
+  recent(limit?: number): AuditRecord[]
+}
+
+// ── memory（长期记忆）──────────────────────────────────────────────────────────
+
+/**
+ * 长期记忆服务：三格清单的现状、写入入口、注入系统提示的那一栏。
+ * 存储本体在 `~/.dsc/memory/`，这个服务负责让界面与 `/memory` 看得见现状。
+ */
+export interface MemoryService {
+  /** 三格现状（含额度用量与「被外面改过」的提示）。不传 cwd 就用当前会话的工作目录。 */
+  cells(cwd?: string): MemoryCell[]
+  /** 当前生效的可调值。 */
+  config(): MemoryConfig
+  /** 写一批操作（设置页的按钮也走这条路，安检与额度一道不少）。 */
+  write(operations: readonly MemoryOperation[], cwd?: string, options?: WriteOptions): MemoryWriteResult
+  /** 现在注入系统提示的那一栏（可能为空串）。 */
+  snapshot(): string
+  /** 重算一份快照：新会话与压缩会自动做，这里留一个人工入口。 */
+  refresh(): string
+}
+
+// ── mode（协作模式）────────────────────────────────────────────────────────────
+
+
+/**
+ * 协作模式服务：模式状态 + 注册进守卫链的那一道闸门。
+ * 模式只管「这一轮允许把手伸多远」，权限模式管「问出来之后怎么裁」，两者互不越界。
+ */
+export interface ModeService {
+  /** 当前模式（执行 / 计划 / 探索 / 免打扰）。 */
+  readonly mode: CollaborationMode
+  /** 协作模式投影（当前档 + 可切清单），界面画档位按钮的数据源。 */
+  surface(): ModeSurface
+  /** 切换模式：写会话记录（恢复会话时能还原）并广播快照失效。 */
+  setMode(mode: CollaborationMode): void
+}
+
+// ── tasks（任务清单 / 计划 / 目标 / 提问）────────────────────────────────────────
+
+/**
+ * 任务面服务（todo_write 那一块）：模型自己维护、界面实时显示的清单。
+ * 计划、目标、提问各自是另一个功能点，各自的插件提供各自的服务。
+ */
+export interface TodoService {
+  /** 任务清单投影（输入框上方那条清单条的数据源）。 */
+  todoView(): TodoView
+  /** 写入任务清单（整表替换或按 id 合并），同时落会话记录。 */
+  writeTodos(todos: readonly unknown[], merge: boolean): TodoWriteResult
+  /** 清空任务清单（用户手动清）。 */
+  clearTodos(): void
+  /** 任务清单的提示词投影（压缩后重新注入用；空清单返回空串）。 */
+  todoPrompt(): string
+}
+
+/** 计划交付服务（exit_plan_mode 那一块）：写计划文件 + 弹评审卡等用户批。 */
+export interface PlanService {
+  /** 挂着等批的计划；null = 无。 */
+  pendingPlan(): PlanView | null
+  /** 交一份计划等用户批（挂起直到批准/拒绝/中断）。 */
+  proposePlan(plan: { file: string; title: string; text: string }, signal: AbortSignal): Promise<PlanDecision>
+  /** 回答挂起的计划评审卡。 */
+  answerPlan(decision: PlanDecision): void
+}
+
+/** 模型提问服务（ask_user 那一块）：一次提问最多几个问题、每项几个选项由插件配置决定。 */
+export interface AskService {
+  /** 挂着等答的提问；null = 无。 */
+  pendingQuestion(): AskUserView | null
+  /** 模型向用户提一个问题（挂起直到有答案或中断）。 */
+  ask(question: Omit<AskUserView, 'id'>, signal: AbortSignal): Promise<string>
+  /** 回答挂起的提问。 */
+  answerQuestion(answer: string): void
+}
+
+/** 会话目标服务（goal 那一块）：跨轮自动续跑与它的刹车。 */
+export interface GoalService {
+  /** 会话目标投影；null = 没设目标。 */
+  goalView(): GoalView | null
+  /** 目标存储（goal 工具与自动续跑驱动器共用）。 */
+  readonly goals: GoalStore
+  /** 用户侧目标动作（暂停 / 继续 / 清空 / 放宽轮次上限）。 */
+  goalAction(action: 'pause' | 'resume' | 'clear' | 'extend'): SettingsMutation
+  /**
+   * 自动续跑驱动器向目标要一轮：目标 active 且已上膛时把轮次 +1 并返回要补发给模型的话。
+   * 只要还有卡片在等用户做决定，或轮次跑到上限，就返回 null（不隔着一张卡硬推）。
+   */
+  takeGoalRound(): string | null
+}
+
+// ── guards / surfaces / waiting（三个内核扩展点）────────────────────────────────
+
+/**
+ * 工具守卫链服务（内核 API v4）：一次工具调用动手之前该问谁。
+ * 模式注册 order 10 的那一位，审批注册 order 30 的那一位；循环只问结果。
+ */
+export interface GuardService extends ToolGuardChain {
+  /** 注册一位守卫；返回退订函数。同 id 后注册者顶掉先注册者。 */
+  register(guard: ToolGuard): () => void
+  /** 注册一位工具结果加工者（遮红是内置唯一一位）；返回退订函数。 */
+  registerObserver(observer: ToolObserver): () => void
+  /** 当前链上的守卫（按询问顺序，自检与诊断用）。 */
+  readonly chain: ToolGuard[]
+}
+
+/**
+ * 快照片段注册表服务（内核 API v4）：界面快照里每一块状态投影由功能点自己登记。
+ * 装配快照的那一层因此不认识任何具体功能。
+ */
+export interface SurfaceService {
+  /**
+   * 登记一片投影。
+   * @param id - 界面读取时用的键（同时是 RuntimeSurfaces 的那个键）。
+   * @param read - 每次装配快照时调用，所以功能点改内容不用通知谁。
+   * @returns 退订函数。
+   */
+  register<K extends keyof RuntimeSurfaces>(id: K, read: () => RuntimeSurfaces[K]): () => void
+  /** 装配当前全部投影（界面快照的 surfaces 字段就是它的返回值）。 */
+  build(): RuntimeSurfaces
+  /** 已登记的片段键（按登记顺序，自检与诊断用）。 */
+  readonly ids: string[]
+}
+
+/**
+ * 「正在等人」登记表（内核 API v4）：审批卡、计划卡、提问卡各登记一位。
+ * 谁想自动往下推（例如目标续跑），先问这里有没有人挂着，不必认识每张卡。
+ */
+export interface WaitingService {
+  /** 登记一位正在等用户做决定的卡片；返回退订函数。 */
+  register(id: string, pending: () => boolean): () => void
+  /** 当前有哪些卡片在等人（按登记顺序）。 */
+  readonly ids: string[]
+  /** 是否有任何卡片在等人。 */
+  readonly any: boolean
 }
 
 // ── tools ────────────────────────────────────────────────────────────────────
@@ -208,6 +384,8 @@ export interface TranscriptService {
   emit(event: CoreEvent): void
   /** 追加一条 system 条目。 */
   system(text: string): void
+  /** 追加一条计划卡条目（提交评审与批完各更新一次）。 */
+  plan(view: PlanView): void
   /**
    * 恢复会话时把历史消息重放为条目（启动恢复/session-open 场景）。
    * @param toolErrors 会话日志记的工具异常标记（`Session.toolErrors`），
@@ -228,14 +406,25 @@ export interface CompactService {
   check(): Promise<void>
   /** 手动压缩（/compact），结果经 dsc/notice 反馈。 */
   run(): Promise<void>
+  /**
+   * 登记一段「摘要之外必须原样带过去」的文本。
+   * 任务清单、会话目标这类内容经摘要模型一转就会被改写走样，所以由功能点自己登记原文；
+   * 压缩插件因此不认识任何具体功能。
+   * @param contribute - 每次压缩时调用，返回要附在摘要后面的文本（空串 = 这次没有）。
+   * @returns 退订函数。
+   */
+  registerCarry(contribute: () => string): () => void
 }
 
 // ── agent ────────────────────────────────────────────────────────────────────
 
 /** Agent 服务：ReAct 循环的对外操作面。 */
 export interface AgentService {
-  /** 提交一条用户消息（排队执行）。 */
-  followup(text: string): void
+  /**
+   * 提交一条用户消息（排队执行）。
+   * @param images - 随消息发送的图片（data URL 清单）。
+   */
+  followup(text: string, images?: string[]): void
   /** 取消当前回合。 */
   interrupt(): void
 }
@@ -251,15 +440,28 @@ export interface PromptService {
    * 注册一段附加系统提示。
    * @param id - 归属键（例如插件名），同名后注册者顶掉先注册的。
    * @param text - 每次组装请求时调用，所以插件改内容不用重启。
+   * @param options.order - 段落位置：小的排前面。内置刻度是身份 0、做事方式 10、
+   *   工具规范 20、模式条款 30、插件贡献 60（缺省）、指令文件 200、技能目录 210、模型信息 890、环境事实 900。
+   *   易变的内容请往大数值放，前面的稳定段才能一直命中服务端提示缓存。
    */
-  register(id: string, text: () => string): () => void
+  register(id: string, text: () => string, options?: { order?: number }): () => void
   /**
    * 注册一个请求体改写函数。只改发出去的那份，会话日志不动。
    * 典型用法：电脑操作插件只保留最近一张截图，旧截图留在历史里除了撑上下文没有用。
    */
   transformMessages(fn: (messages: ChatMessage[]) => ChatMessage[]): () => void
-  /** 拼好的附加提示文本（内置 agent 组装请求时用，插件不必直接调）。 */
-  extraText(): string
+  /** 已注册段（带顺序），拼提示词时与内核自己的段合并；外部插件一般不必直接调。 */
+  sections(): PromptContribution[]
+  /**
+   * 拼出这一轮要用的完整系统提示词（内置骨架 + 各注册段 + 指令文件 + 技能目录 + 环境事实）。
+   * @param cwd - 会话工作目录（决定读哪份 AGENTS.md，以及环境事实那一段）。
+   */
+  systemPrompt(cwd: string): string
+  /**
+   * 应用全部改写钩子，得到真正发给模型的那份消息。
+   * @param messages - 已经拼好系统提示的那份。
+   */
+  rewrite(messages: ChatMessage[]): ChatMessage[]
 }
 
 // ── team ─────────────────────────────────────────────────────────────────────
@@ -390,6 +592,115 @@ export interface DockService {
   handle(op: string, payload: Record<string, unknown>): Promise<unknown>
 }
 
+/** 一个 MCP server 的连接状态（给设置页与自检看，不进模型上下文）。 */
+export interface McpServerInfo {
+  name: string
+  transport: 'stdio' | 'http'
+  /** 这个 server 暴露了几个工具。 */
+  tools: number
+  state: 'ready' | 'connecting' | 'failed'
+  /** state 为 failed 时的原因原文。 */
+  problem?: string
+}
+
+/** 一个 MCP 工具在目录里的样子（渐进披露的检索对象）。 */
+export interface McpToolInfo {
+  /** 完整工具名，形如 `mcp__<server>__<tool>`；模型与守卫链看到的都是它。 */
+  name: string
+  server: string
+  tool: string
+  description: string
+  /** JSON Schema（OpenAI function 参数格式）。 */
+  parameters: Record<string, unknown>
+  risk: 'read' | 'write' | 'exec'
+}
+
+/**
+ * MCP 客户端（mcp 插件提供；插件没开时不存在）。
+ *
+ * 命令式四个方法构成的能力面：查连接状态、列工具目录、按真名调用、把 schema 从
+ * 每轮请求里撤下。最后一个是给 Tool Search 用的——由工具目录的持有者自己决定
+ * 哪些工具留在台面上，免得两处各存一份「谁可见」的判断。
+ */
+export interface McpService {
+  /** 已配置的 server 及其连接状态。 */
+  servers(): McpServerInfo[]
+  /** 当前可用的 MCP 工具目录（与是否已注册进 ctx.tools 无关）。 */
+  tools(): McpToolInfo[]
+  /** 按完整工具名调用；结果已过防注入围栏。 */
+  call(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<string>
+  /**
+   * 把已注册进 `ctx.tools` 的动手类（write / exec）MCP 工具撤下，只留在本服务里供渐进披露；
+   * 只读工具留在台面上——它们靠 `risk: 'read'` 免审批，撤下去就只剩走 `tool_call` 的审批卡。
+   * 幂等。
+   */
+  deferSchemas(): void
+}
+
+/** 一条跨会话检索命中。 */
+export interface SessionSearchHit {
+  sessionId: string
+  /** 会话 jsonl 的绝对路径，可直接交给 openSession 打开。 */
+  file: string
+  cwd: string
+  /** 命中那一行属于谁：user / assistant / tool / summary。 */
+  role: string
+  /** 命中行的记录时间戳（毫秒）；老日志没有就是 0。 */
+  ts: number
+  /** 命中处前后各截一段的正文片段。 */
+  snippet: string
+  /** 命中所在行号（从 1 数），供精确定位。 */
+  line: number
+}
+
+/** {@link SessionSearchService.search} 的可选条件。 */
+export interface SessionSearchOptions {
+  /** 最多返回几条，缺省由插件配置决定。 */
+  limit?: number
+  /** 是否把归档区（`sessions/.archived/`）也算进来。 */
+  includeArchived?: boolean
+  /** 只搜这个工作目录下的会话。 */
+  cwd?: string
+}
+
+/**
+ * 跨会话全文检索（session-search 插件提供；插件没开时不存在）。
+ *
+ * 检索走旁路索引，不改会话 jsonl 的主格式：索引坏了重建即可，会话历史不受影响。
+ */
+export interface SessionSearchService {
+  /** 按关键词检索历史会话正文；中文按 bigram 切词，所以 1-2 字词也命中。 */
+  search(query: string, options?: SessionSearchOptions): Promise<SessionSearchHit[]>
+  /** 丢掉索引整表重建（回填用）。 */
+  rebuild(): Promise<void>
+  /** 索引现状：建了几个文件、多少词项、最后更新时间。 */
+  stats(): { files: number; terms: number; updatedAt: number }
+}
+
+/**
+ * 审批灾难地板的只读视图（approval-floor 插件提供；插件没开时不存在）。
+ *
+ * 地板排在守卫链最前面，它判过的东西后面的守卫看不到，所以「这条命令命中白名单」这件事
+ * 必须显式交出来，由审批层去免卡放行——地板不能自己 `pass`，那会把后面的安全钩子一起跳掉。
+ */
+export interface ApprovalFloorService {
+  /** 这条命令命中白名单前缀就返回那串词元；没命中返回 null。 */
+  whitelist(command: string): readonly string[] | null
+  /** 白名单当前条数（诊断与设置页用）。 */
+  count(): number
+}
+
+/**
+ * 界面可达性：tui / host-stdio 这类「有人在看」的入口登记一份，没有登记就是没人能回答审批卡。
+ * 审批插件据此决定是弹卡还是立刻按拒处理，不再白等一次审批超时。
+ */
+export interface InteractiveService {
+  /** tui = 终端界面；host = 桌面端 stdio 宿主。 */
+  kind: 'tui' | 'host'
+  /** 现在还有人能回答审批卡吗（宿主客户端断开后为 false）。 */
+  reachable(): boolean
+}
+
 // ── cordis 声明合并 ──────────────────────────────────────────────────────────
 
 declare module '@deepseek-ai/cordis' {
@@ -397,6 +708,16 @@ declare module '@deepseek-ai/cordis' {
     llm: LlmService
     session: SessionService
     approval: ApprovalService
+    /** 协作模式（执行 / 计划 / 探索 / 免打扰）与它注册的那道守卫。 */
+    mode: ModeService
+    /** 任务清单（todo_write）。 */
+    todo: TodoService
+    /** 计划交付与评审卡（exit_plan_mode）。 */
+    plan: PlanService
+    /** 模型提问（ask_user）。 */
+    ask: AskService
+    /** 会话目标与自动续跑。 */
+    goal: GoalService
     tools: ToolService
     transcript: TranscriptService
     commands: CommandService
@@ -404,12 +725,30 @@ declare module '@deepseek-ai/cordis' {
     agent: AgentService
     /** 请求组装扩展点（附加系统提示 + 请求体改写）。 */
     prompt: PromptService
+    /** 工具守卫链（内核扩展点：谁想在工具动手前说话就注册一位）。 */
+    guards: GuardService
+    /** 快照片段注册表（内核扩展点：谁想在界面快照里有一块就登记一片）。 */
+    surfaces: SurfaceService
+    /** 「正在等人」登记表（内核扩展点：卡片挂没挂着一问就知道）。 */
+    waiting: WaitingService
     /** 子智能体团队（subagent 插件提供；插件没开时不存在）。 */
     team?: TeamService
     /** 技能服务（发现/启停/市场/模型可见目录）。 */
     skills: SkillService
     /** 设置服务（分区注册表 + 模型配置 + 偏好）。 */
     settings: SettingsService
+    /** 安全钩子（用户在工具动手前自己加的规则与脚本）。 */
+    hooks: HookService
+    /** 长期记忆（跨会话留下的事实，写在 `~/.dsc/memory/`）。 */
+    memory: MemoryService
+    /** MCP 客户端（mcp 插件提供；插件没开时不存在，读它要用 `ctx.get('mcp')`）。 */
+    mcp?: McpService
+    /** 跨会话全文检索（session-search 插件提供；插件没开时不存在，读它要用 `ctx.get('sessionSearch')`）。 */
+    sessionSearch?: SessionSearchService
+    /** 审批灾难地板的只读视图（approval-floor 插件提供；插件没开时不存在，读它要用 `ctx.get('approvalFloor')`）。 */
+    approvalFloor?: ApprovalFloorService
+    /** 界面可达性（tui / host-stdio 入口登记；脚本环境里不存在，读它要用 `ctx.get('interactive')`）。 */
+    interactive?: InteractiveService
     /** desktop-dock 服务（桌面端面板的工作区文件系统 + git）。 */
     dock: DockService
     /**
@@ -422,6 +761,8 @@ declare module '@deepseek-ai/cordis' {
   interface Events {
     'dsc/changed'(): void
     'dsc/notice'(text: string): void
+    /** 计划卡内容或评审结果有变（plan 插件发出，transcript 折叠成会话流里的计划条目）。 */
+    'dsc/plan'(plan: PlanView): void
     'dsc/session-open'(payload: SessionOpenPayload): void
     'dsc/exit'(): void
     /** 命令 handler 请求打开会话选择面板（/resume；UI 桥转发给宿主壳）。 */
@@ -430,6 +771,22 @@ declare module '@deepseek-ai/cordis' {
     'dsc/dock-data'(id: string, data: string): void
     /** 技能清单或启停状态变化（agent 据此重算模型可见目录）。 */
     'dsc/skills-changed'(): void
+    /**
+     * 协作模式换了档位（mode 插件发出）。
+     * 审批插件听这个把档位留在审批卡与审计记录里——它因此不必反过来依赖模式服务
+     * （mode 已经依赖 approval，反向再依赖一次就是环）。
+     */
+    'dsc/mode-changed'(mode: CollaborationMode): void
+    /**
+     * 一轮对话结束（agent 发出，reason 与 CoreEvent 的 turn/end 一致）。
+     * 目标续跑听这个；循环因此不认识「目标」这个功能。
+     */
+    'dsc/turn-end'(reason: 'completed' | 'aborted' | 'error'): void
+    /**
+     * 历史刚被压缩掉（compact 插件发出）。
+     * 加载时冻结的东西要重算：记忆栏就是靠这个换新的一份，不然压缩后模型还在读旧事实。
+     */
+    'dsc/compacted'(): void
   }
 }
 
@@ -451,6 +808,7 @@ export type {
   MarketSource,
   ModelChoiceView,
   ModelConfigView,
+  Modality,
   ProviderDraft,
   ProviderModelView,
   ProviderView,

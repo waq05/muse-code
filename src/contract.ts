@@ -8,8 +8,25 @@
  *   - 本文件自身不得 import 任何 @deepseek-ai/*。
  */
 
-/** deepseek adapter 的思考强度档位。default = 不声明 thinking 字段（跟随端点默认）。 */
+/** deepseek adapter 的思考强度档位。default = 不声明思考字段（跟随端点默认）。 */
 export type EffortLevel = 'default' | 'off' | 'low' | 'high' | 'max'
+
+/** 思考强度档位里可被模型声明的四档（default 不是模型能力，是「不发字段」）。 */
+export type ThinkingLevel = Exclude<EffortLevel, 'default'>
+
+/**
+ * 思考档位用哪个请求字段发给端点：
+ *   thinking          —— DeepSeek / GLM 的 `thinking:{type}`，只有开关，低/高/最大都发 enabled；
+ *   reasoning-effort —— OpenAI 与多数网关的 `reasoning_effort`，按档位发线上值（见 EffortMap）；
+ *   none              —— 端点没有思考参数，选哪档都不发字段。
+ */
+export type ThinkingParam = 'thinking' | 'reasoning-effort' | 'none'
+
+/** 模型能接受的输入类型（text 恒含；video 目前只作声明，dsc 还没有发视频的通道）。 */
+export type Modality = 'text' | 'image' | 'video'
+
+/** `reasoning-effort` 下每档要发的线上值；null = 该档不发字段。 */
+export type EffortMap = Partial<Record<ThinkingLevel, string | null>>
 
 /**
  * 权限模式（工具执行的沙箱策略）：
@@ -20,6 +37,92 @@ export type EffortLevel = 'default' | 'off' | 'low' | 'high' | 'max'
  *   ai-review    —— AI 自动审查：由模型逐次判断是否放行，失败回退人工审批。
  */
 export type ApprovalPolicy = 'readonly' | 'auto-edit' | 'full-access' | 'ai-review'
+
+/**
+ * 协作模式（这一轮允许模型把手伸多远）。与权限模式是两根独立的旋钮：
+ * 模式决定要不要问、能问什么；权限模式决定问出来之后怎么裁。
+ *   build   执行    —— 默认档，闸门不拦，全交给权限模式与审批卡；
+ *   plan    计划    —— 只读 + 只读命令，产出 .dsc/plans 下的计划文件等用户批；
+ *   explore 探索    —— 只读答疑，任何改动当场拒；
+ *   quiet   免打扰  —— 不弹审批卡：工作区内写自动放行，需要问的一律当场拒。
+ */
+export type CollaborationMode = 'build' | 'plan' | 'explore' | 'quiet'
+
+/**
+ * 任务清单条目的状态。
+ * core/todo.ts 直接用它（不再另写一遍四个字符串），界面与存储因此不可能各说一套。
+ */
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
+
+/** 任务清单里的一条（界面渲染用；正文已被截到 300 字以内）。 */
+export interface TodoItemView {
+  id: string
+  content: string
+  status: TodoStatus
+  /** 父任务 id；有值表示它是上一条的子任务，界面缩进一级。 */
+  parent?: string
+}
+
+/** 任务清单投影：整表 + 版本号 + 进度，界面靠 revision 丢掉过期帧。 */
+export interface TodoView {
+  items: TodoItemView[]
+  revision: number
+  /** 已完成数（cancelled 不计入分母）。 */
+  done: number
+  /** 有效任务总数。 */
+  total: number
+  /** 当前在做的那条正文（清单条上直接显示）。 */
+  active: string | null
+}
+
+/** 计划评审卡的状态。 */
+export type PlanDecision = 'pending' | 'approved' | 'rejected'
+
+/** 一份待批的计划。 */
+export interface PlanView {
+  /** 计划落盘的文件（相对工作目录显示由界面决定）。 */
+  file: string
+  title: string
+  /** 计划全文（markdown）。 */
+  text: string
+  /** 用户批没批；pending = 评审卡还挂着。 */
+  decision: PlanDecision
+}
+
+/**
+ * 目标阶段。
+ * `core/goal.ts` 直接 import 这个类型（那里只留别名），界面与存储因此共用一份声明。
+ */
+export type GoalPhaseView = 'active' | 'paused' | 'blocked' | 'complete'
+
+/** 会话目标投影（界面顶部那条 goal 条的数据源）。 */
+export interface GoalView {
+  objective: string
+  phase: GoalPhaseView
+  rounds: number
+  maxRounds: number
+  /** phase=blocked 时说明卡在哪。 */
+  blockedReason?: string
+  /** 自动续跑开关（进程本地；重启后为 false）。 */
+  armed: boolean
+}
+
+/** 模型问用户的一个问题（ask_user 工具的数据）。 */
+export interface AskOptionView {
+  label: string
+  description?: string
+}
+
+/** 模型发起的一次提问；界面渲染成带按钮的卡片，答案回给模型。 */
+export interface AskUserView {
+  id: string
+  question: string
+  header?: string
+  options: AskOptionView[]
+  multiSelect: boolean
+  /** 「其他」自由输入是否允许。 */
+  allowFreeText: boolean
+}
 
 /** 一次工具调用的展示状态。 */
 export type ToolStatus = 'running' | 'done' | 'failed' | 'rejected'
@@ -40,10 +143,13 @@ export interface ToolCallView {
  * UI 只读消费；`id` 单调递增、仅在本会话生命周期内唯一。
  */
 export type TranscriptEntry =
-  | { kind: 'user'; id: number; text: string }
+  /** images 是 data URL 清单（用户贴进来的图）；界面渲染成缩略图。 */
+  | { kind: 'user'; id: number; text: string; images?: string[] }
   | { kind: 'thinking'; id: number; text: string }
   | { kind: 'text'; id: number; text: string }
   | { kind: 'tool'; id: number; call: ToolCallView }
+  /** 计划卡：exit_plan_mode 交上来的计划，带用户批没批。 */
+  | { kind: 'plan'; id: number; plan: PlanView }
   | { kind: 'system'; id: number; text: string }
 
 /** 会话累计 token 用量。 */
@@ -52,16 +158,109 @@ export interface TokenUsageView {
   outputTokens: number
 }
 
-/** 底部状态行数据。 */
+/** 用量统计的单日投影（本地时区的自然日）。 */
+export interface UsageDayView {
+  /** 本地时区的 YYYY-MM-DD。 */
+  date: string
+  inputTokens: number
+  outputTokens: number
+  /** 这一天的模型请求轮数。 */
+  turns: number
+  /** 按 `provider/model` 拆分的 token 总量（输入+输出）。 */
+  byModel: Record<string, number>
+}
+
+/** 一个模型的用量汇总。 */
+export interface UsageModelView {
+  /** `provider/model`，与 daily byModel 的键一致。 */
+  key: string
+  inputTokens: number
+  outputTokens: number
+  turns: number
+}
+
+/**
+ * 用量统计（设置「用量统计」分区数据源）。
+ * 宿主从 `~/.dsc/usage/usage.jsonl`（每次模型请求追加一条）聚合而来；
+ * 这份日志从该功能上线那刻开始积累，更早的会话没有记录。
+ */
+export interface UsageStatsView {
+  /** 最早一条记录的时间戳；一条都没有时 null。 */
+  sinceTs: number | null
+  totalInputTokens: number
+  totalOutputTokens: number
+  totalTurns: number
+  /** 有记录的自然日数。 */
+  activeDays: number
+  /** 当前连续活跃天数（今天没活动就从昨天起算）。 */
+  currentStreakDays: number
+  longestStreakDays: number
+  /** 单日 token 总量最高的那天；还没有记录时 null。 */
+  peakDay: UsageDayView | null
+  /** 首条记录所在日到今天（含零日）的逐日投影，按日期升序；跨度封顶 370 天。 */
+  days: UsageDayView[]
+  /** 按模型汇总，总量降序。 */
+  models: UsageModelView[]
+}
+
+/**
+ * 底部状态行数据：只放对话引擎自己的事实（哪条会话、哪个模型、这一轮在干什么）。
+ * 某个功能点的状态（权限模式、协作模式、审批卡……）不进这里，由那个功能点自己
+ * 往 {@link RuntimeSnapshot.surfaces} 里贡献自己那一块。
+ */
 export interface StatusView {
   sessionId: string | null
   /** 当前模型名；未知时 'unknown'。 */
   model: string
   effort: EffortLevel
-  /** 当前权限模式（工具执行的沙箱策略）。 */
-  policy: ApprovalPolicy
   turnState: 'idle' | 'thinking' | 'working' | 'awaiting-approval'
   usage: TokenUsageView | null
+}
+
+/** 档位按钮的一项：档位 id + 按钮文字 + 悬浮说明。 */
+export interface TierOption<T extends string> {
+  id: T
+  label: string
+  hint: string
+}
+
+/**
+ * 协作模式投影：当前档位 + 可切的档位清单。
+ * 清单由 mode 插件给出，界面因此不必自己抄一份四档表。
+ */
+export interface ModeSurface {
+  current: CollaborationMode
+  options: TierOption<CollaborationMode>[]
+}
+
+/** 权限模式投影（同上，清单由 approval 插件给出）。 */
+export interface PolicySurface {
+  current: ApprovalPolicy
+  options: TierOption<ApprovalPolicy>[]
+}
+
+/**
+ * 快照里由各功能点贡献的界面片段。
+ *
+ * 内置那几项由对应插件自己登记（`ctx.surfaces.register`），组装快照的那一层不认识任何具体功能。
+ * 外部插件要加自己那一块就用声明合并，不要往上面塞字段：
+ * `declare module '@dsc/runtime/contract.js' { interface RuntimeSurfaces { memory: MyView } }`。
+ */
+export interface RuntimeSurfaces {
+  /** 挂起的审批卡（approval 贡献）；同一时刻至多一张。 */
+  pendingApproval: ApprovalRequestView | null
+  /** 权限模式与可切档位（approval 贡献）。 */
+  policy: PolicySurface
+  /** 协作模式与可切档位（mode 贡献）。 */
+  mode: ModeSurface
+  /** 任务清单（todo 贡献）；没有任务时 items 为空数组。 */
+  todos: TodoView
+  /** 挂着等用户批的计划（plan 贡献）；null = 无。 */
+  pendingPlan: PlanView | null
+  /** 会话目标（goal 贡献）；null = 没设目标。 */
+  goal: GoalView | null
+  /** 模型发起的提问（ask 贡献）；同一时刻至多一个。 */
+  pendingQuestion: AskUserView | null
 }
 
 /** 待用户决定的工具审批请求（视图投影）。 */
@@ -69,12 +268,31 @@ export interface ApprovalRequestView {
   /** adapter 内部关联 id；answerApproval 不需要它（同一时刻至多一个挂起审批）。 */
   id: string
   toolName: string
-  /** 参数摘要（单行、已截断）。 */
+  /** 参数摘要（单行、已截断、已遮红）。 */
   argsSummary: string
+  /** 为什么要问：命中的危险模式或规则，中文一句话。 */
+  reason: string
+  /** 风险档位：critical 表示只有它不会被任何自动档带走。 */
+  risk: 'low' | 'medium' | 'high' | 'critical'
+  /** 「永久允许」将往 `~/.dsc/policy.rules` 写的前缀；null = 这个动作不许持久化。 */
+  suggestedRule: string[] | null
+  /** true = 命中硬地板，界面不该给出任何放行按钮。 */
+  hardline: boolean
+  /** 这张卡允许哪些授权档位（危险动作会把 always 摘掉）。 */
+  scopes: Array<'once' | 'session' | 'always'>
+  /** 当前权限模式与协作模式（卡片上说明现在是哪一档）。 */
+  policy: ApprovalPolicy
+  mode: CollaborationMode
 }
 
-/** 审批应答。v1 只提供一次性决定（对齐官方 ACP 桥的 one-shot 语义）。 */
-export type ApprovalAnswer = 'allow-once' | 'reject'
+/**
+ * 审批应答。
+ *   allow-once    只放过这一次；
+ *   allow-session 同一会话内同类动作不再问（按会话 id 键控，切会话失效）；
+ *   allow-always  往 `~/.dsc/policy.rules` 追加一条前缀规则（危险动作不给这个选项）；
+ *   reject        拒。
+ */
+export type ApprovalAnswer = 'allow-once' | 'allow-session' | 'allow-always' | 'reject'
 
 /** /resume 会话选择器与侧栏的一行。 */
 export interface SessionSummary {
@@ -88,6 +306,8 @@ export interface SessionSummary {
   title?: string
   /** 置顶时间；undefined = 未置顶。 */
   pinnedAt?: number
+  /** 归档时间；undefined = 还在活动区。归档不等于删除，恢复后回到列表。 */
+  archivedAt?: number
 }
 
 /** 归档列表的一行（设置 → 归档）。 */
@@ -111,8 +331,14 @@ export interface ArchivedPage {
   trashCount: number
 }
 
-/** 会话排序方式：按创建时间，或按最后一次写入时间。 */
-export type SessionSortKey = 'created' | 'recent'
+/** 会话排序方式：手动（工作区按拖动顺序）、按最近写入时间，或按创建时间。 */
+export type SessionSortKey = 'manual' | 'recent' | 'created'
+
+/** 列表分组方式：按工作区分组、按工作区目录树嵌套，或平铺成单列表。 */
+export type SessionGroupKey = 'workspace' | 'tree' | 'flat'
+
+/** 已归档会话在侧栏里的显隐：隐藏（默认）、并入列表一起看，或只看归档。 */
+export type ArchivedFilter = 'hide' | 'show' | 'only'
 
 /** 主题模式：固定深色、固定浅色，或跟着系统的浅色偏好走。 */
 export type ThemeMode = 'dark' | 'light' | 'system'
@@ -126,6 +352,10 @@ export type UiDensity = 'compact' | 'standard' | 'roomy'
 /** 侧栏界面偏好，存在 `~/.dsc/settings.json`，桌面端与以后别的界面共用。 */
 export interface UiPrefsView {
   sessionSort: SessionSortKey
+  /** 侧栏会话列表的分组方式。 */
+  sessionGroup: SessionGroupKey
+  /** 已归档会话在侧栏里的显隐。 */
+  archivedFilter: ArchivedFilter
   /** 手动拖出来的工作区顺序（cwd 绝对路径）；没拖过是空数组。 */
   workspaceOrder: string[]
   /** 工作区显示名别名：cwd → 想要的名字。 */
@@ -152,7 +382,7 @@ export interface PluginInfoView {
   source: 'builtin' | 'external'
   /** true = 有开关可拨（外部插件 + 官方可开关插件）；false = 运行内核，不可停用。 */
   toggleable: boolean
-  /** 这个插件在设置面板里的分区 id；undefined = 没有可配置项，UI 不给「配置」按钮。 */
+  /** 这个插件贡献的设置分区 id；undefined = 没有可配置项，详情页不画配置表单。 */
   settingsSection?: string
   /** 插件声明的内核 API 版本；未声明时 undefined。 */
   apiVersion?: number
@@ -190,6 +420,12 @@ export interface ModelChoiceView {
   model: string
   /** 面板展示用说明（端点显示名 · 上下文窗口）。 */
   description: string
+  /** 上下文窗口（面板右侧标注用）。 */
+  contextWindow: number
+  /** 这个模型支持的思考档位；思考面板据此收起不支持的档位。 */
+  thinkingLevels: ThinkingLevel[]
+  /** 这个模型能接受的输入类型。 */
+  modalities: Modality[]
 }
 
 // ── 技能中心 ──────────────────────────────────────────────────────────────────
@@ -313,6 +549,14 @@ export interface ProviderModelView {
   name: string
   contextWindow: number
   maxTokens: number
+  /** 这个模型支持的思考档位；空数组 = 没有思考开关，界面只留「默认」。 */
+  thinkingLevels: ThinkingLevel[]
+  /** 档位走哪个请求字段（见 {@link ThinkingParam}）。 */
+  thinkingParam: ThinkingParam
+  /** `reasoning-effort` 时档位 → 线上值；没写的档用内置缺省值。 */
+  effortMap: EffortMap
+  /** 能接受的输入类型；没勾照片就不能往这个模型发图。 */
+  modalities: Modality[]
 }
 
 /** 一个端点（API key 只报告状态，永不回传值）。 */
@@ -353,8 +597,8 @@ export interface ProviderDraft {
 export interface RuntimeSnapshot {
   entries: TranscriptEntry[]
   status: StatusView
-  /** 同一时刻至多一个挂起审批；null = 无。 */
-  pendingApproval: ApprovalRequestView | null
+  /** 各功能点自己贡献的界面片段（见 {@link RuntimeSurfaces}）。 */
+  surfaces: RuntimeSurfaces
   /** refreshSessions() 填充的会话列表缓存。 */
   sessions: SessionSummary[]
   sessionsLoading: boolean
@@ -374,8 +618,11 @@ export interface RuntimeSnapshot {
 export interface DscRuntime {
   subscribe(listener: () => void): () => void
   getSnapshot(): RuntimeSnapshot
-  /** 提交一条用户消息（走 agent.followup）。 */
-  submit(text: string): void
+  /**
+   * 提交一条用户消息（走 agent.followup）。
+   * @param images - 随消息发送的图片（data URL 清单）；当前模型没勾「照片」时发送方要先拦住。
+   */
+  submit(text: string, images?: string[]): void
   /** 尝试取消当前回合（M4 前可为 no-op + system 提示）。 */
   interrupt(): void
   openSession(id?: string): Promise<void>
@@ -388,6 +635,8 @@ export interface DscRuntime {
   archiveSessions(paths: string[]): Promise<SettingsMutation>
   /** 归档页数据（设置 → 归档；按归档时间倒序，带回收站目录与文件数）。 */
   listArchivedSessions(): Promise<ArchivedPage>
+  /** 用量统计（设置「用量统计」分区数据源；聚合 ~/.dsc/usage/usage.jsonl）。 */
+  usageStats(): Promise<UsageStatsView>
   /** 从归档区恢复一批会话。 */
   restoreSessions(paths: string[]): Promise<SettingsMutation>
   /** 永久删除一批会话：移进 `~/.dsc/.trash/`，30 天后自动清。 */
@@ -462,7 +711,18 @@ export interface DscRuntime {
    * fs-list / fs-read / git-status / git-stage / git-unstage / git-commit / git-log / git-diff。
    */
   dock(op: string, payload?: Record<string, unknown>): Promise<unknown>
+  /** 回答审批（四种决定；scope 语义见 ApprovalAnswer）。 */
   answerApproval(answer: ApprovalAnswer): void
+  /** 回答模型发起的提问（ask_user）；文本就是答案。 */
+  answerQuestion(answer: string): void
+  /** 回答计划评审卡（批准 = 切回执行模式开工）。 */
+  answerPlan(decision: PlanDecision): void
+  /** 切换协作模式（执行 / 计划 / 探索 / 免打扰），写进会话记录。 */
+  setMode(mode: CollaborationMode): void
+  /** 用户侧目标动作：暂停 / 继续 / 清空 / 放宽轮次上限。 */
+  goalAction(action: 'pause' | 'resume' | 'clear' | 'extend'): SettingsMutation
+  /** 手动清空任务清单（清单条上的小按钮）。 */
+  clearTodos(): void
   /** 退出应用（dispose → 进程结束）。 */
   exit(): void
   /** 释放全部资源（dispose agent、退订）；集成层在 ink unmount 后调用。 */

@@ -17,7 +17,10 @@
  * @module dsc/plugins/computer-use
  */
 import { DESKTOP_ACTIONS, foregroundWindow, runDesktopAction, takeScreenshot, type DesktopAction } from '../core/desktop-control.js'
-import { getPluginConfig, writePluginConfig } from '../core/plugin-registry.js'
+import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
+import { classifyCommand } from '../core/command-policy.js'
+import { redact } from '../core/secrets.js'
+import { wrapUntrusted } from '../core/untrusted.js'
 import type { ChatContentPart, ChatMessage } from '../core/llm.js'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { SettingsField, SettingsValue } from '../contract.js'
@@ -114,7 +117,7 @@ export const computerUsePlugin: Plugin.Object = {
   inject: ['tools', 'prompt', 'settings'],
   apply(ctx, passed) {
     const readConfig = (): ComputerUseConfig => {
-      const raw = (passed ?? getPluginConfig(CONFIG_KEY)) as Record<string, unknown>
+      const raw = resolvePluginConfig(CONFIG_KEY, passed)
       const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
         const num = Number(value)
         return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
@@ -148,7 +151,8 @@ export const computerUsePlugin: Plugin.Object = {
         const shot = await takeScreenshot({ maxEdge: config.maxEdge, format: config.format, quality: config.quality }, signal)
         lastScale = shot.scale ?? 1
         sinceScreenshot = 0
-        return { text: shot.text, images: shot.images }
+        // 截图里可能有别人的聊天、邮件、弹窗文案：包一层围栏，只当资料读。
+        return { text: wrapUntrusted('screenshot', shot.text), images: shot.images }
       }
       const limit = config.actionsPerScreenshot
       if (limit > 0 && sinceScreenshot >= limit) {
@@ -157,6 +161,10 @@ export const computerUsePlugin: Plugin.Object = {
         )
       }
       sinceScreenshot += 1
+      if (action === 'type') {
+        const blocked = typedTextBlockReason(typeof args.text === 'string' ? args.text : '')
+        if (blocked !== null) throw new Error(blocked)
+      }
       const result = await runDesktopAction(
         action,
         {
@@ -171,7 +179,24 @@ export const computerUsePlugin: Plugin.Object = {
         { scale: lastScale, allowedApps: allowedApps(), actionDelayMs: config.actionDelayMs },
         signal,
       )
-      return result.text
+      // 别人应用的窗口标题也是外部内容（标题栏里能写任何东西）。
+      return action === 'window_list' ? wrapUntrusted('window-list', result.text) : result.text
+    }
+
+    /**
+     * 往桌面应用的输入框里打字前的一次内容体检。
+     * 两条硬规则：不代用户往外部应用填凭据；不把危险命令当成普通文本敲进去。
+     */
+    function typedTextBlockReason(text: string): string | null {
+      if (text === '') return null
+      if (redact(text) !== text) {
+        return '要输入的文本里有密钥形状的字符串（API key、token、私钥、密码这类）。dsc 不代你把凭据打进桌面应用，请用户自己输这一段。'
+      }
+      const verdict = classifyCommand(text)
+      if (verdict.decision === 'deny') {
+        return `要输入的文本被策略当成灾难性命令（${verdict.reason}），拒绝替你敲进别人的输入框。`
+      }
+      return null
     }
 
     const argProps = {
@@ -254,29 +279,29 @@ ${config.actionsPerScreenshot > 0 ? `${apps.length === 0 ? '8' : '9'}. 自上次
     const offPrune = ctx.prompt.transformMessages(dropStaleScreenshots)
 
     const fields = (): SettingsField[] => [
-      { type: 'number', key: 'maxEdge', label: '截图最长边（像素）', min: 640, max: 3840, step: 64, help: '超长的屏幕会等比缩小；小一点省 token，但字可能看不清。' },
+      { type: 'number', key: 'maxEdge', label: '截图最长边', min: 640, max: 3840, step: 64, help: '以像素为单位；超长屏幕会等比缩小，数值越小越省 token，但文字可能不清晰。' },
       {
         type: 'select',
         key: 'format',
         label: '截图编码',
         options: [
-          { value: 'jpeg', label: 'JPEG（省 token，默认）' },
-          { value: 'png', label: 'PNG（无损，图大）' },
+          { value: 'jpeg', label: 'JPEG，省 token，默认' },
+          { value: 'png', label: 'PNG，无损，文件更大' },
         ],
       },
-      { type: 'number', key: 'quality', label: 'JPEG 质量', min: 30, max: 100, step: 5, help: '只在编码选 JPEG 时有用。' },
-      { type: 'number', key: 'actionDelayMs', label: '动作之间等待（毫秒）', min: 0, max: 2000, step: 20, help: '给目标程序留点反应时间，也少触发它的输入合并。' },
-      { type: 'number', key: 'actionsPerScreenshot', label: '自上次截屏以来的动作上限', min: 0, max: 200, step: 1, help: '0 = 不限制。超限会被要求重新截屏（界面早就可能变了）。' },
-      { type: 'text', key: 'allowedApps', label: '应用白名单', placeholder: '留空 = 不限；例如 chrome,Code,腾讯会议', help: '按前台窗口的进程名或标题匹配（包含即可，逗号分隔）。名单之外的应用上操作会被直接拦下。' },
+      { type: 'number', key: 'quality', label: 'JPEG 质量', min: 30, max: 100, step: 5, help: '仅在编码选择 JPEG 时生效。' },
+      { type: 'number', key: 'actionDelayMs', label: '动作间隔', min: 0, max: 2000, step: 20, help: '以毫秒为单位；给目标程序留出反应时间，减少其输入合并。' },
+      { type: 'number', key: 'actionsPerScreenshot', label: '自上次截屏以来的动作上限', min: 0, max: 200, step: 1, help: '0 为不限制；超限后会要求重新截屏，因为界面可能已经变化。' },
+      { type: 'text', key: 'allowedApps', label: '应用白名单', placeholder: '留空 = 不限；例如 chrome,Code,腾讯会议', help: '按前台窗口的进程名或标题包含匹配，多个用逗号分隔；对名单之外应用的操作会被直接拦下。' },
       { type: 'text', key: 'disabledActions', label: '禁用动作', placeholder: '例如 click,type', help: `可选值：${DESKTOP_ACTIONS.join(' / ')}。` },
-      { type: 'switch', key: 'lookWithoutApproval', label: '看屏幕免审批', help: '打开后截屏/查鼠标/列窗口走一个只读工具，不弹审批卡；点击、输入、按键、滚动仍然每一次都要确认。' },
-      { type: 'button', action: 'who-is-front', label: '看看现在哪个窗口在前台', style: 'ghost', help: '拿它验证白名单要填什么。' },
+      { type: 'switch', key: 'lookWithoutApproval', label: '看屏幕免审批', help: '开启后截屏、查鼠标、列窗口走只读工具，不弹出审批卡；点击、输入、按键、滚动仍每次需要确认。' },
+      { type: 'button', action: 'who-is-front', label: '查看当前前台窗口', style: 'ghost', help: '用于验证白名单应填写的内容。' },
     ]
 
     const section: SettingsSectionSpec = {
       id: 'computer-use',
       title: '电脑操作',
-      subtitle: '让模型看屏幕并代你点击、输入（Windows）',
+      subtitle: '让模型查看屏幕并代为点击、输入，Windows 平台',
       order: 45,
       fields,
       values: (): Record<string, SettingsValue> => ({

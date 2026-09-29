@@ -43,7 +43,7 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       else setNotice('再按一次 Ctrl+C 退出')
       return
     }
-    if (snapshot.pendingApproval !== null) {
+    if (snapshot.surfaces.pendingApproval !== null) {
       if (input === 'y' || input === 'Y') runtime.answerApproval('allow-once')
       else if (input === 'n' || input === 'N' || key.escape) runtime.answerApproval('reject')
       return
@@ -81,7 +81,7 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
     runtime.submit(text)
   }
 
-  const modal = snapshot.pendingApproval !== null || picker
+  const modal = snapshot.surfaces.pendingApproval !== null || picker
 
   return (
     <Box flexDirection="column" width="100%" gap={GAP.none}>
@@ -90,7 +90,9 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
         turnState={snapshot.status.turnState}
         expandThinking={expandThinking}
       />
-      {snapshot.pendingApproval !== null ? <ApprovalCard request={snapshot.pendingApproval} /> : null}
+      {snapshot.surfaces.pendingApproval !== null ? (
+        <ApprovalCard request={snapshot.surfaces.pendingApproval} />
+      ) : null}
       {notice !== null ? (
         <Box borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline} marginTop={GAP.tight}>
           <Text {...TEXT.label} color={STATUS_COLOR.waiting}>

@@ -1,7 +1,7 @@
 /**
- * `dsc config` 子命令实现（由 bin/dsc.js spawn 本文件）：
- *   dsc config migrate [--force]   从 dsh 迁移模型配置到 ~/.dsc/config.yaml
- *   dsc config show                显示当前生效的端点/模型/key 来源（不打印 key）
+ * `msc config` 子命令实现（由 bin/dsc.js spawn 本文件）：
+ *   msc config migrate [--force]   从 dsh 迁移模型配置到 ~/.dsc/config.yaml
+ *   msc config show                显示当前生效的端点/模型/key 来源（不打印 key）
  *
  * @module dsc/tools/config-cli
  */
@@ -97,6 +97,6 @@ switch (command) {
     process.exit(runShow())
     break
   default:
-    console.log('用法：dsc config migrate [--force] | dsc config show')
+    console.log('用法：msc config migrate [--force] | msc config show')
     process.exit(command === undefined ? 0 : 1)
 }

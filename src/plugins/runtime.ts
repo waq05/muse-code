@@ -10,11 +10,29 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
 import { listPluginInfos, writePluginEnabled } from '../core/plugin-registry.js'
 import { setPluginEnabledHot } from '../core/plugin-loader.js'
+import { buildUsageStats } from '../core/usage-log.js'
 import type { DscRuntime } from '../contract.js'
 
 export const runtimePlugin: Plugin.Object = {
   name: 'ui-runtime',
-  inject: ['agent', 'session', 'transcript', 'approval', 'llm', 'commands', 'dock', 'skills', 'settings'],
+  inject: [
+    'agent',
+    'session',
+    'transcript',
+    'approval',
+    'llm',
+    'commands',
+    'dock',
+    'skills',
+    'settings',
+    'compact',
+    // 界面上那几块卡片的操作要落到各自的功能点：档位切换、清单、计划卡、提问卡、目标。
+    'mode',
+    'todo',
+    'plan',
+    'ask',
+    'goal',
+  ],
   provide: 'ui',
   apply(ctx) {
     const runtime: DscRuntime = {
@@ -26,8 +44,8 @@ export const runtimePlugin: Plugin.Object = {
         return ctx.transcript.getSnapshot()
       },
 
-      submit(text: string) {
-        ctx.agent.followup(text)
+      submit(text: string, images?: string[]) {
+        ctx.agent.followup(text, images)
       },
 
       interrupt() {
@@ -56,7 +74,13 @@ export const runtimePlugin: Plugin.Object = {
       },
 
       async setEffort(effort) {
-        ctx.llm.setEffort(effort)
+        try {
+          ctx.llm.setEffort(effort)
+        } catch (error) {
+          ctx.transcript.system(errText(error))
+          ctx.transcript.touch()
+          return
+        }
         const label =
           effort === 'default'
             ? '默认（不声明思考）'
@@ -103,6 +127,26 @@ export const runtimePlugin: Plugin.Object = {
 
       setPolicy(policy) {
         ctx.approval.setPolicy(policy)
+      },
+
+      setMode(mode) {
+        ctx.mode.setMode(mode)
+      },
+
+      answerQuestion(answer) {
+        ctx.ask.answerQuestion(answer)
+      },
+
+      answerPlan(decision) {
+        ctx.plan.answerPlan(decision)
+      },
+
+      goalAction(action) {
+        return ctx.goal.goalAction(action)
+      },
+
+      clearTodos() {
+        ctx.todo.clearTodos()
       },
 
       dock(op, payload) {
@@ -198,6 +242,10 @@ export const runtimePlugin: Plugin.Object = {
         return Promise.resolve(ctx.session.archived())
       },
 
+      usageStats() {
+        return Promise.resolve(buildUsageStats())
+      },
+
       async restoreSessions(paths) {
         return ctx.session.restore(paths)
       },
@@ -232,13 +280,19 @@ export const runtimePlugin: Plugin.Object = {
         const notice =
           patch.sessionSort !== undefined
             ? patch.sessionSort === 'recent'
-              ? '会话改为按最近使用排序（置顶的仍排最前）'
-              : '会话改为按创建时间排序（置顶的仍排最前）'
-            : patch.workspaceOrder !== undefined
-              ? '已保存工作区顺序'
-              : patch.themeMode !== undefined || patch.fontSize !== undefined || patch.density !== undefined
-                ? '已保存外观设置'
-                : '已保存工作区名字'
+              ? '会话改为按最近更新排序（置顶的仍排最前）'
+              : patch.sessionSort === 'created'
+                ? '会话改为按创建时间排序（置顶的仍排最前）'
+                : '会话改为手动排序：工作区按拖动顺序，没拖过就活动区置顶'
+            : patch.sessionGroup !== undefined
+              ? '已切换会话列表的分组方式'
+              : patch.archivedFilter !== undefined
+                ? '已切换已归档会话的显隐'
+                : patch.workspaceOrder !== undefined
+                  ? '已保存工作区顺序'
+                  : patch.themeMode !== undefined || patch.fontSize !== undefined || patch.density !== undefined
+                    ? '已保存外观设置'
+                    : '已保存工作区名字'
         return Promise.resolve({ ok: true, notice })
       },
 
