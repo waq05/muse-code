@@ -59,6 +59,12 @@ export interface AuditRecord {
   rule?: string[]
   /** 会话工作目录。 */
   cwd?: string
+  /**
+   * 这个答案是从哪儿点下来的：`'app'` = 宿主自己的界面（桌面端 / 终端），
+   * `'web'` = 手机浏览器（远程控制）。
+   * 只有「真的有人答了」的 decided 记录才带它；超时与打断没人答，写这栏没有意义。
+   */
+  source?: 'app' | 'web'
 }
 
 let enabled = true

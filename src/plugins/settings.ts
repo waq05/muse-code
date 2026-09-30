@@ -91,6 +91,25 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     const builtinIds = new Set<string>()
     /** 偏好快照（读盘一次，写盘后更新）。 */
     let prefs = readPrefs()
+    /** 偏好写盘后的监听者（远程控制这类「改了就起停服务」的功能点）。 */
+    const prefListeners = new Set<(prefs: DscPrefs) => void>()
+
+    /**
+     * 写盘并广播。所有偏好写入都走这里，别直接调 writePrefs：
+     * 绕过去的话监听者收不到通知，界面上改了开关而服务没跟着起停。
+     */
+    function savePrefs(patch: Partial<DscPrefs>): DscPrefs {
+      prefs = writePrefs(patch)
+      for (const listener of [...prefListeners]) {
+        try {
+          listener(prefs)
+        } catch (error) {
+          // 监听者是别人家的功能点，它自己炸了不能把「保存设置」这条链带下水
+          ctx.transcript.system(`偏好变更处理失败：${err(error)}`)
+        }
+      }
+      return prefs
+    }
 
     /** 把磁盘上的模型配置刷进 llm 插件持有的那个对象。 */
     function reloadLive(): void {
@@ -170,14 +189,14 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           const policy = String(value) as ApprovalPolicy
           if (!POLICY_OPTIONS.some((option) => option.value === policy)) throw new Error(`未知的权限模式 ${value}`)
           ctx.approval.setPolicy(policy)
-          prefs = writePrefs({ defaultPolicy: policy })
+          savePrefs({ defaultPolicy: policy })
           return `权限模式已设为「${POLICY_OPTIONS.find((option) => option.value === policy)?.label ?? policy}」，下次启动沿用`
         }
         if (key === 'effort') {
           const effort = String(value) as EffortLevel
           if (!EFFORT_OPTIONS.some((option) => option.value === effort)) throw new Error(`未知的思考强度 ${value}`)
           ctx.llm.setEffort(effort)
-          prefs = writePrefs({ defaultEffort: effort })
+          savePrefs({ defaultEffort: effort })
           return `思考强度已设为「${EFFORT_OPTIONS.find((option) => option.value === effort)?.label ?? effort}」，下次启动沿用`
         }
         if (key === 'temperature') {
@@ -186,7 +205,7 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           return value === 'follow' ? '已改为跟随端点默认' : `温度已设为 ${value}`
         }
         if (key === 'closeToTray') {
-          prefs = writePrefs({ closeToTray: value === true })
+          savePrefs({ closeToTray: value === true })
           return value === true
             ? '已设为关窗缩到托盘，托盘图标可以唤起或退出'
             : '已设为关窗直接退出（宿主收尾最多 2 秒）'
@@ -357,14 +376,20 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
         return prefs
       },
       setPrefs(patch: Partial<DscPrefs>) {
-        prefs = writePrefs(patch)
+        const next = savePrefs(patch)
         if (patch.defaultPolicy !== undefined && patch.defaultPolicy !== null) {
-          ctx.approval.setPolicy(prefs.defaultPolicy ?? 'readonly')
+          ctx.approval.setPolicy(next.defaultPolicy ?? 'readonly')
         }
         if (patch.defaultEffort !== undefined && patch.defaultEffort !== null) {
-          ctx.llm.setEffort(prefs.defaultEffort ?? 'default')
+          ctx.llm.setEffort(next.defaultEffort ?? 'default')
         }
-        return prefs
+        return next
+      },
+      watchPrefs(listener: (prefs: DscPrefs) => void) {
+        prefListeners.add(listener)
+        return () => {
+          prefListeners.delete(listener)
+        }
       },
       about() {
         return {
@@ -405,7 +430,7 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     }
     if (prefs.marketSources.length === 0) {
       // 首次使用给一份默认市场源，技能中心的「市场」tab 才不是空的
-      prefs = writePrefs({ marketSources: [...DEFAULT_MARKET_SOURCES] })
+      savePrefs({ marketSources: [...DEFAULT_MARKET_SOURCES] })
     }
 
     ctx.provide('settings', service)

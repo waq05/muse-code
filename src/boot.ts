@@ -10,7 +10,9 @@
  */
 import { readConfig } from './core/config.js'
 import { migrateFromDsh } from './core/migrate.js'
+import { getPluginConfig } from './core/plugin-registry.js'
 import { createKernel, emitStartupNotes, loadExternalPlugins, readUiConfig } from './host/kernel.js'
+import { remotePlugin } from './plugins/remote.js'
 import { tuiPlugin } from './plugins/tui.js'
 
 async function main(): Promise<void> {
@@ -25,6 +27,8 @@ async function main(): Promise<void> {
 
   const root = await createKernel({ config, resumeSessionPath })
   await root.plugin(tuiPlugin)
+  // 远程控制：开关在设置里（默认关），插件自己决定活不活
+  await root.plugin(remotePlugin, getPluginConfig('remote'))
   await loadExternalPlugins(root, ui.plugins)
   emitStartupNotes(root, migration, config)
 }

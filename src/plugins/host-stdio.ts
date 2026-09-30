@@ -16,8 +16,9 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
+import { isInvokableMethod } from '../core/host-methods.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
-import type { DscRuntime, RuntimeSnapshot } from '../contract.js'
+import type { RuntimeSnapshot } from '../contract.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'host-stdio'
@@ -55,90 +56,6 @@ export type RuntimeToHostMessage =
   | { type: 'ui'; action: 'open-picker' }
   /** dock 终端输出流（desktop-dock 服务 → 桌面端面板）。 */
   | { type: 'dock-data'; id: string; data: string }
-
-/**
- * 只能在宿主进程里成立、不经协议转发的方法：
- * 订阅与快照走下面的 `snapshot` 消息流，退出与清理由宿主动手（进程就是这么关掉的）。
- */
-type LocalOnlyMethod = 'subscribe' | 'getSnapshot' | 'exit' | 'dispose'
-
-/** 协议允许调用的方法 = `DscRuntime` 去掉那几个本地方法，不另立一份接口。 */
-type InvokableMethod = Exclude<keyof DscRuntime, LocalOnlyMethod>
-
-/**
- * 这份清单就是协议的全部可调用面：写成 `satisfies` 是为了让编译器逐条核对方法名，
- * 拼错一个字母当场报错，而不是等到运行时才「协议不允许调用」。
- */
-const INVOKABLE_METHODS = [
-  'submit',
-  'interrupt',
-  'openSession',
-  'compact',
-  'setModel',
-  'setEffort',
-  'refreshSessions',
-  'listModels',
-  'listPlugins',
-  'setPluginEnabled',
-  'listTeammates',
-  'peekTranscript',
-  'runCommand',
-  'setPolicy',
-  'dock',
-  'answerApproval',
-  // 协作模式、任务清单、计划评审、目标、模型提问
-  'setMode',
-  'clearTodos',
-  'goalAction',
-  'answerQuestion',
-  'answerPlan',
-  // 会话库：归档 / 恢复 / 删除 / 改名 / 置顶 / 分叉 / 用量 / 界面偏好
-  'archiveSessions',
-  'listArchivedSessions',
-  'usageStats',
-  'restoreSessions',
-  'purgeSessions',
-  'renameSession',
-  'setSessionPinned',
-  'listUserMessages',
-  'forkSession',
-  'getUiPrefs',
-  'setUiPrefs',
-  // 技能中心
-  'listSkills',
-  'readSkill',
-  'setSkillEnabled',
-  'browseMarket',
-  'installMarketSkill',
-  'setMarketSources',
-  // 设置界面
-  'getSettingsSections',
-  'getSectionValues',
-  'setSettingValue',
-  'runSettingAction',
-  'getModelConfig',
-  'saveProvider',
-  'removeProvider',
-  'setProviderKey',
-  'setDefaultModel',
-] as const satisfies readonly InvokableMethod[]
-
-/** 这份清单漏了哪个方法（本地那几样之外）：漏一个就报下面那个元组类型，编不过。 */
-type UnlistedInvokable = Exclude<InvokableMethod, (typeof INVOKABLE_METHODS)[number]>
-
-/**
- * 编译期兜底：往 `DscRuntime` 加一个方法而这份清单没跟上时，这里报错。
- * 没有这一行，新方法会静静地在协议上不通（渲染器调它得到「不允许调用」），很难查。
- */
-const INVOKE_COVERAGE: UnlistedInvokable extends never ? true : ['这些方法还没进协议白名单：', UnlistedInvokable] =
-  true
-void INVOKE_COVERAGE
-
-/** 查表用的集合（`isInvokableMethod` 拿它把线上来的字符串收窄成方法名）。 */
-const INVOKABLE_SET: ReadonlySet<string> = new Set<string>(INVOKABLE_METHODS)
-
-/** 把线上来的方法名收窄成「协议允许调用的方法」。 */
-const isInvokableMethod = (method: string): method is InvokableMethod => INVOKABLE_SET.has(method)
 
 // ── 传输抽象 ──────────────────────────────────────────────────────────────────
 

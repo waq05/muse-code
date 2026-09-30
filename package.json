@@ -1,6 +1,6 @@
 {
   "name": "muse-code",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "private": true,
   "description": "Muse Code（msc）— 独立的终端 AI harness（自研 ReAct loop + ink TUI）",
   "type": "module",
@@ -27,11 +27,13 @@
     "ink": "^6.0.0",
     "koffi": "3.1.1",
     "react": "^19.2.0",
+    "ws": "^8.21.3",
     "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
+    "@types/ws": "^8.18.2",
     "typescript": "^5.9.0"
   },
   "pnpm": {

@@ -504,3 +504,21 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | 渲染层崩在截图环节由主控接手验完 | 子代理留下约 1900 行完整代码（探针 85/85 已过）；主控复跑发现一处**真组件 bug**：检查器输入块 Block 内部又调了一次 prettyMaybeJson，父组件切回原文的单行参数被二次美化，「格式化/原文」开关切不回去——格式化决策必须只留一处；另三处 false（tick 数写死 5、带图消息在 round 3 却开了 round 2、内容不够滚 400px）全是探针/种子的锅 |
 
 验收：根 + 桌面 typecheck/build 0 错误；sandbox 193/0、file-review 59+9/0、approval-floor 95/0、modes-security 全过、integration 全过、transcript-usage 全过、trace-data 25 项全过、composer 全过、compact 53/0、轨迹探针 85/85；隔离截图自检（dark+light 双主题）全部布尔旗标通过——时间条投影（63s 条宽 ≈ 4.2s 条 15 倍）、进行中调用只有刻度没有耗时格、失败红/被拒琥珀双色、检查器五段（输入/输出/计时/用量/附件）、格式化开关真切换、复制参数回执、附件缩略图 132px + 灯箱开合、压缩区段行「已压缩历史 · 第 1 次」、拖选聚焦（命中 3 条、暗淡 12 条、点选/右键两种清除）、回底跟随（内容不足 150px 可滚时持住判定如实跳过）；真实 `~/.dsc` 指纹零改动。诚实边界：滚动持住用例因种子内容不足一屏没量到（逻辑与 ChatView 同款、代码已核），真实长会话里再验；拖选聚焦用 chip 的「已选 1m30s · 3 步」表达，不改动对话页。发布：`muse-code-0.6.5.tgz` + `dist/win-unpacked`。
+
+---
+
+## 阶段 22：远程操控——宿主插件与移动 Web 界面（0.6.6）
+
+用户要求参考三个现成实现出一版远程操控：OpenAI Codex CLI（`D:\codex`）、hermes-agent（`D:\hermes\hermes-agent`，多平台 gateway）、0.6.5 已判不可装的 dsh remote-web-ui 插件。主控派三路勘察（codex 出站中继与审批协议、hermes 配对与入站链路、dsc 客户端/会话模型），整合方案经用户三问裁决：**独立轻量 Web UI**（桌面渲染层绑死 `window.dsc` 的 21 个方法，剥离成本高于重写）、**显式加 `ws@8`**（自写 RFC6455 帧易埋鉴权时序坑）、公网走**隧道手册**（零代码）。
+
+| 决策 | 理由 |
+| --- | --- |
+| 远程控制器装进宿主进程，不另起内核进程 | 会话状态在内存、jsonl 只是 append-only 日志、`.last-session` 是最后写者赢，跨进程读同文件必然消息分叉；插件吃 `ctx.transcript/agent/approval/ui` 与桌面共享同一会话。两个宿主（桌面 headless / CLI TUI）都会加载它，用 pid+出生时间主控锁仲裁端口归属（照 schedule runner 先例，前任死了下一个进程接管） |
+| 配对抄 hermes 一次性码：8 位无歧义字母表、只存加盐 SHA-256、1h 过期、错 5 次锁 1h、最多 3 张待用 | 码即授权，输对就颁 device token（明文只回一次、永不落盘不进日志）；dsc 只有运营者一个管理员，hermes 的「管理面批准」砍掉，批准动作=用户自己在桌面设置页出示码 |
+| 鉴权三件套：Bearer 存 localStorage（不进 Cookie，天然免 CSRF 面）、WS 用一次性 30s 票据（用后即焚、票据自带设备）、全路由 Host 头校验只认 IP 字面量/localhost | Host 校验是 DNS rebinding 的挡板，代价是 mDNS 主机名连不上（手机用设置页显示的 IP 访问），codex「拒绝带 Origin 的升级」是防陌生浏览器直连，不适用于「浏览器就是本产品」的形态故不抄 |
+| 协议零重造：INVOKABLE_METHODS 抽成 `core/host-methods.ts` 共享，远端白名单取子集 | 灰名单去掉凭据与宿主生命周期方法（saveProvider/removeProvider/setProviderKey/setDefaultModel/设 skill 开关/装市场技能/dock 等）；快照沿用 transcript 的 16ms–1s 节流全量推送（含直播尾与 pendingApproval/pendingPlan/pendingQuestion），重连=全量快照重建不搞增量 |
+| 不做逐字 delta 外放 | CoreEvent 不上 cordis 总线（agent 插件只落库+转快照），外放原始事件要动内核 emit 链；远端「能看能管」靠快照已够，批量快照在弱网流量偏高记为已知代价（增量帧列后续候选） |
+| 审批来源标注 source:'web' 只落在审批，plan/question 不塞 | plan 的审计记在 kind:'mode-change'、question 根本没有审计记录，硬给这两个方法多传实参是被忽略的死代码；顺手加 `settings.watchPrefs` 把三处直写 writePrefs 的偏好转成统一通知（否则 remote 插件收不到「开关变了」就起停不了服务器） |
+| 提交纪律：并行会话正在 desktop 渲染层做「轮内阶段分组折叠」，本批提交精确点名，绝不扫入 | 两会话同树并行（用户确认归属）；桌面 dist 也顺延到那边落定后一次重建，避免半成品进日常安装包 |
+
+验收：根 typecheck/build 0 错、桌面 typecheck 0 错（并行改动编译干净）；新建探针 `remote-host-test` 49/49 + `remote-e2e` 47/47（配对错 5 次 429/哈希落盘无明文/票据一次性过期/Host 六类/白名单外拒/吊销当场踢线/双宿主休眠/开关关停监听）+ remote-web 界面自检 41 条假 socket 断言（修掉一处重连空指针）；老 lanes 全绿（sandbox/file-review×2/approval-floor/modes-security/integration/compact/hooks/transcript-usage/composer/trace-data）；真实 `~/.dsc` 零改动（`~/.dsc/remote` 不存在、settings.json 最后写盘早于所有探针）。诚实边界：TUI 装配路径无端到端冒烟（插件默认关零副作用已证）；跨进程改偏好不实时（要重启或重新开关）；远端 openSession 全局生效会换掉桌面正在看的会话（界面有橙字明示）；手机必须用 IP 访问。发布：`muse-code-0.6.6.tgz`；桌面 dist 顺延（用户裁定等折叠批落定后重建）。

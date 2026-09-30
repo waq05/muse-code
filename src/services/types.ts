@@ -169,8 +169,12 @@ export interface ApprovalService extends ApprovalHandler {
   setPolicy(policy: ApprovalPolicy): void
   /** 当前挂起的审批视图；null = 无。 */
   pendingView(): ApprovalRequestView | null
-  /** 应答当前挂起审批（无挂起时静默忽略）。 */
-  answer(answer: ApprovalAnswer): void
+  /**
+   * 应答当前挂起审批（无挂起时静默忽略）。
+   * @param source - 这个答案从哪儿来：省略 = 宿主界面（桌面端 / 终端），
+   *                 `'web'` = 手机浏览器（远程控制）。它只进审计记录。
+   */
+  answer(answer: ApprovalAnswer, source?: 'app' | 'web'): void
 }
 
 // ── hooks（安全钩子）───────────────────────────────────────────────────────────
@@ -592,6 +596,11 @@ export interface SettingsService {
   prefs(): DscPrefs
   /** 合并写偏好并应用（权限模式/思考强度立即生效，市场源即时生效）。 */
   setPrefs(patch: Partial<DscPrefs>): DscPrefs
+  /**
+   * 监听偏好写盘：每次写成功的此刻同步回调，返回退订函数。
+   * 用途是远程控制这类「开关一改就要实时起停服务」的功能点，不必去轮询 settings.json。
+   */
+  watchPrefs(listener: (prefs: DscPrefs) => void): () => void
   /** 宿主内核 API 版本（关于分区展示，外部插件兼容性判定的基准）。 */
   readonly kernelApiVersion: number
   /** dsc 版本号与配置路径（关于分区）。 */

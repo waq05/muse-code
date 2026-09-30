@@ -827,8 +827,12 @@ export interface DscRuntime {
    * fs-list / fs-read / git-status / git-stage / git-unstage / git-commit / git-log / git-diff。
    */
   dock(op: string, payload?: Record<string, unknown>): Promise<unknown>
-  /** 回答审批（四种决定；scope 语义见 ApprovalAnswer）。 */
-  answerApproval(answer: ApprovalAnswer): void
+  /**
+   * 回答审批（四种决定；scope 语义见 ApprovalAnswer）。
+   * @param source - 这个答案从哪儿点下来的：省略 = 宿主界面（桌面端 / 终端），
+   *                 `'web'` = 手机浏览器（远程控制）。只影响审计记录里那一栏。
+   */
+  answerApproval(answer: ApprovalAnswer, source?: 'app' | 'web'): void
   /** 回答模型发起的提问（ask_user）；文本就是答案，一批多题时按题序一次交一题。 */
   answerQuestion(answer: string): void
   /** 回答计划评审卡（批准 = 切回执行模式开工）。 */

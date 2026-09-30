@@ -23,6 +23,9 @@ importers:
       react:
         specifier: ^19.2.0
         version: 19.3.0
+      ws:
+        specifier: 8.21.3
+        version: 8.21.3
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
@@ -33,6 +36,9 @@ importers:
       '@types/react':
         specifier: ^19.0.0
         version: 19.3.0
+      '@types/ws':
+        specifier: ^8.18.2
+        version: 8.18.2
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -153,6 +159,9 @@ packages:
 
   '@types/react@19.3.0':
     resolution: {integrity: sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==}
+
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
   ansi-escapes@7.3.0:
     resolution: {integrity: sha512-BvU8nYgGQBxcmMuEeUEmNTvrMVjJNSH7RgW24vXexN4Ven6qCvy4TntnvlnwnMLTVlcRQQdbRY8NKnaIoeWDNg==}
@@ -425,6 +434,10 @@ snapshots:
   '@types/react@19.3.0':
     dependencies:
       csstype: 3.2.3
+
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 24.13.5
 
   ansi-escapes@7.3.0:
     dependencies:

@@ -10,6 +10,7 @@ import { migrateFromDsh } from './core/migrate.js'
 import { getPluginConfig } from './core/plugin-registry.js'
 import { createKernel, emitStartupNotes, loadExternalPlugins, readUiConfig } from './host/kernel.js'
 import { hostStdioPlugin } from './plugins/host-stdio.js'
+import { remotePlugin } from './plugins/remote.js'
 
 async function main(): Promise<void> {
   // 首次运行：把 dsh 的模型配置迁移到 dsc 自己的文件（幂等，只读 dsh）
@@ -23,6 +24,8 @@ async function main(): Promise<void> {
 
   const root = await createKernel({ config, resumeSessionPath })
   await root.plugin(hostStdioPlugin, getPluginConfig('host-stdio'))
+  // 远程控制：开关在设置里（默认关），插件自己决定活不活
+  await root.plugin(remotePlugin, getPluginConfig('remote'))
   await loadExternalPlugins(root, ui.plugins)
   emitStartupNotes(root, migration, config)
 }

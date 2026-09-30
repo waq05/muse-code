@@ -32,7 +32,24 @@ export interface DscPrefs {
   closeToTray: boolean
   /** 侧栏界面偏好（会话排序、工作区顺序与显示名别名）。 */
   ui: UiPrefsView
+  /** 远程控制偏好（手机浏览器接入；见 plugins/remote.ts）。 */
+  remote: RemotePrefs
 }
+
+/** 远程控制的三项开关（设置 → 远程控制）。 */
+export interface RemotePrefs {
+  /** true = 本机起 HTTP+WS 服务；false = 一个字节都不监听。 */
+  enabled: boolean
+  /** 监听端口；1024 以下要管理员权限，所以下限从 1024 起。 */
+  port: number
+  /** true = 绑 0.0.0.0（同一个 Wi-Fi 的手机能连）；false = 只绑 127.0.0.1。 */
+  lan: boolean
+}
+
+/** 远程控制端口范围与缺省值（17321 是随手挑的高位口，不与常见服务撞）。 */
+export const REMOTE_PORT_MIN = 1024
+export const REMOTE_PORT_MAX = 65535
+export const REMOTE_PORT_DEFAULT = 17321
 
 const POLICIES: readonly ApprovalPolicy[] = ['readonly', 'auto-edit', 'full-access', 'ai-review']
 const EFFORTS: readonly EffortLevel[] = ['default', 'off', 'low', 'high', 'max']
@@ -115,6 +132,21 @@ function readProcessFold(value: unknown): UiProcessFold {
     : PROCESS_FOLD_DEFAULT
 }
 
+/**
+ * 把存档里的监听端口读成合法端口。
+ *
+ * 数字直接夹到 1024–65535；手改坏的值（字符串、NaN、null、小数）一律回落缺省端口，
+ * 绝不让存档把启动拦下来。这里用夹取而不是拒绝：改小 80 想「跑在 80 口」这种输入，
+ * 夹成 1024 至少服务起得来，界面上还能看见真实生效的值。
+ *
+ * @param value settings.json 里 `remote.port` 的原始值
+ * @returns 可直接 listen 的端口号
+ */
+function readRemotePort(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return REMOTE_PORT_DEFAULT
+  return Math.min(REMOTE_PORT_MAX, Math.max(REMOTE_PORT_MIN, Math.round(value)))
+}
+
 /** 读偏好（文件缺失或损坏按默认处理，绝不因为偏好坏掉起不来）。 */
 export function readPrefs(): DscPrefs {
   const prefs: DscPrefs = {
@@ -134,6 +166,7 @@ export function readPrefs(): DscPrefs {
       density: 'standard',
       processFold: PROCESS_FOLD_DEFAULT,
     },
+    remote: { enabled: false, port: REMOTE_PORT_DEFAULT, lan: false },
   }
   if (!existsSync(DSC_SETTINGS_JSON)) return prefs
   try {
@@ -195,6 +228,14 @@ export function readPrefs(): DscPrefs {
         .filter((entry) => entry.name !== '' && entry.url !== '')
       prefs.marketSources = sources
     }
+    // 远程控制：老 settings.json 里没有这一段，读不到就保持上面的默认值（关着）；
+    // 认不出的键一律不认（不往 prefs 里搬），坏值由 readRemotePort 夹回范围。
+    if (typeof doc.remote === 'object' && doc.remote !== null) {
+      const remote = doc.remote as Record<string, unknown>
+      if (typeof remote.enabled === 'boolean') prefs.remote.enabled = remote.enabled
+      if (typeof remote.lan === 'boolean') prefs.remote.lan = remote.lan
+      if (remote.port !== undefined) prefs.remote.port = readRemotePort(remote.port)
+    }
     return prefs
   } catch {
     return prefs
@@ -202,12 +243,17 @@ export function readPrefs(): DscPrefs {
 }
 
 /**
- * 合并并写盘偏好。`ui` 是唯一的嵌套字段，所以深合并它：调用方只传自己要改的
- * 那几项（例如只改排序方式）也不会把顺序和别名抹掉。
+ * 合并并写盘偏好。`ui` 与 `remote` 是仅有的两个嵌套字段，所以深合并它们：调用方只传
+ * 自己要改的那几项（例如只改端口）也不会把 enabled/lan 抹掉。
  */
 export function writePrefs(patch: Partial<DscPrefs>): DscPrefs {
   const current = readPrefs()
-  const next: DscPrefs = { ...current, ...patch, ui: { ...current.ui, ...patch.ui } }
+  const next: DscPrefs = {
+    ...current,
+    ...patch,
+    ui: { ...current.ui, ...patch.ui },
+    remote: { ...current.remote, ...patch.remote },
+  }
   mkdirSync(dirname(DSC_SETTINGS_JSON), { recursive: true })
   writeFileSync(DSC_SETTINGS_JSON, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
   return next

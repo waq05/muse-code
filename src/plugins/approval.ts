@@ -95,6 +95,8 @@ export const approvalPlugin: Plugin.Object = {
       suggestedRule: string[] | null
       done: (decision: ApprovalDecision, phase?: 'decided' | 'cancelled' | 'timeout') => void
       timer: NodeJS.Timeout
+      /** 这个答案是从哪儿点下来的（'app' 宿主界面 / 'web' 手机浏览器）；没人答过时 undefined。 */
+      source?: 'app' | 'web'
     } | null = null
 
     /** 规则文件重新读一遍（写在永久规则之后，让下一条判定立刻看到它）。 */
@@ -173,6 +175,9 @@ export const approvalPlugin: Plugin.Object = {
         })
         const done = (decision: ApprovalDecision, phase: 'decided' | 'cancelled' | 'timeout' = 'decided'): void => {
           if (pending === null || pending.view.id !== id) return
+          // 来源要在清掉 pending 之前取出来：下面那行之后这个对象就没人持有了。
+          // 超时与被打断没人答过，pending.source 还是 undefined，审计里就不写这一栏。
+          const source = pending.source
           clearTimeout(pending.timer)
           pending = null
           ctx.emit('dsc/changed')
@@ -188,6 +193,7 @@ export const approvalPlugin: Plugin.Object = {
             policy,
             mode: view.mode,
             sessionId: sessionId(),
+            ...(source === undefined ? {} : { source }),
           })
           resolveDone(decision)
         }
@@ -425,9 +431,11 @@ export const approvalPlugin: Plugin.Object = {
         return pending?.view ?? null
       },
 
-      answer(answer: ApprovalAnswer) {
+      answer(answer: ApprovalAnswer, source: 'app' | 'web' = 'app') {
         const current = pending
         if (current === null) return
+        // 来源挂在挂起对象上，`done` 里落审计时取用；手机浏览器点的那一下因此查得到（source='web'）。
+        current.source = source
         const finish = current.done
         if (answer === 'allow-always' && current.suggestedRule !== null) {
           appendRule({
@@ -444,6 +452,7 @@ export const approvalPlugin: Plugin.Object = {
             reason: '用户在审批卡上永久允许',
             policy,
             sessionId: sessionId(),
+            source,
           })
           finish('allow-always')
           return

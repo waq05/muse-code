@@ -305,8 +305,8 @@ export const runtimePlugin: Plugin.Object = {
         return Promise.resolve({ ok: true, notice })
       },
 
-      answerApproval(answer) {
-        ctx.approval.answer(answer)
+      answerApproval(answer, source) {
+        ctx.approval.answer(answer, source)
       },
 
       exit(): void {
