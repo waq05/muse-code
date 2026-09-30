@@ -9,17 +9,15 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import type {
   ApprovalPolicy,
-  CollaborationMode,
   EffortLevel,
   ModelChoiceView,
-  ModeSurface,
   PolicySurface,
   ThinkingLevel,
 } from '@dsc/runtime/contract.js'
 import { completionsFor, expandCommand } from '@dsc/runtime/plugins/commands.js'
 import type { CompletionItem } from '@dsc/runtime/services/types.js'
 import { toastErr } from './components/toast.js'
-import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconFlag, IconPlus, IconShield, IconStop } from './icons.js'
+import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconPlus, IconShield, IconStop } from './icons.js'
 
 const EFFORTS: { value: EffortLevel; label: string; hint: string }[] = [
   { value: 'default', label: '默认', hint: '不声明思考模式，跟随端点默认' },
@@ -52,9 +50,12 @@ async function readImage(file: File): Promise<ImageRead> {
 }
 
 /**
- * 输入框下面那两根旋钮：左边是协作模式（这一轮允许把手伸多远），
- * 右边是权限模式（问出来之后怎么裁）。两根旋钮的档位都不在这里写死：
- * 清单由快照里对应功能点贡献的那两片（`surfaces.mode` / `surfaces.policy`）给。
+ * 输入框下面只有一根旋钮：权限模式（问出来之后怎么裁）。档位不在这里写死，
+ * 清单由快照里对应功能点贡献的那一片（`surfaces.policy`）给。
+ *
+ * 协作模式（`surfaces.mode`）原来在这根旋钮右边还有一颗，后来收掉了：它和权限
+ * 模式的语义重叠，用户看着是两颗问同一件事的旋钮。模式本身没动，宿主的
+ * `setMode` 与 `/mode` 类指令照旧可用，只是界面上不再有这颗入口。
  */
 export function Composer(props: {
   disabled: boolean
@@ -63,15 +64,12 @@ export function Composer(props: {
   effort: EffortLevel
   /** 权限模式那根旋钮（当前档 + 可切清单，approval 插件贡献）。 */
   policy: PolicySurface
-  /** 协作模式那根旋钮（当前档 + 可切清单，mode 插件贡献）。 */
-  mode: ModeSurface
   working: boolean
   onSubmit(text: string, images?: string[]): void
   onInterrupt(): void
   onModelChange(value: string): void
   onEffortChange(value: EffortLevel): void
   onPolicyChange(value: ApprovalPolicy): void
-  onModeChange(value: CollaborationMode): void
 }): JSX.Element {
   const [value, setValue] = useState('')
   const [history, setHistory] = useState<string[]>([])
@@ -79,7 +77,6 @@ export function Composer(props: {
   const [active, setActive] = useState(0)
   const [modelOpen, setModelOpen] = useState(false)
   const [policyOpen, setPolicyOpen] = useState(false)
-  const [modeOpen, setModeOpen] = useState(false)
   /** 待发送的图片（data URL 清单）。 */
   const [attachments, setAttachments] = useState<string[]>([])
   const textarea = useRef<HTMLTextAreaElement | null>(null)
@@ -101,8 +98,6 @@ export function Composer(props: {
   const currentChoice = props.models.find((model) => model.model === props.model)
   /** 权限模式当前档的文案（档位清单由 approval 插件贡献，这里只负责画）。 */
   const policyCurrent = props.policy.options.find((item) => item.id === props.policy.current)
-  /** 协作模式当前档的文案（档位清单由 mode 插件贡献）。 */
-  const modeCurrent = props.mode.options.find((item) => item.id === props.mode.current)
   /** 当前模型能不能收图；模型列表里查不到它时先放行，别把输入框锁死。 */
   const canPasteImage = currentChoice === undefined || currentChoice.modalities.includes('image')
 
@@ -331,43 +326,6 @@ export function Composer(props: {
                     >
                       <span className="name">{item.label}</span>
                       {item.id === props.policy.current && <IconCheck size={14} className="check" />}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-          <div className="model-anchor">
-            <button
-              className={`model-btn mode-btn mode-${props.mode.current}${modeOpen ? ' open' : ''}`}
-              onClick={() => {
-                setModeOpen((current) => !current)
-                setPolicyOpen(false)
-                setModelOpen(false)
-              }}
-              data-tip={modeCurrent?.hint ?? '协作模式'}
-            >
-              <IconFlag size={13} />
-              {modeCurrent?.label ?? props.mode.current}
-              <IconChevronDown size={12} />
-            </button>
-            {modeOpen && (
-              <>
-                <div className="pop-mask" onClick={() => setModeOpen(false)} />
-                <div className="model-pop policy-pop">
-                  <div className="pop-label">协作模式</div>
-                  {props.mode.options.map((item) => (
-                    <button
-                      key={item.id}
-                      className={`pop-item${item.id === props.mode.current ? ' on' : ''}`}
-                      data-tip={item.hint}
-                      onClick={() => {
-                        props.onModeChange(item.id)
-                        setModeOpen(false)
-                      }}
-                    >
-                      <span className="name">{item.label}</span>
-                      {item.id === props.mode.current && <IconCheck size={14} className="check" />}
                     </button>
                   ))}
                 </div>

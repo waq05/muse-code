@@ -1,18 +1,34 @@
 /**
  * 线性 SVG 图标集（stroke 1.6 / currentColor），对照 dsh 桌面端的细线风格。
- * 全部为纯函数组件，尺寸由 CSS 或 size 属性控制。
+ * 全部为纯函数组件，尺寸由 CSS 或 size 属性控制；每个 svg 额外带上
+ * `--dsc-icon-size`，按钮里的图标据此跟 `--dsc-btn-scale` 一起缩放。
  *
  * @module desktop/renderer/icons
  */
-import type { JSX } from 'react'
+import type { CSSProperties, JSX } from 'react'
 
 type IconProps = { size?: number; className?: string }
+
+/**
+ * 把图标本来的像素尺寸另外挂一份 CSS 变量。
+ *
+ * `width`/`height` 属性只写死了数字，样式表读不到它，而按钮里的图标要跟着
+ * `--dsc-btn-scale` 一起放大（见 styles.css「按钮大小滑杆」段）；挂上变量后，
+ * 那一段用 `calc(var(--dsc-icon-size) * var(--dsc-btn-scale))` 覆盖宽高。
+ * 只有按钮场景的规则会读它，正文、状态栏那些图标照旧按属性画。
+ *
+ * @param size 图标边长（px）
+ */
+function sized(size: number): CSSProperties {
+  return { '--dsc-icon-size': `${size}px` } as CSSProperties
+}
 
 function base(path: JSX.Element, { size = 16, className }: IconProps, viewBox = '0 0 24 24'): JSX.Element {
   return (
     <svg
       width={size}
       height={size}
+      style={sized(size)}
       viewBox={viewBox}
       fill="none"
       stroke="currentColor"
@@ -138,16 +154,6 @@ export function IconShield(props: IconProps): JSX.Element {
     <>
       <path d="M12 3.5 5 6.2v5.1c0 4.4 3 7.6 7 9.2 4-1.6 7-4.8 7-9.2V6.2Z" />
       <path d="m9 11.8 2.2 2.2L15.5 9.5" />
-    </>,
-    props,
-  )
-}
-
-export function IconFlag(props: IconProps): JSX.Element {
-  return base(
-    <>
-      <path d="M6 21V4" />
-      <path d="M6 4.8h9.4l-1.7 3.6 1.7 3.6H6" />
     </>,
     props,
   )

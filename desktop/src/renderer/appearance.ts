@@ -1,12 +1,12 @@
 /**
- * 外观偏好：主题模式、字号、密度三项如何落到 DOM 上。
+ * 外观偏好：主题模式、字号、密度、按钮大小四项如何落到 DOM 上。
  *
  * 真源在宿主侧 ~/.dsc/settings.json（走 UiPrefsView）。这里另存一份
  * localStorage 镜像，只为了首帧不要闪：主进程还没连上时就能按上次的
  * 设置画出颜色，等 prefs 到了再用真值覆盖一次。
  * 主题色还要额外报给主进程一次：原生窗口控件区不归样式表管，见 pushWindowChrome。
  */
-import type { ThemeMode, UiDensity, UiFontSize } from '@dsc/runtime/contract.js'
+import type { ThemeMode, UiDensity, UiFontSize, UiPrefsView } from '@dsc/runtime/contract.js'
 import { dsc } from './bridge.js'
 
 export type { ThemeMode, UiDensity, UiFontSize }
@@ -17,21 +17,29 @@ export const FONT_SCALE_MAX = 1.35
 /** 基准倍率：正文 13px 原样。 */
 export const FONT_SCALE_DEFAULT = 1
 
+/** 按钮缩放倍率的可调范围；与 src/core/prefs.ts 读档时的夹取范围一致，改这里要两边一起改。 */
+export const BUTTON_SCALE_MIN = 0.9
+export const BUTTON_SCALE_MAX = 1.5
+/** 基准倍率：图标按钮静息 26px 原样。 */
+export const BUTTON_SCALE_DEFAULT = 1
+
 /** 旧存档里的三档字号（0.6 之前存的是字符串），迁移成倍率。 */
 const LEGACY_FONT_SCALES: Record<string, number> = { sm: 0.92, md: 1, lg: 1.12 }
 
-/** 一项外观设置，与 UiPrefsView 里的三个字段同名。 */
+/** 一项外观设置：主题模式、字号、密度，以及按钮缩放。 */
 export interface Appearance {
   themeMode: ThemeMode
   fontSize: UiFontSize
   density: UiDensity
+  buttonScale: number
 }
 
-/** 出厂默认：深色、标准字号、标准密度。真源是 core/prefs.ts 的 readPrefs 默认值。 */
+/** 出厂默认：深色、标准字号、标准密度、按钮原样。真源是 core/prefs.ts 的 readPrefs 默认值。 */
 export const DEFAULT_APPEARANCE: Appearance = {
   themeMode: 'dark',
   fontSize: FONT_SCALE_DEFAULT,
-  density: 'standard'
+  density: 'standard',
+  buttonScale: BUTTON_SCALE_DEFAULT
 }
 
 /**
@@ -62,6 +70,50 @@ export function applyFontScale(scale: number): void {
   document.documentElement.style.setProperty('--dsc-font-scale', String(normalizeFontScale(scale)))
 }
 
+/**
+ * 把外部来的按钮缩放值归一成能用的倍率。
+ *
+ * 数字夹到 0.9–1.5 并保留两位小数；NaN、null、认不出的字符串（手改坏了的存档）
+ * 一律回落 1。宿主存档、localStorage 镜像、滑杆的值都先过这里，所以最多是按钮
+ * 大小不对，不会把界面带崩。
+ *
+ * @param value 任意来源的按钮缩放值
+ * @returns 可以直接写进 `--dsc-btn-scale` 的倍率
+ */
+export function normalizeButtonScale(value: unknown): number {
+  const scale = typeof value === 'number' && Number.isFinite(value) ? value : BUTTON_SCALE_DEFAULT
+  return Math.min(BUTTON_SCALE_MAX, Math.max(BUTTON_SCALE_MIN, Math.round(scale * 100) / 100))
+}
+
+/**
+ * 只改按钮大小时用：把倍率写到 `<html>` 的内联 `--dsc-btn-scale` 上。
+ *
+ * 设置页滑杆在拖动过程中走这里做即时预览（松手才落盘），正式生效仍走
+ * {@link applyAppearance}；写入点只有本文件，样式表只跟着读。
+ *
+ * @param scale 按钮缩放倍率，越界会被归一
+ */
+export function applyButtonScale(scale: number): void {
+  document.documentElement.style.setProperty('--dsc-btn-scale', String(normalizeButtonScale(scale)))
+}
+
+/**
+ * 把宿主 `getUiPrefs` 的返回值归一成渲染层能直接用的偏好。
+ *
+ * 字号先过 {@link normalizeFontScale}（旧存档存的是三档字符串），按钮缩放过
+ * {@link normalizeButtonScale}（手改坏的存档回落 100%）。宿主的读档白名单里
+ * 现在有这两项，所以回读回来的值就是存档里的真值。
+ *
+ * @param prefs 宿主原样返回的界面偏好
+ */
+export function normalizeUiPrefs(prefs: UiPrefsView): UiPrefsView {
+  return {
+    ...prefs,
+    fontSize: normalizeFontScale(prefs.fontSize),
+    buttonScale: normalizeButtonScale(prefs.buttonScale)
+  }
+}
+
 const STORAGE_KEY = 'dsc.appearance'
 const media = typeof window !== 'undefined' ? window.matchMedia?.('(prefers-color-scheme: light)') : undefined
 let systemWatcher: ((event: MediaQueryListEvent) => void) | undefined
@@ -85,6 +137,7 @@ export function applyAppearance(appearance: Appearance): void {
   root.dataset.theme = mode
   root.dataset.density = appearance.density
   applyFontScale(appearance.fontSize)
+  applyButtonScale(appearance.buttonScale)
 
   // 窗口底色和原生窗口控件区跟着这次的主题一起换，否则浅色主题下顶栏右端
   // 会留一块深色的控件条。
@@ -174,7 +227,8 @@ export function loadCachedAppearance(): Appearance {
       themeMode: parsed.themeMode === 'light' || parsed.themeMode === 'system' ? parsed.themeMode : 'dark',
       // 镜像里既可能是倍率（现版本），也可能是旧的 'sm' / 'md' / 'lg'。
       fontSize: normalizeFontScale(parsed.fontSize),
-      density: parsed.density === 'compact' || parsed.density === 'roomy' ? parsed.density : 'standard'
+      density: parsed.density === 'compact' || parsed.density === 'roomy' ? parsed.density : 'standard',
+      buttonScale: normalizeButtonScale(parsed.buttonScale)
     }
   } catch (error) {
     // 镜像只是加速手段，读不出来直接用默认值，不该把启动卡住。

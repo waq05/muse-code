@@ -113,7 +113,29 @@ export interface AskOptionView {
   description?: string
 }
 
-/** 模型发起的一次提问；界面渲染成带按钮的卡片，答案回给模型。 */
+/**
+ * 一批提问里的一题：字段与单题视图完全相同，只是没有 `id`——
+ * 题目在自己那一批里的位置就是它的标识。
+ */
+export interface AskQuestionItem {
+  question: string
+  header?: string
+  options: AskOptionView[]
+  multiSelect: boolean
+  /** 「其他」自由输入是否允许。 */
+  allowFreeText: boolean
+}
+
+/**
+ * 模型发起的一次提问；界面渲染成带按钮的卡片，答案回给模型。
+ *
+ * 一次提问可以带好几题：`questions` 有内容时界面按「一张卡列出全部题目」渲染
+ * （逐题作答、统一提交，一次调用把全部答案交回）；界面不认 `questions` 时
+ * 就退回下面那几个单题字段，仍然能渲染出第 1 题。
+ *
+ * 单题字段因此是「第 1 题的投影」，和 `questions[0]` 必须同源：
+ * 老会话回放里存下的单题视图没有 `questions`，也不需要迁移。
+ */
 export interface AskUserView {
   id: string
   question: string
@@ -122,7 +144,12 @@ export interface AskUserView {
   multiSelect: boolean
   /** 「其他」自由输入是否允许。 */
   allowFreeText: boolean
+  /** 这一批的全部题目（含第 1 题）；单题提问可以不写，写了就必须与单题字段一致。 */
+  questions?: AskQuestionItem[]
 }
+
+/** 提一个单题提问的入参：`id` 由服务发，`questions` 由服务按这一题的字段补出来。 */
+export type AskUserViewInput = Omit<AskUserView, 'id' | 'questions'>
 
 /** 一次工具调用的展示状态。 */
 export type ToolStatus = 'running' | 'done' | 'failed' | 'rejected'
@@ -266,7 +293,7 @@ export interface RuntimeSurfaces {
   pendingPlan: PlanView | null
   /** 会话目标（goal 贡献）；null = 没设目标。 */
   goal: GoalView | null
-  /** 模型发起的提问（ask 贡献）；同一时刻至多一个。 */
+  /** 模型发起的提问（ask 贡献）；同一时刻至多一个，它自己可能带一批题目（见 AskUserView.questions）。 */
   pendingQuestion: AskUserView | null
 }
 
@@ -376,6 +403,8 @@ export interface UiPrefsView {
   themeMode: ThemeMode
   /** 字号缩放倍数（设置页滑杆可调范围 0.85–1.35）。 */
   fontSize: UiFontSize
+  /** 按钮缩放倍数（设置页滑杆可调范围 0.9–1.5），桌面端把它写成 `--dsc-btn-scale`。 */
+  buttonScale: number
   /** 密度档位。 */
   density: UiDensity
 }
@@ -725,7 +754,7 @@ export interface DscRuntime {
   dock(op: string, payload?: Record<string, unknown>): Promise<unknown>
   /** 回答审批（四种决定；scope 语义见 ApprovalAnswer）。 */
   answerApproval(answer: ApprovalAnswer): void
-  /** 回答模型发起的提问（ask_user）；文本就是答案。 */
+  /** 回答模型发起的提问（ask_user）；文本就是答案，一批多题时按题序一次交一题。 */
   answerQuestion(answer: string): void
   /** 回答计划评审卡（批准 = 切回执行模式开工）。 */
   answerPlan(decision: PlanDecision): void

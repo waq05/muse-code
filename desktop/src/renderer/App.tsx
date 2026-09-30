@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import type { ModelChoiceView, PluginInfoView, RuntimeSnapshot, TeammateView, TranscriptEntry, UiPrefsView } from '@dsc/runtime/contract.js'
-import { applyAppearance, loadCachedAppearance, normalizeFontScale, saveCachedAppearance } from './appearance.js'
+import { applyAppearance, loadCachedAppearance, normalizeUiPrefs, saveCachedAppearance } from './appearance.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { dsc, createRuntimeProxy, type RuntimeProxy } from './bridge.js'
 import { ApprovalCard } from './ApprovalCard.js'
@@ -72,8 +72,8 @@ export function App(): JSX.Element {
   )
   // 正文那一层（含输入区）：拖拽条定位在它里面，夹宽度也要量它的实际宽。
   const zoneRef = useRef<HTMLDivElement | null>(null)
-  // 侧栏界面偏好（排序方式、工作区顺序与别名、外观三项），存在宿主的 ~/.dsc/settings.json
-  // 首帧的外观三项用 localStorage 镜像打底：等宿主返回真实设置的这段时间里，
+  // 侧栏界面偏好（排序方式、工作区顺序与别名、外观四项），存在宿主的 ~/.dsc/settings.json
+  // 首帧的外观四项用 localStorage 镜像打底：等宿主返回真实设置的这段时间里，
   // 若按写死的深色上色，每次冷启动都会先闪一下深色，连窗口控件条都会被推成深色。
   const [uiPrefs, setUiPrefs] = useState<UiPrefsView>(() => ({
     sessionSort: 'manual',
@@ -97,10 +97,8 @@ export function App(): JSX.Element {
     void dsc.getCwd().then(setCwd)
     void dsc.recentCwds().then(setRecentCwds)
     // 宿主存档里的字号可能是旧版的三档字符串（'sm' / 'md' / 'lg'），读回来先归一成倍率，
-    // 这样滑杆、百分比、落盘的值始终是同一个数字。
-    void proxy.getUiPrefs().then((prefs) =>
-      setUiPrefs({ ...prefs, fontSize: normalizeFontScale(prefs.fontSize) }),
-    )
+    // 这样滑杆、百分比、落盘的值始终是同一个数字；按钮缩放一并归一。
+    void proxy.getUiPrefs().then((prefs) => setUiPrefs(normalizeUiPrefs(prefs)))
     void proxy.refreshSessions()
     void proxy.listModels().then(setModels)
     return () => {
@@ -111,13 +109,18 @@ export function App(): JSX.Element {
     }
   }, [proxy])
 
-  // 外观三项落到 <html> 的 data 属性和 --dsc-font-scale 上，样式表据此换色。
+  // 外观四项落到 <html> 的 data 属性和 --dsc-font-scale / --dsc-btn-scale 上，样式表据此换色。
   // 同时写一份 localStorage 镜像，下次冷启动的首帧就能按老设置上色，不闪默认深色。
   useEffect(() => {
-    const appearance = { themeMode: uiPrefs.themeMode, fontSize: uiPrefs.fontSize, density: uiPrefs.density }
+    const appearance = {
+      themeMode: uiPrefs.themeMode,
+      fontSize: uiPrefs.fontSize,
+      density: uiPrefs.density,
+      buttonScale: uiPrefs.buttonScale,
+    }
     applyAppearance(appearance)
     saveCachedAppearance(appearance)
-  }, [uiPrefs.themeMode, uiPrefs.fontSize, uiPrefs.density])
+  }, [uiPrefs.themeMode, uiPrefs.fontSize, uiPrefs.density, uiPrefs.buttonScale])
 
   // 拖出来的宽度写成根元素上的 CSS 变量：样式表里读这个变量的几处（侧栏宽、正文列宽、
   // 正文两侧拖拽条的位置）一起跟着动，复位就是把行内值撤掉，让 `:root` 默认值回来。
@@ -292,18 +295,18 @@ export function App(): JSX.Element {
     })
   }
 
-  /** 写侧栏偏好（排序方式、工作区顺序、显示名别名），成功后把新值读回来。 */
+  /** 写侧栏偏好（排序方式、工作区顺序、显示名别名、外观四项），成功后把新值读回来。 */
   const saveUiPrefs = (patch: Partial<UiPrefsView>): void => {
     void proxy.setUiPrefs(patch).then((result) => {
       if (!result.ok) {
         toastErr(`保存失败：${result.error}`)
         return
       }
-      if (result.notice !== undefined) toastOk(result.notice)
-      // 回读的值可能被宿主改写（读到旧档就是三档字符串），跟首帧一样归一
-      void proxy.getUiPrefs().then((prefs) =>
-        setUiPrefs({ ...prefs, fontSize: normalizeFontScale(prefs.fontSize) }),
-      )
+      if (result.notice !== undefined) {
+        toastOk(result.notice)
+      }
+      // 回读的值可能被宿主改写（读到旧档就是三档字符串、越界会被夹取），跟首帧一样归一。
+      void proxy.getUiPrefs().then((prefs) => setUiPrefs(normalizeUiPrefs(prefs)))
     })
   }
 
@@ -560,14 +563,12 @@ export function App(): JSX.Element {
                     model={snapshot.status.model}
                     effort={snapshot.status.effort}
                     policy={snapshot.surfaces.policy}
-                    mode={snapshot.surfaces.mode}
                     working={snapshot.status.turnState !== 'idle'}
                     onSubmit={handleSubmit}
                     onInterrupt={() => proxy.interrupt()}
                     onModelChange={(value) => void proxy.setModel(value)}
                     onEffortChange={(value) => void proxy.setEffort(value)}
                     onPolicyChange={(value) => proxy.setPolicy(value)}
-                    onModeChange={(value) => void proxy.setMode(value)}
                   />
                 ) : (
                   <div className="peek-lock">

@@ -54,6 +54,12 @@ const FONT_SCALE_MAX = 1.35
 /** 读不出字号时的基准倍率：正文 13px 原样。 */
 const FONT_SCALE_DEFAULT = 1
 
+/** 按钮倍率的可调范围，与桌面端滑杆一致（desktop/src/renderer/appearance.ts）。 */
+const BUTTON_SCALE_MIN = 0.9
+const BUTTON_SCALE_MAX = 1.5
+/** 读不出按钮倍率时的基准倍率：图标按钮静息 26px 原样。 */
+const BUTTON_SCALE_DEFAULT = 1
+
 /** 工作区别名的长度上限（侧栏一行放不下太长名字）。 */
 const ALIAS_LIMIT = 40
 
@@ -72,6 +78,21 @@ function readFontScale(value: unknown): number {
   return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, scale))
 }
 
+/**
+ * 把存档里的按钮倍率读成倍率。
+ *
+ * 数字直接夹到 0.9–1.5；手改坏的值（`"大"`、NaN、null）一律回落 1，绝不让存档
+ * 把启动拦下来。范围与桌面端滑杆一致（desktop/src/renderer/appearance.ts），
+ * 改这里要两边一起改。
+ *
+ * @param value settings.json 里 `ui.buttonScale` 的原始值
+ * @returns 可直接写进 `--dsc-btn-scale` 的倍率
+ */
+function readButtonScale(value: unknown): number {
+  const scale = typeof value === 'number' && Number.isFinite(value) ? value : BUTTON_SCALE_DEFAULT
+  return Math.min(BUTTON_SCALE_MAX, Math.max(BUTTON_SCALE_MIN, scale))
+}
+
 /** 读偏好（文件缺失或损坏按默认处理，绝不因为偏好坏掉起不来）。 */
 export function readPrefs(): DscPrefs {
   const prefs: DscPrefs = {
@@ -87,6 +108,7 @@ export function readPrefs(): DscPrefs {
       workspaceAliases: {},
       themeMode: 'dark',
       fontSize: FONT_SCALE_DEFAULT,
+      buttonScale: BUTTON_SCALE_DEFAULT,
       density: 'standard',
     },
   }
@@ -117,12 +139,16 @@ export function readPrefs(): DscPrefs {
           if (name !== '') prefs.ui.workspaceAliases[cwd] = name
         }
       }
-      // 外观三项：老 settings.json 里没有这几项，读不到就保持上面的默认值。
+      // 外观四项：老 settings.json 里没有这几项，读不到就保持上面的默认值。
       if (typeof ui.themeMode === 'string' && THEME_MODES.includes(ui.themeMode as ThemeMode)) {
         prefs.ui.themeMode = ui.themeMode as ThemeMode
       }
       if (typeof ui.fontSize === 'string' || typeof ui.fontSize === 'number') {
         prefs.ui.fontSize = readFontScale(ui.fontSize)
+      }
+      // 按钮缩放只有桌面端这一个写入方，存的是数字；NaN/Infinity 由 readButtonScale 回落 1。
+      if (typeof ui.buttonScale === 'number') {
+        prefs.ui.buttonScale = readButtonScale(ui.buttonScale)
       }
       if (typeof ui.density === 'string' && DENSITIES.includes(ui.density as UiDensity)) {
         prefs.ui.density = ui.density as UiDensity

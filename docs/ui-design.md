@@ -232,11 +232,11 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 
 ## 10. 外观设置与主题
 
-「外观」三档存在 `~/.dsc/settings.json` 的 `ui` 里（`themeMode` / `fontSize` / `density`），
+「外观」四项存在 `~/.dsc/settings.json` 的 `ui` 里（`themeMode` / `fontSize` / `density` / `buttonScale`），
 设置界面改完立刻生效并落盘：
 
-1. `appearance.ts` 的 `applyAppearance()` 往 `<html>` 写 `data-theme` / `data-density` / `--dsc-font-scale`，
-   样式表据此换色换字号；
+1. `appearance.ts` 的 `applyAppearance()` 往 `<html>` 写 `data-theme` / `data-density` / `--dsc-font-scale` / `--dsc-btn-scale`，
+   样式表据此换色、换字号、换按钮大小；
 2. 同一份外观写一份 localStorage 镜像，`main.tsx` 首帧和 `App.tsx` 的 `uiPrefs` 初值都读它——
    这样宿主返回真实设置之前不会先闪一次默认深色；
 3. `pushWindowChrome()` 把 `--dsc-chrome-bar` / `--dsc-chrome-symbol` 算成 `#rrggbb` 通过

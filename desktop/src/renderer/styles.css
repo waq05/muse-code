@@ -851,31 +851,43 @@
   position: relative;
 }
 
-/* 正文列两侧的拖拽条（对照 dsh 的正文宽度手柄）：10px 热区，离正文列 24px。
-   列宽由 --dsc-thread-max 说了算，两条各自按「50% ± 列宽/2」摆位，
-   所以拖一下，正文、审批卡、输入框三处一起挪。
-   窗口窄到列两边塞不下「24px 内缩 + 10px 热区」时，min() 把热区算成负数，
-   绝对定位的空元素宽度归零——不会留下一块位置错位却抓得住的热区。 */
+/* 正文列两侧的拖拽条（对照 dsh 的正文宽度手柄）：12px 宽的热区，中心压在正文列的边缘线上。
+   列宽由 --dsc-thread-max 说了算，所以拖一下，正文、审批卡、输入框三处一起挪。
+   「列缘在这一层里的哪个 x」不是这一层算得出来的事——正文列在滚动区里居中，滚动区右侧还
+   留着刻度轨道与滚动条槽（见上面「对话区状态与刻度优化」段），在另一层里按 50% 重算一遍
+   就会差半格；改由 ThreadResizer.tsx 量出真实矩形、写进 --dsc-thread-col-start / -end，
+   这里只负责摆位（列变宽、窗口缩放，把手跟着列走）。
+   width 里的 min() 是窄窗口的兜底：热区一半要落在本层内，列缘贴到层边时热区跟着收窄，
+   免得它越到隔壁侧栏头上；绝对定位的空元素宽度归零时也不会留下一块错位的热区。 */
 .thread-handle {
   cursor: col-resize;
   position: absolute;
   top: 0;
   bottom: 0;
   touch-action: none;
-  width: min(10px, calc((100% - var(--dsc-thread-max)) / 2 - 48px));
+  /* 中心与列缘重合：一半落在列外、一半落在列内；列内那半边落在正文列的 24px 内缩里，
+     压不到正文（正文、气泡都在这条内缩线以内）。 */
+  transform: translateX(-50%);
+  width: 12px;
   z-index: var(--dsc-z-handle);
 }
 
+/* 左把手压在列左缘、右把手压在列右缘。变量还没写上来时（ThreadResizer 挂上之前那一帧）
+   退回居中摆位，宽度也退回 12px，不会出现「热区算成负数、宽度归零」那种抓不住的把手。 */
 .thread-handle[data-side='left'] {
-  right: calc(50% + var(--dsc-thread-max) / 2 + 24px);
+  left: var(--dsc-thread-col-start, 50%);
+  width: min(12px, calc(var(--dsc-thread-col-start, 50%) * 2));
 }
 
 .thread-handle[data-side='right'] {
-  left: calc(50% + var(--dsc-thread-max) / 2 + 24px);
+  left: var(--dsc-thread-col-end, 50%);
+  width: min(12px, calc((100% - var(--dsc-thread-col-end, 50%)) * 2));
 }
 
 /* 高亮：一条 2px 竖条跟着鼠标上下走（拖动中由 JS 把鼠标竖向位置写进 --dsc-handle-y），
    静息不亮，hover 或拖动才亮；中段 16px 是实的，两头各化开 28px。
+   竖条压在热区正中，也就是正文列的边缘线上（改版前它挂在热区一侧，热区又离列 24px，
+   两者加起来离正文半格远）。
    用滚动条那个灰，是为了让这根次要的手柄在浅色主题里也不刺眼。 */
 .thread-handle::after {
   background: linear-gradient(
@@ -896,12 +908,9 @@
   width: 2px;
 }
 
-.thread-handle[data-side='left']::after {
-  right: 4px;
-}
-
-.thread-handle[data-side='right']::after {
-  left: 4px;
+.thread-handle::after {
+  /* 竖条居中：热区中心就是列缘，所以这一条正好压在正文列的边上 */
+  left: calc(50% - 1px);
 }
 
 .thread-handle:hover::after,
@@ -5109,23 +5118,6 @@ body.resizing iframe {
   padding: 5px 8px;
 }
 
-/* ── 协作模式按钮（输入框底栏，与权限模式并排的两根独立旋钮） ── */
-.mode-btn.mode-plan {
-  color: var(--dsc-accent);
-}
-
-/* 探索模式原来写的是 var(--dsc-blue, #4a9eff)：--dsc-blue 这个令牌从来没定义过，
-   所以它永远落回那个硬编码蓝——浅色主题下也照用深色主题的蓝（白底上对比度不够），
-   而且跟上面计划模式的品牌蓝几乎分不出来。改用系统里已有的紫色：两个模式一眼可分，
-   深浅主题各有自己的那一档。 */
-.mode-btn.mode-explore {
-  color: var(--dsc-purple);
-}
-
-.mode-btn.mode-quiet {
-  color: var(--dsc-text-tertiary);
-}
-
 /* ══════════ 侧栏与状态栏优化 ══════════ */
 /* 这一段只做三件事，别处的规则一行没改：
      1. 文件夹行的会话数量徽标不再被悬停按钮挤动——按钮组改成贴在徽标左侧的浮层；
@@ -5349,25 +5341,31 @@ body.resizing iframe {
   }
 }
 
-/* ── 每轮底部的时间与用时 ──
-   贴在操作条那一列（右对齐），与上面的用量统计成一条竖线；
-   比正文再轻一档，长时间看不会变成噪音。缺 ts 的老会话整行不画。
+/* ── 每轮底部的元信息：时刻 · 用时 · 分叉 · 本轮用量 ──
+   贴正文列左缘（它是 .chat-inner 的 flex 项，左缘就是正文的左缘），挂在这一轮最后一条
+   条目正下方：对齐的参照是正文，不是对话区的最右缘（对照 dsh 的消息脚注排法，见
+   TurnFooter.tsx 的模块注释；用量也从助手消息末尾搬到了这一行）。
+   字号走 caption 档，颜色比正文轻两档，长时间看不会变成噪音。缺 ts 的老会话整行不画。
    负的 margin-top 是用来吃掉 .chat-inner 的 16px 间距的：那一档间距是给「轮与轮之间」
    留的，页脚属于这一轮的收尾，得跟在正文下面而不是被推开半个身位。 */
 .round-foot {
   align-items: center;
   color: var(--dsc-text-quaternary);
   display: flex;
-  font-size: var(--dsc-fs-tool);
+  font-size: var(--dsc-fs-caption);
   font-variant-numeric: tabular-nums;
-  gap: 5px;
-  justify-content: flex-end;
+  gap: 6px;
+  justify-content: flex-start;
   margin-top: calc(1px - var(--dsc-turn-gap));
-  padding-right: 1px;
 }
 
 .round-foot .round-sep {
   opacity: 0.55;
+}
+
+/* 本轮用量（估算值，界面里带「~」）：与时刻、用时同一档字号与颜色，数字等宽不抖。 */
+.round-foot .round-tokens {
+  font-variant-numeric: tabular-nums;
 }
 
 /* ══════════ 工具卡折叠优化 ══════════
@@ -5610,13 +5608,14 @@ body.resizing iframe {
   color: var(--dsc-text-secondary);
 }
 
-/* 状态格：定稿时是空的，但始终渲染——它的 flex:1 把行尾箭头顶到最右边
-   （同 ToolCard.tsx 里那个始终渲染的 .preview）。 */
+/* 状态格：定稿时是空的，但始终渲染——把行尾箭头推到最右边。
+   收成一格不占宽度（flex: none）是这次改版定的：中间那段摘要行（.think-summary，见文件末尾）
+   现在由它吃剩余宽度，两块都写 flex:1 会平分，摘要在跑动中会被压掉一半。 */
 .think-status {
   align-items: center;
   color: var(--dsc-text-quaternary);
   display: inline-flex;
-  flex: 1;
+  flex: none;
   font-size: var(--dsc-fs-tool);
   font-variant-numeric: tabular-nums;
   gap: 4px;
@@ -5658,9 +5657,19 @@ body.resizing iframe {
 }
 
 /* ── 展开区 ──
-   左右 8px 内距与紧凑行对齐；正文沿用改动前的「左竖线引用体」造型。 */
+   左右 8px 内距与紧凑行对齐；正文沿用改动前的「左竖线引用体」造型。
+   高度过渡（grid-template-rows 0fr → 1fr + @starting-style）写在文件末尾
+   「会话脚注与思考折叠改版」那一段，这里只留布局。 */
 .think-body {
   padding: 0 8px 8px;
+}
+
+/* 高度过渡的裁剪层：展开区长高的过程中把溢出的正文裁掉。
+   它只包正文，带「收起」的吸附快捷栏在它外面（.think-block 的直接子项），
+   所以这里的 overflow 不会把 sticky 的吸附参照系从 .chat 换成这个小盒子。 */
+.think-body-clip {
+  min-height: 0;
+  overflow: hidden;
 }
 
 .think-text {
@@ -5682,7 +5691,10 @@ body.resizing iframe {
    底色必须不透明，否则滚过去的思考文字会从栏底透出来。
    用 --dsc-bg-raised 而不是工具卡那条的 --dsc-bg-page：思考块自己有一层
    --dsc-fill-quinary 底色，用页面色会在块里切出一条明显更暗的带子；bg-raised 是
-   「比页面浮起一档」的不透明面，与块底色几乎同亮度，深浅两套主题都定义了它。 */
+   「比页面浮起一档」的不透明面，与块底色几乎同亮度，深浅两套主题都定义了它。
+   位置：这次它是 .think-block 的直接子项（夹在紧凑行与展开区之间），而不是套在
+   .think-body 里——展开区要靠 overflow 裁剪做高度过渡，而 overflow 非 visible 的祖先
+   会把 sticky 的吸附参照系换成它自己。直接当子项就不必再用负外边距把它拉回块内边缘。 */
 .think-bar {
   align-items: center;
   background: var(--dsc-bg-raised);
@@ -5692,8 +5704,7 @@ body.resizing iframe {
   font-size: var(--dsc-fs-tool);
   gap: var(--dsc-sp-3);
   justify-content: space-between;
-  /* 负的左右外边距把栏拉到块的内边缘（.think-body 自己有 8px 内距）。 */
-  margin: 0 -8px var(--dsc-sp-2);
+  margin: 0 0 var(--dsc-sp-2);
   min-height: var(--dsc-row-h);
   padding: 0 8px;
   position: sticky;
@@ -5955,12 +5966,14 @@ body.resizing iframe {
      2. 侧栏行 hover 才出现的那排按钮再重点放大：24px → 28px，图标 13/14 → 14/15。
    行高（--dsc-row-h）不动：28px 的按钮在「标准」密度下把行撑到 28px，整列
    会话行等高一起长，不会出现某一行特别高；「宽松」密度下行高本来就 29.9px，
-   按钮装得下，列表一点不变。 */
+   按钮装得下，列表一点不变。
+   下面这几处固定 px 都乘上 --dsc-btn-scale（设置 → 外观 → 按钮大小，见文件末尾
+   的「按钮大小滑杆」段）：倍率是 1 时算出来还是 26 / 28 / 15px，与原来一模一样。 */
 
 /* ── 图标按钮：静息 24px → 26px ── */
 .icon-btn {
-  height: 26px;
-  width: 26px;
+  height: calc(26px * var(--dsc-btn-scale));
+  width: calc(26px * var(--dsc-btn-scale));
 }
 
 /* ── 侧栏行尾的按钮组：24px → 28px ──
@@ -5968,8 +5981,8 @@ body.resizing iframe {
    两个槽位一起放大，同一列里两种行的高度才一致。 */
 .sidebar .group-row .row-tail .row-actions .icon-btn,
 .sidebar .sess-item > .row-actions .icon-btn {
-  height: 28px;
-  width: 28px;
+  height: calc(28px * var(--dsc-btn-scale));
+  width: calc(28px * var(--dsc-btn-scale));
 }
 
 /* 按钮一大，原来 1px 的缝就贴住了：给到 3px，三颗按钮仍然挤在行尾。 */
@@ -5980,13 +5993,13 @@ body.resizing iframe {
 
 /* ── 菜单行 ──
    图标提到 15px 后 4px 的上下内距显挤，各补 1px；勾选列跟着图标放宽 1px，
-   长菜单项不会被这一下顶出横幅。 */
+   长菜单项不会被这一下顶出横幅。这两处跟图标一样跟着按钮大小走。 */
 .row-menu .menu-item {
-  padding: 5px 8px;
+  padding: calc(5px * var(--dsc-btn-scale)) calc(8px * var(--dsc-btn-scale));
 }
 
 .menu-check {
-  width: 15px;
+  width: calc(15px * var(--dsc-btn-scale));
 }
 
 /* ══════════ 对话区按钮位置与边界优化 ══════════ */
@@ -6073,4 +6086,398 @@ body.resizing iframe {
 .turn-status-rule {
   border-top: 1px solid var(--dsc-stroke-3);
 }
+
+/* ══════════ 按钮大小滑杆 ══════════ */
+/* 设置 → 外观 → 按钮大小：一条滑杆连续调 90%–150%，右边跟一个当前百分比。
+   倍率由 appearance.ts 的 applyButtonScale 写到 <html> 的 --dsc-btn-scale 上；
+   按钮本体早就在上面「侧栏与图标按钮优化」段里改成 calc(原尺寸 × 倍率)：
+   26px 的 .icon-btn、侧栏行尾的 28px、菜单行内距 5px/8px 与勾选列 15px。
+   这一段只补三件事：
+
+     1. 兜底值 1：JS 还没跑起来时 calc 里也有得算，按钮不会塌成一条；
+     2. 按钮里的图标跟着一起缩：svg 的 width/height 属性在这里被覆盖成
+        calc(原尺寸 × 倍率)，原尺寸由 icons.tsx 挂在行内样式 --dsc-icon-size 上。
+        只覆盖按钮场景（图标按钮、菜单行、勾选列）的 svg，正文、状态栏、
+        工具卡那些图标照旧按属性画，一行没动；
+     3. 插件页/技能页头部那两颗 30px 的按钮：规则写在别处的段落里，这里原样
+        重写一遍交给倍率。 */
+
+:root {
+  --dsc-btn-scale: 1;
+}
+
+.icon-btn svg,
+.row-menu .menu-item svg,
+.menu-check svg {
+  height: calc(var(--dsc-icon-size, 1em) * var(--dsc-btn-scale));
+  width: calc(var(--dsc-icon-size, 1em) * var(--dsc-btn-scale));
+}
+
+/* 插件页、技能页头部那两颗图标按钮的选择器带两个类，比上面那条 .icon-btn 更具体，
+   所以在这里原样重写一遍（同具体度、位置靠后即生效），把 30px 也交给同一个倍率。 */
+.plugins-actions .icon-btn,
+.skills-actions .icon-btn {
+  height: calc(30px * var(--dsc-btn-scale));
+  width: calc(30px * var(--dsc-btn-scale));
+}
+
+/* 按钮大小这条滑杆的轨道/滑块/百分比沿用「字号滑杆」段那套 .font-scale-* 画法
+   （两处长得一样，规则只有一份）；JSX 上多挂一层 .btn-scale*，自检脚本据此
+   精确取到按钮这一条滑杆，日后要单独微调也有挂点。 */
+.btn-scale-value {
+  /* 与字号那条的百分比列同宽，两条滑杆的轨道左右端才对得齐 */
+  width: 44px;
+}
+
+/* ══════════ 会话脚注与思考折叠改版 ══════════ */
+/* 这一段只做两件事，别处的规则一行没改（旧段落里必要的改动就地改了：.round-foot 改成贴左、
+   .thread-handle 改成贴正文列缘、.think-status 收成 flex: none、.think-body 多一层裁剪、
+   .think-bar 换成 .think-block 的直接子项）：
+     1. 助手消息那条操作条：用量搬去了每轮页脚，剩下的按钮要留在原处；
+     2. 思考折叠条的折叠态改成 dsh ReasoningRow 的「图标 + 标题 + 分隔点 + 摘要行」：
+        这里补分隔点、摘要行（省略号 / 跑动中右缘渐隐）、跑动中的扫光、展开区的高度过渡，
+        以及只给读屏的运行标签。
+   凡是要压过旧规则的地方，都用更高特异性的选择器写在这里。
+   每条规则后面给的是 dsh 原文位置：packages/client/ui-chat/src/client/chat/ReasoningRow.tsx、
+   ReasoningRow.module.css 与 packages/client/ui-primitives/src/{DisclosureRow,TextShimmer}.tsx。 */
+
+/* ── 助手消息的操作条：只剩复制 / 赞 / 踩 ──
+   用量那一项搬到了每轮页脚（TurnFooter 的最后一项）。这条操作条上就只剩 .meta-actions
+   一组按钮，而旧规则用 justify-content: space-between 把「按钮组 | 用量」顶到两端——
+   一组独占一行时 space-between 会把它推到左端。这里明确右对齐，三颗按钮留在原处。 */
+.entry-meta {
+  justify-content: flex-end;
+}
+
+/* ── 折叠态标题与摘要之间的分隔点 ──
+   dsh 是 2px 见方的一个点、两边各 8px（ReasoningRow.module.css:37-44）；紧凑行的 flex gap
+   本来就是 8px，所以这里不再写外边距，点的两侧自然就是 8px。 */
+.think-dot {
+  background: var(--dsc-text-quaternary);
+  border-radius: 1px;
+  flex: none;
+  height: 2px;
+  width: 2px;
+}
+
+/* ── 折叠态的摘要行 ──
+   吃掉紧凑行里剩下的宽度（.think-status 已收成 flex: none 让位），超长省略号收尾
+   （ReasoningRow.module.css:49-63）。颜色比标题再轻一档：dsh 里标题是 label-secondary、
+   摘要是 label-tertiary，所以这里标题 --dsc-text-tertiary、摘要 --dsc-text-quaternary。 */
+.think-summary {
+  color: var(--dsc-text-quaternary);
+  flex: 1 1 auto;
+  font-size: var(--dsc-fs-caption);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.think-summary-text {
+  display: block;
+  overflow: hidden;
+  position: relative;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 跑动中不用省略号收尾，改成右缘渐隐收口：直播时最后几个字一直在变，省略号会一闪一闪
+   （ReasoningRow.module.css:65-72）。 */
+.think-summary[data-streaming] {
+  mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+}
+
+.think-summary[data-streaming] .think-summary-text {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* 跑动这一态：摘要自己的底色比收工时亮一档（收工时它只是「这条折叠条讲了什么」的预览，
+   跑动中它是正在推进的那句话），标题与星标的品牌色在旧段里。 */
+.think-block[data-state='running'] .think-summary {
+  color: var(--dsc-text-tertiary);
+}
+
+/* ── 跑动中的扫光 ──
+   dsh 的做法是把文字复制一份叠在上面、用 mask 移动（TextShimmer.tsx:37-57 与
+   TextShimmer.module.css:34-42 的 .sweep、:61-67 的 1.5s steps(48, end) 无限循环，
+   0.3s 延迟）。这里是同一套语义的纯 CSS 写法：::after 用 content: attr(data-shimmer)
+   复制同一串文字，高光渐变裁进字形（background-clip: text）、字形自己填透明，
+   于是只看得到那一道从左扫到右的亮带。
+   最底层仍是那行真文字：可选中、读屏读得到，扫光过去时也不会消失。 */
+.think-summary-text[data-shimmer]::after {
+  animation: dsc-think-shimmer 1.5s steps(48, end) 0.3s infinite;
+  background-clip: text;
+  -webkit-background-clip: text;
+  background-image: linear-gradient(105deg, transparent 45%, var(--dsc-accent-text) 50%, transparent 55%);
+  background-repeat: no-repeat;
+  background-size: 200% 100%;
+  color: transparent;
+  content: attr(data-shimmer);
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  user-select: none;
+  white-space: nowrap;
+  width: max-content;
+}
+
+/* 200% 宽的渐变从右端移到左端：亮带从左往右扫过（dsh 的 mask 也是从 -100% 扫到 100%） */
+@keyframes dsc-think-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: 0% 0;
+  }
+}
+
+/* ── 跑动这一态只给读屏的说明 ──
+   扫光与那枚静态小圈都读不出「还在想」，所以补一句隐藏文本（对照
+   ReasoningRow.tsx:84 的 visuallyHidden 运行标签）。它在无障碍树里，不占版面。 */
+.think-sr {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+/* ── 展开区的高度过渡 ──
+   收展从「瞬时切换」改成高度长出来。grid-template-rows 从 0fr 到 1fr 是唯一不必预先量
+   内容高度的写法（min-height: 0 + overflow: hidden 由 .think-body-clip 给，见旧段），
+   起始态交给 @starting-style：元素刚插进 DOM 的那一帧按 0fr 算，下一帧回到 1fr，
+   于是这一次开合有高度动画。不支持 @starting-style 的浏览器只是没有这段动画，
+   展开区照样一次显示完整，功能上没有回退。 */
+.think-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--dsc-dur-slow) var(--dsc-ease);
+}
+
+@starting-style {
+  .think-body {
+    grid-template-rows: 0fr;
+  }
+}
+
+/* 系统里说「少动」就真不动：高度瞬时切换，扫光整条撤掉（不是停住——停住会留一道不动的
+   亮带，比没有更奇怪）。旧段里那条 reduced-motion 规则管的是小圈与箭头，两条合起来才是
+   完整降级，信息一条不少。 */
+@media (prefers-reduced-motion: reduce) {
+  .think-body {
+    transition: none;
+  }
+
+  .think-summary-text[data-shimmer]::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* ══════════ Dock 面板里四颗纯文字按钮的字形倍率 ══════════ */
+/* 浏览器页的后退 ‹ / 前进 ›、文件页的上一级 ↑、预览头部的关闭 ✕ 这四颗按钮里放的是
+   字形，不是 svg，所以上面「按钮大小滑杆」段那条 `.icon-btn svg` 的倍率管不到它们：
+   按钮框跟着 --dsc-btn-scale 长到 150%，框里的字还是 13px 原样，看着缩在中间。
+   这一条只补字形大小（130% 档实测 16.9px、行高 18px，仍装在 33.8px 的框里）；
+   框高、内距与条形高度由上面那几条规则决定，这条一行没动，布局不跟着变。 */
+.browser-bar .icon-btn,
+.files-bar .icon-btn,
+.file-preview-head .icon-btn {
+  font-size: calc(var(--dsc-fs-body) * var(--dsc-btn-scale));
+}
+
+/* ══════════ 输入框旋钮精简 ══════════ */
+/* 输入框底栏原来并排两颗旋钮：左边权限模式（approval 插件贡献），右边协作模式（mode 插件贡献）。
+   用户判断两者语义重复，右侧那颗已经撤掉，模式本身与 /mode 类指令都没动（那是宿主能力）。
+   这一段只收拾撤掉之后的对齐，别的段落一行没碰。 */
+
+/* 权限模式弹层原来按 right: 0 对齐：那时它右边还挨着协作模式那颗，弹层紧贴右缘向左铺开。
+   实测（1440×940 窗口）弹出左缘落在 318px，而输入框左缘在 418px，整整探出 100px 浮在正文上。
+   现在它是底栏左组唯一一颗、直接从输入框左缘起排，再向左铺开只会探得更多，
+   所以改成左对齐、向右铺开：弹出左缘 459px = 权限旋钮自己的左缘，整块留在输入框里。 */
+.composer-bar .bar-left .model-pop.policy-pop {
+  left: 0;
+  right: auto;
+}
+
+/* ══════════ 提问卡向导式改版 ══════════ */
+/* 用户看过 dsh 的实际界面后拍板：不要把整批题目摊在卡里，一卡只露当前这一题。
+   卡头是 header（如有）+ 题干一行，下面是这一题的选项与自由输入框；底栏左侧是切题夹
+   ‹ n/m ›（边界置灰），右侧是「跳过」幽灵按钮与「下一题」（最后一题写「提交」）。
+   其余题目连 DOM 都不进，草稿与已答状态只在内存里记着，翻过去再翻回来原样显出来。
+   交互语义对齐 dsh 的 QuestionComposer.tsx：单选点选后自动推进、末题整批校验、缺哪题跳哪题。
+   视觉仍走 dsc 现有令牌与 .ask-card 那套底色/圆角：上面「模型提问卡」那一段的 .ask-card /
+   .ask-header / .ask-question / .ask-options / .ask-option / .ask-input 一行没改，
+   这里只补向导自己那几个挂点（题目面板、底栏排布）。 */
+
+/* ── 当前题这一块 ──
+   卡片的 gap: 8px 与内距 10px 12px 沿用上面基础段：列表版那套「给 hover 行让出 6px 槽」
+   的内距覆盖整块撤掉，单题形态的正文左缘回到原来的 12px。 */
+.ask-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* ── 卡头：header（如有）+ 题干 ──
+   header 与题干收成一列，间距 2px；字号、颜色、行高都继承上面 .ask-header / .ask-question。 */
+.ask-question {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── 底栏：切题夹（‹ n/m ›）+ 提示 + 跳过 / 下一题 ──
+   卡片自己左右已有 12px 内距，这里不再叠一份；顶部一条分隔线把作答区与操作区分开。 */
+.ask-foot {
+  align-items: center;
+  border-top: 1px solid var(--dsc-stroke-4);
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+  padding-top: 8px;
+}
+
+.ask-pager {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.ask-page {
+  background: none;
+  border: 0;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  font-size: var(--dsc-fs-ui);
+  height: 20px;
+  line-height: 1;
+  width: 20px;
+}
+
+.ask-page:hover:not(:disabled) {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.ask-page:disabled {
+  color: var(--dsc-text-quaternary);
+  cursor: default;
+}
+
+.ask-progress {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-label);
+  font-variant-numeric: tabular-nums;
+  padding: 0 2px;
+  white-space: nowrap;
+}
+
+/* 「还有题目没答」这类提示走 warning 色：它只在提交被拦下时出现 */
+.ask-hint {
+  color: var(--dsc-yellow);
+  flex: 1 1 auto;
+  font-size: var(--dsc-fs-label);
+  min-width: 0;
+}
+
+.ask-skip,
+.ask-submit {
+  flex: 0 0 auto;
+}
+
+/* 提交是主按钮，给它一个定宽，单题/多题两态下按钮不会左右跳 */
+.ask-submit {
+  min-width: 58px;
+}
+
+/* ══════════ 对话区修正批 ══════════ */
+/* 这一段只做两件事，别处的规则一行没改（旧段里 .meta-btn / .user-act 那几条一行没动，
+   这里用同具体度的选择器写在后面把宽高、内距与图标倍率补上）：
+     1. 消息操作条上那三处按钮按 dsh 的尺寸校准，并且吃 --dsc-btn-scale；
+     2. 暂停自动跟随时那颗「回到底部」按钮。
+   每处给的都是 dsh 原文位置：packages/client/ui-chat/src/client/chat/MessageIconActions.tsx
+   与 MessageIconActions.module.css。 */
+
+/* ── 消息操作条：对齐 dsh 的 28px hit area ──
+   dsh 原文（MessageIconActions.module.css）：
+     .actions  行高 28px(:9)、按钮间距 gap 8px(:8)；
+     .action   框 28px × 28px(:67-68)、内距 6px(:69)（border-box 口径，6px 是给图标留的呼吸）；
+     .action svg 图标 15px(:80-81)，助手消息末尾那条（.actions[data-clock='end']）17px(:84-87)。
+   dsc 改之前实测：助手操作条 23×19（13px 图标 + 3px 5px 内距、间距 2px）、气泡下的编辑
+   20×16、页脚里的分叉 20×14，图标 12/13px，而且不吃 --dsc-btn-scale——「按钮大小」滑杆
+   只放大 .icon-btn 一系，这三处纹丝不动。
+   现在三处统一 28px 的框、flex 居中、内距收到 0（框本身就是 hit area，与 dsh 的 border-box
+   口径一致，28px 里放 17px 图标余量更足），图标尺寸由 JSX 传（助手 17、用户与分叉 15），
+   这里只负责乘倍率——与「按钮大小滑杆」段给 .icon-btn svg 的写法同一条路子。 */
+.entry-meta .meta-actions {
+  gap: 8px;
+}
+
+.entry-meta .meta-btn,
+.user-turn .user-act,
+.round-foot .user-act {
+  align-items: center;
+  display: inline-flex;
+  height: calc(28px * var(--dsc-btn-scale));
+  justify-content: center;
+  padding: 0;
+  width: calc(28px * var(--dsc-btn-scale));
+}
+
+.entry-meta .meta-btn svg,
+.user-turn .user-act svg,
+.round-foot .user-act svg {
+  height: calc(var(--dsc-icon-size, 1em) * var(--dsc-btn-scale));
+  width: calc(var(--dsc-icon-size, 1em) * var(--dsc-btn-scale));
+}
+
+/* 页脚那一行只有分叉一颗按钮（28px），行高由它撑着；文字与按钮的中线对齐交给
+   .round-foot 的 align-items: center，这里不再动旧规则。 */
+
+/* ── 「回到底部」：暂停跟随时才出现的一颗胶囊 ──
+   触发条件是用户在流式输出里往上翻（见 ChatView 的 followRef）；那一刻新内容不再把他
+   拽回底部，所以得给一条显式的回头路，否则要自己一路滚到底才知道跟随恢复了。
+   位置：对话区右下角，右缘与刻度条同一条参照线（--dsc-scrollbar-w + 12px，见
+   .chat-wrap > .jump-strip），所以既不压滚动条也不落进正文列；刻度条竖直居中、
+   最多 62% 高，够不着这里。
+   尺寸吃 --dsc-btn-scale（与上面那批按钮联动），颜色走全站卡片与控件令牌。 */
+.chat-to-bottom {
+  align-items: center;
+  background: var(--dsc-bg-card);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-pill);
+  bottom: 12px;
+  box-shadow: var(--dsc-shadow-md);
+  color: var(--dsc-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: var(--dsc-fs-caption);
+  height: calc(28px * var(--dsc-btn-scale));
+  padding: 0 calc(12px * var(--dsc-btn-scale));
+  position: absolute;
+  right: calc(var(--dsc-scrollbar-w) + 12px);
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+  z-index: 2;
+}
+
+.chat-to-bottom:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.chat-to-bottom:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
 

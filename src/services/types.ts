@@ -34,7 +34,9 @@ import type {
   ApprovalRequestView,
   ArchivedPage,
   ArchivedSessionView,
+  AskQuestionItem,
   AskUserView,
+  AskUserViewInput,
   CollaborationMode,
   DscRuntime,
   EffortLevel,
@@ -252,11 +254,18 @@ export interface PlanService {
 
 /** 模型提问服务（ask_user 那一块）：一次提问最多几个问题、每项几个选项由插件配置决定。 */
 export interface AskService {
-  /** 挂着等答的提问；null = 无。 */
+  /** 挂着等答的提问；null = 无。多题提问整批挂在这里，视图自己带 `questions` 数组。 */
   pendingQuestion(): AskUserView | null
   /** 模型向用户提一个问题（挂起直到有答案或中断）。 */
-  ask(question: Omit<AskUserView, 'id'>, signal: AbortSignal): Promise<string>
-  /** 回答挂起的提问。 */
+  ask(question: AskUserViewInput, signal: AbortSignal): Promise<string>
+  /**
+   * 模型一次问一批（挂起直到全部答完/跳过，或中断）；返回的答案按题序与入参一一对应。
+   *
+   * 界面在这一批上逐题作答、统一提交，每次 `answerQuestion` 收下当前这一题的答案，
+   * 收齐整批才让这个 Promise 落地——所以模型看到的是「一次调用拿回全部答案」。
+   */
+  askMany(questions: readonly AskQuestionItem[], signal: AbortSignal): Promise<string[]>
+  /** 回答挂起的提问：第 1 次调用解决第 1 题，第 2 次解决第 2 题…… */
   answerQuestion(answer: string): void
 }
 

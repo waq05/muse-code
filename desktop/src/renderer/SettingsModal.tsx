@@ -34,14 +34,23 @@ import type {
   SettingsValues,
   ThinkingLevel,
   ThinkingParam,
-  UiPrefsView,
   ThemeMode,
   UiFontSize,
   UiDensity,
+  UiPrefsView,
 } from '@dsc/runtime/contract.js'
 import { dsc, type RuntimeProxy } from './bridge.js'
 import { ArchivedView } from './ArchivedView.js'
-import { FONT_SCALE_MAX, FONT_SCALE_MIN, applyFontScale, normalizeFontScale } from './appearance.js'
+import {
+  BUTTON_SCALE_MAX,
+  BUTTON_SCALE_MIN,
+  FONT_SCALE_MAX,
+  FONT_SCALE_MIN,
+  applyButtonScale,
+  applyFontScale,
+  normalizeButtonScale,
+  normalizeFontScale,
+} from './appearance.js'
 import { confirmAction } from './components/confirm.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { SkillsView } from './SkillsView.js'
@@ -77,7 +86,7 @@ export function SettingsModal(props: {
   proxy: RuntimeProxy
   /** 打开时定位的分区 id，空串 = 第一个分区。 */
   initial: string
-  /** 外观三项的真值，由 App 从宿主的 ui 偏好里带来。 */
+  /** 外观四项的真值，由 App 从宿主的 ui 偏好里带来。 */
   uiPrefs: UiPrefsView
   onUiPrefs(patch: Partial<UiPrefsView>): void
   onClose(): void
@@ -380,9 +389,9 @@ export function GenericFields(props: {
 }
 
 /**
- * 外观三项。
+ * 外观四项。
  *
- * 宿主分区是宿主侧声明的控件，而这三项只有渲染层消费，所以画在这里、
+ * 宿主分区是宿主侧声明的控件，而这几项只有渲染层消费，所以画在这里、
  * 直接写回宿主的 ui 偏好：App 收到新值立刻重画，不用重启也不用等回推。
  */
 function AppearanceRows(props: {
@@ -419,6 +428,16 @@ function AppearanceRows(props: {
           <div className="setting-help">
             拖动调整全局字号，正文 13px 基准按百分比缩放，代码块和终端跟着一起变。
           </div>
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-label">按钮大小</div>
+        <div className="setting-control">
+          <ButtonScaleRow
+            value={normalizeButtonScale(props.uiPrefs.buttonScale)}
+            onPick={(scale) => props.onUiPrefs({ buttonScale: scale })}
+          />
+          <div className="setting-help">拖动调整界面按钮和图标的大小，改动即时生效。</div>
         </div>
       </div>
       <div className="setting-row">
@@ -487,6 +506,56 @@ function FontScaleRow(props: { value: number; onPick(value: number): void }): JS
         onBlur={commit}
       />
       <span className="font-scale-value">{Math.round(draft * 100)}%</span>
+    </div>
+  )
+}
+
+/**
+ * 按钮大小滑杆：90%–150%，右边实时显示当前百分比。
+ *
+ * 与字号滑杆同一套交互：拖动过程中只改本地草稿 + `<html>` 上的
+ * `--dsc-btn-scale`（按钮与图标即时跟手），松手、松开按键或失焦才写宿主。
+ * 拖到一半关掉设置面板时，把还停在预览态的倍率撤回上一次落盘的值。
+ */
+function ButtonScaleRow(props: { value: number; onPick(value: number): void }): JSX.Element {
+  const [draft, setDraft] = useState(props.value)
+  // 上一次落盘的倍率：判断要不要写宿主、退出时撤回到哪个值，都看它
+  const committed = useRef(props.value)
+
+  // 宿主那边的值变了（读档归一、写回去被夹取）就跟着回位
+  useEffect(() => {
+    committed.current = props.value
+    setDraft(props.value)
+  }, [props.value])
+  useEffect(() => () => applyButtonScale(committed.current), [])
+
+  const commit = (): void => {
+    if (draft === committed.current) return
+    committed.current = draft
+    props.onPick(draft)
+  }
+
+  return (
+    <div className="font-scale btn-scale">
+      <input
+        className="font-scale-range btn-scale-range"
+        type="range"
+        min={BUTTON_SCALE_MIN}
+        max={BUTTON_SCALE_MAX}
+        step={0.01}
+        value={draft}
+        aria-label="按钮大小"
+        aria-valuetext={`${Math.round(draft * 100)}%`}
+        onChange={(event) => {
+          const next = Number(event.target.value)
+          setDraft(next)
+          applyButtonScale(next)
+        }}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
+      />
+      <span className="font-scale-value btn-scale-value">{Math.round(draft * 100)}%</span>
     </div>
   )
 }

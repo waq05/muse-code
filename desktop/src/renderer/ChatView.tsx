@@ -1,9 +1,19 @@
 /**
  * 消息流：user 气泡 / thinking 折叠 / text markdown（含底部操作条）/ 工具卡 / system 灰条
- * + 流式直播尾光标 + 自动滚动到底。
+ * + 流式直播尾光标 + 条件式自动滚动到底。
  *
- * 消息底部对照 dsh 的构图：左边一排小图标按钮（复制 / 赞 / 踩），右边这条消息的用量；
- * 每轮最后一条条目下面再加一行「本轮时刻 + 用时」（TurnFooter）。
+ * 自动跟随这次改成了条件式的（改版前每来一块新内容就把 scrollTop 钉到底，往上翻历史
+ * 翻不动）：用户主动往上滚（滚轮 / 触摸拖动 / 拖滚动条，判定都落在「scrollTop 离开底部」
+ * 这一件事上）就暂停跟随，滚回距底 32px（与 JumpStrip.tsx 的 AT_BOTTOM_EPS 同一档）以内、
+ * 或点右下角那颗「回到底部」才恢复。两个场景无条件跟随：换会话（点开一条会话要看的是它的
+ * 末尾）与自己刚发出一条用户消息（要立刻看到它和它的回复）。内容自己变高不算「用户滚离」——
+ * 那不发 scroll 事件，程序性的高度变化因此不会被误判。
+ *
+ * 消息底部对照 dsh 的构图：悬停时浮出一排小图标按钮（复制 / 赞 / 踩）；
+ * 每轮最后一条条目下面是一行页脚（TurnFooter：本轮时刻 · 用时 · 分叉 · 本轮用量）。
+ * 页脚这四项都贴正文列左缘、跟正文同一条起跑线（对照 dsh 的消息脚注排法，
+ * 见 TurnFooter.tsx 的模块注释）；敲定之前它贴在对话区最右缘、用量还挂在消息末尾右端，
+ * 离正文太远。
  * 宿主记了每条条目的落盘时刻（contract.ts 的 TranscriptEntry.ts），
  * 老会话没有这个字段时那一行的两端各自降级，绝不显示 NaN。
  *
@@ -29,7 +39,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { StatusView, TranscriptEntry } from '@dsc/runtime/contract.js'
 import type { RuntimeProxy } from './bridge.js'
-import { JumpStrip } from './JumpStrip.js'
+import { AT_BOTTOM_EPS, JumpStrip } from './JumpStrip.js'
 import { PlanReview } from './TaskDock.js'
 import { ThinkingBlock } from './ThinkingBlock.js'
 import { ToolCard } from './ToolCard.js'
@@ -39,7 +49,7 @@ import { isSessionMarker } from './session-marker.js'
 import { liveActivity, roundInfos, turnStartedAt, type RoundInfo } from './turn-timing.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { IconCopy, IconEdit, IconThumbDown, IconThumbUp } from './icons.js'
-import { estimateTextTokens, formatTokens } from './token-estimate.js'
+import { estimateTextTokens } from './token-estimate.js'
 
 /** 一条回复的本机评价：只有赞 / 踩两态，再点一次取消。 */
 type Feedback = 'up' | 'down'
@@ -95,17 +105,127 @@ export function ChatView(props: {
   const [editing, setEditing] = useState<{ index: number; text: string } | null>(null)
   /** 重发请求已经发出去、还在等宿主换会话：这期间按钮置灰，防止连点分叉出两份。 */
   const [sending, setSending] = useState(false)
+  /**
+   * 还在不在「跟随最新内容」（流式输出时自动贴底）。
+   *
+   * 为什么要有这一位：改版前每来一块新内容就把 scrollTop 钉到底，用户想往上翻历史，
+   * 刚滚上去就被下一块拽回来，长回答里根本翻不动。现在的规矩是——
+   * 用户主动往上翻（滚轮向上 / 触摸拖动 / 拖滚动条，落到 scrollTop 离开底部这一件事上）
+   * 就暂停跟随，滚回距底 AT_BOTTOM_EPS（32px，与 JumpStrip 贴底判定同一档）以内、
+   * 或点「回到底部」就恢复。
+   *
+   * 用 ref 存而不是 state：这个判断挂在滚动事件与每次渲染上，走 state 会为了一个
+   * 只在切换瞬间才变的值多渲染一轮；配套的 state 只用来画那颗「回到底部」按钮。
+   * 只认「用户主动」这一路：内容自己变高（图片解码、代码块展开、流式追加）不发
+   * scroll 事件，程序性的高度变化因此不会被误判成「用户滚离」。
+   */
+  const followRef = useRef(true)
+  /** 暂停跟随时显示的「回到底部」按钮。 */
+  const [followPaused, setFollowPaused] = useState(false)
+  /**
+   * 「这一次必须落到最新一条」：换会话、自己刚发出一条用户消息。
+   * 这两个场景是用户主动产生的，不该被上一轮的暂停态挡住（改版前靠无条件贴底实现）。
+   */
+  const forceFollowRef = useRef(true)
+  /**
+   * 我们自己钉底时落到的那个 scrollTop。
+   *
+   * 为什么要记这一笔：`scrollTop = scrollHeight` 是程序性滚动，但它同样会（异步）发一个
+   * scroll 事件；而滚动事件是下一帧才投递的，这中间流式内容可能又长高了一截，只按
+   * 「离底还有多远」判的话，自动跟随会把**自己钉的那一下**判成「用户滚离」，
+   * 于是长回答写着写着就自己停了跟随。拿位置和这一笔对上，就能把两者分开。
+   */
+  const autoTopRef = useRef(-1)
+
+  /** 改跟随态：ref 与按钮用的 state 一起动，值没变就不惊动 React。 */
+  const setFollowing = (next: boolean): void => {
+    if (followRef.current === next) return
+    followRef.current = next
+    setFollowPaused(!next)
+  }
+
+  /**
+   * 把视角钉到最新一条，并把落点记进 autoTopRef（见那里的注释）。
+   * 自动跟随的每一次贴底、以及「回到底部」那颗按钮，都走这一处。
+   */
+  const pinToBottom = (): void => {
+    const element = scroller.current
+    if (element === null) return
+    element.scrollTop = element.scrollHeight
+    autoTopRef.current = element.scrollTop
+  }
 
   // 换会话（entries 整表换成另一条会话的内容）时把编辑框收掉：留着它，提交时
-  // 那条下标指向的已经是别人会话里的消息了。
+  // 那条下标指向的已经是别人会话里的消息了。同一件事还捎带一条：换会话必须落到
+  // 最新一条（用户刚点开一条会话，看到的是它的末尾，不是上次停留的滚动位置）。
   useEffect(() => {
     setEditing(null)
+    forceFollowRef.current = true
+    setFollowing(true)
   }, [props.sessionId])
 
+  /**
+   * 流式自动跟随：entries 变了就把尾巴贴到底——前提是「还在跟随」。
+   * 两个例外无条件跟随：刚换会话（forceFollowRef），以及末尾新出现的一条用户消息
+   * （自己刚发出去的，要立刻看到它和它的回复）。
+   * 注意这里不改 followRef 之外的任何东西：暂停期间内容照旧长高，只是不替用户决定视角。
+   */
   useEffect(() => {
     const element = scroller.current
-    if (element !== null) element.scrollTop = element.scrollHeight
+    if (element === null) return
+    const tail = props.entries[props.entries.length - 1]
+    const tailIsUser = tail !== undefined && tail.kind === 'user' && tail.id >= 0
+    if (forceFollowRef.current || tailIsUser) {
+      forceFollowRef.current = false
+      setFollowing(true)
+    }
+    if (followRef.current) pinToBottom()
   }, [props.entries])
+
+  /**
+   * 滚动 = 用户对视角的表态：离开底部就暂停跟随，回到 32px 以内就恢复。
+   *
+   * 滚轮、触摸拖动、拖滚动条三条路最后都落成同一个事实——scrollTop 离开底部，
+   * 所以判定只写在 scroll 这一处，不各挂一份。滚轮向上额外抢一帧：滚动事件是异步
+   * 投递的，而流式内容可能先到一步（它一到就会贴底），只等 scroll 事件会有一次回弹。
+   * 触摸按「手指往下拖（clientY 变大）」认往回翻，与滚动方向一致。
+   *
+   * 唯一要排除的是「自己钉的那一下」：落点与 autoTopRef 重合就不算用户滚离。
+   */
+  useEffect(() => {
+    const element = scroller.current
+    if (element === null) return
+    const readBottom = (): boolean => {
+      const maxScroll = element.scrollHeight - element.clientHeight
+      return maxScroll <= 0 || maxScroll - element.scrollTop <= AT_BOTTOM_EPS
+    }
+    const onScroll = (): void => {
+      if (Math.abs(element.scrollTop - autoTopRef.current) <= 1) return
+      setFollowing(readBottom())
+    }
+    const onWheel = (event: WheelEvent): void => {
+      if (event.deltaY < 0) setFollowing(false)
+    }
+    let touchY = 0
+    const onTouchStart = (event: TouchEvent): void => {
+      touchY = event.touches[0]?.clientY ?? 0
+    }
+    const onTouchMove = (event: TouchEvent): void => {
+      const y = event.touches[0]?.clientY ?? touchY
+      if (y > touchY + 2) setFollowing(false)
+      touchY = y
+    }
+    element.addEventListener('scroll', onScroll, { passive: true })
+    element.addEventListener('wheel', onWheel, { passive: true })
+    element.addEventListener('touchstart', onTouchStart, { passive: true })
+    element.addEventListener('touchmove', onTouchMove, { passive: true })
+    return () => {
+      element.removeEventListener('scroll', onScroll)
+      element.removeEventListener('wheel', onWheel)
+      element.removeEventListener('touchstart', onTouchStart)
+      element.removeEventListener('touchmove', onTouchMove)
+    }
+  }, [])
 
   // 每一轮的起止与时间（见 turn-timing.ts）；entries 变了才重算
   const rounds = useMemo(() => roundInfos(props.entries), [props.entries])
@@ -147,6 +267,24 @@ export function ChatView(props: {
     }
     return map
   }, [rounds])
+  /**
+   * 每轮助手正文的 token 估算（下标 = round.index）：页脚里最后那一项「~N tok」。
+   *
+   * 为什么要按轮汇总而不是按条：页脚是每轮一个（挂在这一轮最后一条条目下面），而一轮里
+   * 可能有好几段正文（写完一段去调工具、回来接着写）。先前这条数字跟在每一段正文末尾，
+   * 现在归到页脚一处，把一轮里所有定稿正文加起来才是「这一轮写了多少」。
+   * 直播尾（id < 0）不算：它还在长，而且页脚在自己这一轮跑动时本来就不画用量。
+   */
+  const roundTokens = useMemo(() => {
+    const out = new Array<number>(rounds.length).fill(0)
+    props.entries.forEach((entry, index) => {
+      if (entry.kind !== 'text' || entry.id < 0) return
+      const round = roundAt.get(index)
+      if (round === undefined) return
+      out[round.index] = (out[round.index] ?? 0) + estimateTextTokens(entry.text)
+    })
+    return out
+  }, [props.entries, roundAt, rounds])
 
   /** 记一条本机评价（同一项再点一次 = 取消）。 */
   const vote = (key: string, next: Feedback): void => {
@@ -365,7 +503,9 @@ export function ChatView(props: {
                     </div>
                     {/* 编辑按钮：只在悬停/键盘聚焦这条消息时浮出（与助手消息底部那条操作条同一套令牌），
                         位置在气泡正下方、气泡之外。只读视图（队友运行记录）里 canAct 为假，这颗不渲染。
-                        分叉按钮不在这里——它跟着这一轮的时间行走，见下面 TurnFooter。 */}
+                        分叉按钮不在这里——它跟着这一轮的时间行走，见下面 TurnFooter。
+                        图标 15px 对齐 dsh 用户那条操作条的图标（MessageIconActions.module.css:80-81），
+                        hit area 的 28px 在 styles.css 末尾「对话区修正批」那一段。 */}
                     {!open && canAct && (
                       <div className="user-actions">
                         <button
@@ -376,7 +516,7 @@ export function ChatView(props: {
                           disabled={live}
                           onClick={() => setEditing({ index, text: entry.text })}
                         >
-                          <IconEdit size={12} />
+                          <IconEdit size={15} />
                         </button>
                       </div>
                     )}
@@ -403,12 +543,15 @@ export function ChatView(props: {
                     </div>
                     <div className="entry-meta">
                       <div className="meta-actions">
+                        {/* 三颗图标 17px：dsh 助手消息末尾那条操作条（data-clock='end'）的图标就是
+                            15px + 2px（MessageIconActions.module.css:79-87），行高与 hit area 见
+                            styles.css 末尾「对话区修正批」那一段。 */}
                         <button
                           className="meta-btn"
                           title="复制这条回复的原文"
                           onClick={() => void navigator.clipboard.writeText(entry.text)}
                         >
-                          <IconCopy size={13} />
+                          <IconCopy size={17} />
                         </button>
                         <button
                           className={`meta-btn${voteState === 'up' ? ' on' : ''}`}
@@ -416,7 +559,7 @@ export function ChatView(props: {
                           aria-pressed={voteState === 'up'}
                           onClick={() => vote(feedbackKey, 'up')}
                         >
-                          <IconThumbUp size={13} />
+                          <IconThumbUp size={17} />
                         </button>
                         <button
                           className={`meta-btn${voteState === 'down' ? ' on' : ''}`}
@@ -424,16 +567,11 @@ export function ChatView(props: {
                           aria-pressed={voteState === 'down'}
                           onClick={() => vote(feedbackKey, 'down')}
                         >
-                          <IconThumbDown size={13} />
+                          <IconThumbDown size={17} />
                         </button>
                       </div>
-                      {/* 用量：宿主没按条记 token，这里给的是正文估算值，所以带「~」 */}
-                      <span
-                        className="meta-usage"
-                        title="按正文字符估算（中文约 0.65 token/字、其余约 0.33）；宿主没有按条记录用量，这是估算值"
-                      >
-                        ~{formatTokens(estimateTextTokens(entry.text))} tok
-                      </span>
+                      {/* 用量不在这里了：它跟着这一轮的页脚走（TurnFooter 的最后一项），
+                          贴正文左缘一行读完，不再孤零零顶在对话区右缘。 */}
                     </div>
                   </div>
                 )
@@ -471,12 +609,27 @@ export function ChatView(props: {
             if (node === null) return null
             return (
               // data-round 给刻度条命中测试用（第几轮）；display:contents 见 styles.css
-              <div key={entry.id} className="entry-row" data-round={round?.index}>
+              //
+              // key 里必须带会话 id（这是 fold-state 那条「展开态切回来就丢」的根因）：
+              // 宿主的条目 id 是 `clear()` 之后从 1 重新发号的，两条**形状相同**的会话
+              // 因此给出同一个 id 序列，React 按 key 对账时会把上一条会话的组件实例
+              // 直接复用给下一条——实例复用意味着 ThinkingBlock / ToolCard 的 useState 初值
+              // 函数（readFold）根本不会再跑一次，用户切回来时看到的是「在另一条会话里
+              // 顺手改成的那个状态」，fold-state.ts 里存着的展开态被绕过、等于没存。
+              // 键里加上会话前缀以后，换会话必然重挂，readFold 必然执行。
+              //
+              // 已知代价（接受）：靠「加载更早历史」把更早的条目插到前面时，内容条目序号
+              // （contentOrdinalAt）会整体后移，已经展开的那一条的存档键跟着换号 → 新键落空、
+              // 退回默认折叠态；改之前那是靠实例复用「碰巧」保住的。这里选跨会话保持展开
+              // 这个主场景：它每天都在发生，而往前插历史是低频动作，重挂后重展开一次可以接受。
+              <div key={`${props.sessionId ?? ''}:${String(entry.id)}`} className="entry-row" data-round={round?.index}>
                 {node}
                 {foot && round !== undefined && (
                   <TurnFooter
                     round={round}
                     running={running}
+                    // 这一轮正文的估算用量（见 roundTokens）：与时刻、用时同处一行
+                    tokens={roundTokens[round.index] ?? null}
                     // 只读视图（队友运行记录）不传 proxy/sessionPath，canAct 为假，这里整颗按钮不画
                     onFork={canAct ? forkAt : undefined}
                     // 一轮正在跑时不给分叉（换会话会把这一轮打断），第 1 条之前没有内容也分不出来
@@ -499,6 +652,22 @@ export function ChatView(props: {
       </div>
       {/* 右缘的回合刻度条（对照 dsh 的快速跳转） */}
       <JumpStrip scrollerRef={scroller} entries={props.entries} />
+      {/* 暂停跟随时的回头路：用户往上翻历史以后，新内容不再把他拽回底部，
+          所以得给一颗「回到底部」的按钮。只在这一刻出现（跟随中不画，免得白占地方），
+          点一下恢复跟随并把视角送回最新一条。 */}
+      {followPaused && (
+        <button
+          type="button"
+          className="chat-to-bottom"
+          title="回到最新一条（自动跟随会重新打开）"
+          onClick={() => {
+            setFollowing(true)
+            pinToBottom()
+          }}
+        >
+          回到底部
+        </button>
+      )}
     </div>
   )
 }

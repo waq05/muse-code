@@ -440,3 +440,25 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | 拖宽边界由上限自己守，不依赖别处内距 | 旧代码实测没真压到刻度（刻度靠 `.chat` 的 32px 右内距让位，输入框最近只剩 4px），但安全边界寄生在别的规则上是隐患；新上限让出 40px 后实测余 44px/24px |
 
 验收：根目录 + 桌面版 typecheck/build 0 错误；sandbox 193/0、file-review 59+9/0、approval-floor 95/0 不回归；三组各自带隔离沙箱截图与数字证据（真实 `~/.dsc` 文件指纹零改动；拖宽三态一致：拖动中变量 = 落盘值 = localStorage；滑杆像素位置与 range 几何互相印证；剪贴板 uuid 与系统 `Get-Clipboard` 双路核对）。发布：`muse-code-0.6.1.tgz` + `dist/win-unpacked`。
+
+---
+
+## 阶段 18：对话区精修与 ask_user 批量化（0.6.2）
+
+0.6.1 交付后用户两轮实测反馈（6 + 5 条），七个并行子智能体（deepseek v4.1 flash）分五批交付，主控只做派发与验收。两条产品线宿主侧也动了刀：偏好链路与 ask_user 协议各一次。
+
+| 决策 | 理由 |
+| --- | --- |
+| 字号/按钮大小连续滑杆必须连带改宿主读档 | 宿主 `readPrefs` 是白名单制：未知字段读档即丢，且 `writePrefs` 用白名单结果拼整份文件重写——渲染层写进去的数字，改一次主题就被抹掉。`fontSize`（0.85–1.35，旧三档迁移）与 `buttonScale`（0.9–1.5）各补一个夹取读法；`runtime` 回执判字段也要认得新字段，否则 Toast 报错文案 |
+| 图标缩放走「行内变量 × 全局倍率」而不是全量换算 | `icons.tsx` 把 size 挂成 `--dsc-icon-size` 行内变量，按钮图标宽高写 `calc(var(--dsc-icon-size) × var(--dsc-btn-scale))`——非按钮场景的图标一行不动；消息操作条等独立类各自补吃倍率 |
+| 每轮 footer 左移与正文左缘对齐，用量并入 footer | 右缘孤立的一小块时间/用量观感差；实测左缘差 0px。分叉按钮随 footer 走，进行中轮次只留置灰按钮（时间由状态行报着，不说两遍） |
+| 思考折叠照 dsh `ReasoningRow` 原文翻译 | 摘要口径是关键：跑动中取「最新写完段落的首行」（段落以空行分隔），收工取首行，去 `**`；整行可点、`grid-template-rows` 高度过渡、扫光用 `::after + background-clip:text` 自绘（dsc 无 CSS Modules）；fold-state 存档机制零改动 |
+| 拖宽把手量真实列缘写入 CSS 变量 | 把手贴 `.chat-inner` 实际左右缘（`--dsc-thread-col-start/-end`），拖动/复位后仍 0px；React「子先于父」导致首帧 `zoneRef` 为 null 量不到——改从把手自己的 `parentElement` 取层，并用 `MutationObserver` 盯 `<html>` 内联变量（拖动每帧都改） |
+| 流式输出改「条件式自动跟随」 | 用户主动滚离（scrollTop 离开底部）即暂停跟随，滚回距底 32px（复用 JumpStrip 的 `AT_BOTTOM_EPS`，一处口径）或点「回到底部」恢复；必须把「自己钉底那一跳的 scroll 事件」排除掉（`autoTopRef`），否则跟随会中途自己停——第一版实测踩到 |
+| 条目 key 加会话限定 | `key={entry.id}` 在两条形状相同的会话间触发 React 实例复用，重放后不重挂、fold-state 存档不被读（只在「都走 openSession 且形状完全相同」复现，启动 resume 的会话前面多插件提示、id 序列不同所以撞不上）；代价是「加载更早历史」序号漂移退化为回默认折叠，渲染层本无该入口，留给宿主日后分页 |
+| ask_user 批量化：宿主聚合一次挂出，渲染层向导式一卡一题 | 契约加可选 `questions[]`（单题字段保留为第 1 题投影，老回放零迁移）；一批一个视图、id 整批稳定，`answerQuestion` 按题序收答案、收齐才 resolve（没收齐连广播都不发，防止半空卡被推回去重画）；顺带修掉旧实现 abort 挂死（第 1 题被 abort 后第 2 题拿的是已 abort 的 signal）。呈现层用户拍板 dsh 向导式：只露当前题 + `‹ n/m ›` 翻页器 + 末题「提交」，缺题跳转提示，跳过按题序回传实话；呈现层与协议层分两批交付，中间态靠「归一适配器读 questions 数组」无缝衔接 |
+| 剪贴板复制会话 ID 复制的是从路径剥出的 uuid | `SessionSummary.id` 存的是 jsonl 绝对路径，照字面复制就是一整条路径；右键 = 打开行菜单，归档行也拿到这项（复制 id 无害） |
+
+**事故与教训**：一个子智能体自检时用 `$home` 当临时目录变量名——PowerShell 里 `$HOME` 是只读自动变量，赋值静默失败，后续写入落到真实 `~/.dsc`：settings.json 被覆盖（按桌面端 localStorage 镜像证据修回外观三项）、一个活动会话 jsonl 被换成 31 字节路径文本（内容不可恢复）。整改：自检脚本模板统一改用自命名变量（`$shotHome` 等）并加「跑前跑后对真实目录全量指纹比对」为固定验收项，本轮各组均已执行（135→186 文件逐个 SHA256）。另记：隔离新目录必须先建 `AppData\Roaming`，否则 Chromium 在 app ready 前直接崩（0x80000003、零输出）。
+
+验收：根 + 桌面 typecheck/build 0 错误；sandbox 193/0、file-review 59+9/0、approval-floor 95/0、integration/m5/modes 四项 ask 相关检查全过；ask 批量化端到端 33 条断言全 PASS（同卡 3 题、翻页草稿保留、统一提交回显按题序且各一次、单题不回归）；流式滚动改前 200ms 被拽回、改后 gap 420→552 冻结 + 两条恢复路径实证；折叠修复改前 `expandedSurvived=false` 改后 true。诚实边界：modes-shots 两条检查需真模型且不隔离 HOME（会写真实目录），本轮未跑，与用户在场时补；dsh 的提问卡最小化/关闭按钮没有做（AskService 无取消通道，做了是假按钮）；自由输入仍单行。发布：`muse-code-0.6.2.tgz` + `dist/win-unpacked`。

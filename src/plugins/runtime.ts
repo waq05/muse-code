@@ -290,7 +290,10 @@ export const runtimePlugin: Plugin.Object = {
                 ? '已切换已归档会话的显隐'
                 : patch.workspaceOrder !== undefined
                   ? '已保存工作区顺序'
-                  : patch.themeMode !== undefined || patch.fontSize !== undefined || patch.density !== undefined
+                  : patch.themeMode !== undefined ||
+                      patch.fontSize !== undefined ||
+                      patch.density !== undefined ||
+                      patch.buttonScale !== undefined
                     ? '已保存外观设置'
                     : '已保存工作区名字'
         return Promise.resolve({ ok: true, notice })
