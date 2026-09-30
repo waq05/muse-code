@@ -9,9 +9,12 @@ files:
 extraResources:
   - from: runtime-staging/dsc-core
     to: dsc-core
-  # 托盘图标（主进程用 process.resourcesPath/icon.png 加载）
+  # 主进程用 process.resourcesPath/icon.png 加载（含托盘回退）
   - from: build/icon.png
     to: icon.png
+  # 托盘 16px 专用剪影（trayIcon 优先读它，见 electron/main/index.ts）
+  - from: build/icon-tray.png
+    to: icon-tray.png
 afterPack: scripts/after-pack.cjs
 asar: true
 win:
