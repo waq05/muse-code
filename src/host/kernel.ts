@@ -60,6 +60,7 @@ import { schedulePlugin } from '../plugins/schedule.js'
 import { lspPlugin } from '../plugins/lsp.js'
 import { browserPlugin } from '../plugins/browser.js'
 import { selfImprovePlugin } from '../plugins/self-improve.js'
+import { fileReviewPlugin } from '../plugins/file-review.js'
 
 const err = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -150,6 +151,13 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
     settingsSection: 'sandbox',
   },
   {
+    file: 'file-review',
+    name: '文件更改预览',
+    description: 'edit / write 落盘前把 unified diff 摆进对话流，改哪几行看得见，超长按行截断',
+    toggleable: true,
+    settingsSection: 'file-review',
+  },
+  {
     file: 'schedule',
     name: '定时任务',
     description: 'after / at / every / daily / weekly / cron 六种选择器，到点把提醒投回原会话',
@@ -195,6 +203,7 @@ const OFFICIAL_OBJECTS: Readonly<Record<string, Plugin.Object>> = {
   mcp: mcpPlugin,
   'tool-search': toolSearchPlugin,
   sandbox: sandboxPlugin,
+  'file-review': fileReviewPlugin,
   schedule: schedulePlugin,
   lsp: lspPlugin,
   browser: browserPlugin,
