@@ -175,13 +175,23 @@ export interface ToolCallView {
  *
  * 为什么是可选的：2026-09 之前的会话日志里没有这个字段，重放老会话时拿不到时间。
  * 那时候界面降级为不显示时间与用时——绝不拿「现在」冒充历史时刻，也不显示 NaN。
+ *
+ * text / tool 条目还可以带 `usage`：从最近一条 user 条目算起，**这一轮**每一次模型
+ * 请求的 prompt_tokens（含系统提示词与全部上下文）与 completion_tokens 全部累加之和。
+ * 多步工具轮每次请求都重发整份上下文，所以这个和就是本轮的 API 真实计费量，
+ * 而不是按正文字数估出来的。
+ * 同一轮里靠前的条目挂的是「到那一刻为止」的累计，界面取轮内最后一条就是整轮真值。
+ * 为什么是可选的：① 一次用量事件都没上报过（没有 usage 事件的老会话）时没有这个数；
+ * ② 重放历史日志造不出这个数——会话日志只存消息，不存每次请求的用量。
  */
 export type TranscriptEntry =
   /** images 是 data URL 清单（用户贴进来的图）；界面渲染成缩略图。 */
   | { kind: 'user'; id: number; text: string; images?: string[]; ts?: number }
   | { kind: 'thinking'; id: number; text: string; ts?: number }
-  | { kind: 'text'; id: number; text: string; ts?: number }
-  | { kind: 'tool'; id: number; call: ToolCallView; ts?: number }
+  /** usage 是整轮累计口径，见本类型头部的说明。 */
+  | { kind: 'text'; id: number; text: string; ts?: number; usage?: { inputTokens: number; outputTokens: number } }
+  /** usage 同上（一轮以工具结果收尾、没有最终正文时，数字落在这张卡上）。 */
+  | { kind: 'tool'; id: number; call: ToolCallView; ts?: number; usage?: { inputTokens: number; outputTokens: number } }
   /** 计划卡：exit_plan_mode 交上来的计划，带用户批没批。 */
   | { kind: 'plan'; id: number; plan: PlanView; ts?: number }
   | { kind: 'system'; id: number; text: string; ts?: number }
@@ -388,6 +398,18 @@ export type UiFontSize = number
 /** 密度档位：行高与纵向内距的整体缩放（紧凑 / 标准 / 宽松）。 */
 export type UiDensity = 'compact' | 'standard' | 'roomy'
 
+/**
+ * 过程折叠程度：对话流里「思考 / 工具调用」这些过程条目的展示档位。
+ *
+ * - `compact`：整轮过程折叠 + 定稿的思考行不显示摘要预览；
+ * - `standard`：整轮过程折叠 + 摘要照显（默认）；
+ * - `detailed`：不做整轮折叠，过程条目照旧逐条摊开。
+ *
+ * 对照 dsh 的展示档位（packages/client/ui-chat/src/client/presentation-policy.ts）：
+ * 那边是四档，dsc 只取「折叠已完成轮次」「定稿思考行显示摘要」两个能力的三种组合。
+ */
+export type UiProcessFold = 'compact' | 'standard' | 'detailed'
+
 /** 侧栏界面偏好，存在 `~/.dsc/settings.json`，桌面端与以后别的界面共用。 */
 export interface UiPrefsView {
   sessionSort: SessionSortKey
@@ -407,6 +429,8 @@ export interface UiPrefsView {
   buttonScale: number
   /** 密度档位。 */
   density: UiDensity
+  /** 过程折叠程度（紧凑 / 标准 / 详细），默认 standard。 */
+  processFold: UiProcessFold
 }
 
 /** 分叉结果：成功时带新会话的 jsonl 路径，UI 拿它直接切过去。 */

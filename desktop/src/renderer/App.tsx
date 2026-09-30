@@ -72,7 +72,7 @@ export function App(): JSX.Element {
   )
   // 正文那一层（含输入区）：拖拽条定位在它里面，夹宽度也要量它的实际宽。
   const zoneRef = useRef<HTMLDivElement | null>(null)
-  // 侧栏界面偏好（排序方式、工作区顺序与别名、外观四项），存在宿主的 ~/.dsc/settings.json
+  // 侧栏界面偏好（排序方式、工作区顺序与别名、外观四项 + 过程折叠程度），存在宿主的 ~/.dsc/settings.json
   // 首帧的外观四项用 localStorage 镜像打底：等宿主返回真实设置的这段时间里，
   // 若按写死的深色上色，每次冷启动都会先闪一下深色，连窗口控件条都会被推成深色。
   const [uiPrefs, setUiPrefs] = useState<UiPrefsView>(() => ({
@@ -82,6 +82,9 @@ export function App(): JSX.Element {
     workspaceOrder: [],
     workspaceAliases: {},
     ...loadCachedAppearance(),
+    // 过程折叠程度不进外观镜像（它不落到 DOM 属性上，只由 ChatView 消费）：
+    // 首帧先按标准档画，宿主回读到了再换成真值。
+    processFold: 'standard',
   }))
   // 最近用过的工作目录：切过去但还没发过消息的工作区也要能在侧栏看到
   const [recentCwds, setRecentCwds] = useState<string[]>([])
@@ -295,7 +298,7 @@ export function App(): JSX.Element {
     })
   }
 
-  /** 写侧栏偏好（排序方式、工作区顺序、显示名别名、外观四项），成功后把新值读回来。 */
+  /** 写侧栏偏好（排序方式、工作区顺序、显示名别名、外观四项与过程折叠程度），成功后把新值读回来。 */
   const saveUiPrefs = (patch: Partial<UiPrefsView>): void => {
     void proxy.setUiPrefs(patch).then((result) => {
       if (!result.ok) {
@@ -522,6 +525,9 @@ export function App(): JSX.Element {
                   sessionPath={active?.id ?? null}
                   proxy={proxy}
                   onOpenSession={openSession}
+                  // 过程折叠程度（设置 → 通用 → 过程折叠程度）：整轮折叠只在详细档关掉，
+                  // 思考摘要预览只在紧凑档关掉，两个开关都由 ChatView 与 ThinkingBlock 消费。
+                  processFold={uiPrefs.processFold}
                 />
               )}
 

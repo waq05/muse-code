@@ -86,7 +86,7 @@ export function SettingsModal(props: {
   proxy: RuntimeProxy
   /** 打开时定位的分区 id，空串 = 第一个分区。 */
   initial: string
-  /** 外观四项的真值，由 App 从宿主的 ui 偏好里带来。 */
+  /** 外观与过程折叠的真值，由 App 从宿主的 ui 偏好里带来。 */
   uiPrefs: UiPrefsView
   onUiPrefs(patch: Partial<UiPrefsView>): void
   onClose(): void
@@ -201,7 +201,7 @@ export function SettingsModal(props: {
 /**
  * 把声明的控件画出来，改动即时写回宿主；成功回执与失败原因都走全局 Toast。
  * 设置面板和插件中心的详情页共用：`extra` 是追加在字段表末尾的额外内容
- * （设置「通用」分区的外观三项走这里，详情页不传）。
+ * （设置「通用」分区的外观与过程折叠这几项走这里，详情页不传）。
  */
 export function GenericFields(props: {
   section: SettingsSectionView
@@ -389,7 +389,7 @@ export function GenericFields(props: {
 }
 
 /**
- * 外观四项。
+ * 外观四项 + 过程折叠程度（第五项，同属「显示成什么样」，所以跟外观同处一组）。
  *
  * 宿主分区是宿主侧声明的控件，而这几项只有渲染层消费，所以画在这里、
  * 直接写回宿主的 ui 偏好：App 收到新值立刻重画，不用重启也不用等回推。
@@ -453,6 +453,24 @@ function AppearanceRows(props: {
             onPick={(value) => props.onUiPrefs({ density: value })}
           />
           <div className="setting-help">调整行高与纵向间距，紧凑档 90%，宽松档 115%，一屏可见的会话数随之变化。</div>
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-label">过程折叠程度</div>
+        <div className="setting-control">
+          <Segments
+            value={props.uiPrefs.processFold}
+            options={[
+              { value: 'compact', label: '紧凑' },
+              { value: 'standard', label: '标准' },
+              { value: 'detailed', label: '详细' },
+            ]}
+            onPick={(value) => props.onUiPrefs({ processFold: value })}
+          />
+          <div className="setting-help">
+            一轮结束后，思考与工具调用这些过程条目整组收起，只留一行「用时 X」总开关。
+            紧凑档不显示思考行末尾的摘要预览；详细档不做整轮折叠，过程条目逐条摊开。
+          </div>
         </div>
       </div>
     </div>

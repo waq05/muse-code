@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { ApprovalPolicy, ArchivedFilter, EffortLevel, MarketSource, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiPrefsView } from '../contract.js'
+import type { ApprovalPolicy, ArchivedFilter, EffortLevel, MarketSource, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiPrefsView, UiProcessFold } from '../contract.js'
 
 export const DSC_SETTINGS_JSON = join(homedir(), '.dsc', 'settings.json')
 
@@ -41,6 +41,13 @@ const SESSION_GROUPS: readonly SessionGroupKey[] = ['workspace', 'tree', 'flat']
 const ARCHIVED_FILTERS: readonly ArchivedFilter[] = ['hide', 'show', 'only']
 const THEME_MODES: readonly ThemeMode[] = ['dark', 'light', 'system']
 const DENSITIES: readonly UiDensity[] = ['compact', 'standard', 'roomy']
+/**
+ * 过程折叠程度三档（桌面端「通用 → 过程折叠程度」）。
+ * 与桌面端 appearance.ts 的 normalizeProcessFold 同一张表，改这里要两边一起改。
+ */
+const PROCESS_FOLDS: readonly UiProcessFold[] = ['compact', 'standard', 'detailed']
+/** 读不出过程折叠程度时的默认档：标准档（整轮折叠 + 摘要照显）。 */
+const PROCESS_FOLD_DEFAULT: UiProcessFold = 'standard'
 
 /**
  * 旧存档里的三档字号：0.6 之前 `ui.fontSize` 存的是字符串，读到时按这张表
@@ -93,6 +100,21 @@ function readButtonScale(value: unknown): number {
   return Math.min(BUTTON_SCALE_MAX, Math.max(BUTTON_SCALE_MIN, scale))
 }
 
+/**
+ * 把存档里的过程折叠程度读成三档之一。
+ *
+ * 认不出的值（手改坏的 `"简单"`、null、数字）一律回落标准档，绝不让存档把启动拦下来；
+ * 老 settings.json 里没有这一项，走的也是这条回落。
+ *
+ * @param value settings.json 里 `ui.processFold` 的原始值
+ * @returns 可直接交给渲染层的档位
+ */
+function readProcessFold(value: unknown): UiProcessFold {
+  return typeof value === 'string' && PROCESS_FOLDS.includes(value as UiProcessFold)
+    ? (value as UiProcessFold)
+    : PROCESS_FOLD_DEFAULT
+}
+
 /** 读偏好（文件缺失或损坏按默认处理，绝不因为偏好坏掉起不来）。 */
 export function readPrefs(): DscPrefs {
   const prefs: DscPrefs = {
@@ -110,6 +132,7 @@ export function readPrefs(): DscPrefs {
       fontSize: FONT_SCALE_DEFAULT,
       buttonScale: BUTTON_SCALE_DEFAULT,
       density: 'standard',
+      processFold: PROCESS_FOLD_DEFAULT,
     },
   }
   if (!existsSync(DSC_SETTINGS_JSON)) return prefs
@@ -139,7 +162,7 @@ export function readPrefs(): DscPrefs {
           if (name !== '') prefs.ui.workspaceAliases[cwd] = name
         }
       }
-      // 外观四项：老 settings.json 里没有这几项，读不到就保持上面的默认值。
+      // 外观四项 + 过程折叠程度：老 settings.json 里没有这几项，读不到就保持上面的默认值。
       if (typeof ui.themeMode === 'string' && THEME_MODES.includes(ui.themeMode as ThemeMode)) {
         prefs.ui.themeMode = ui.themeMode as ThemeMode
       }
@@ -152,6 +175,11 @@ export function readPrefs(): DscPrefs {
       }
       if (typeof ui.density === 'string' && DENSITIES.includes(ui.density as UiDensity)) {
         prefs.ui.density = ui.density as UiDensity
+      }
+      // 过程折叠程度也只有桌面端这一个写入方，存的是三个字符串之一；
+      // 认不出的值由 readProcessFold 回落 standard（老档里没这一项也是这条路）。
+      if (ui.processFold !== undefined) {
+        prefs.ui.processFold = readProcessFold(ui.processFold)
       }
     }
     if (typeof doc.defaultPolicy === 'string' && POLICIES.includes(doc.defaultPolicy as ApprovalPolicy)) {

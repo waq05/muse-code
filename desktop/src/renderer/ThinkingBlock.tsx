@@ -90,6 +90,7 @@ export function ThinkingBlock({
   text,
   live,
   storeKey,
+  showPreview = true,
 }: {
   /** 思考原文：定稿后是一条，直播中每来一段它会变长。 */
   text: string
@@ -100,6 +101,13 @@ export function ThinkingBlock({
    * 会话切换会把条目整表重建，重挂时从这个键读回用户上次的展开选择。
    */
   storeKey?: string
+  /**
+   * 折叠态那一行要不要画摘要预览（对齐 dsh 的 settledReasoningPreview，见
+   * packages/client/ui-chat/src/client/presentation-policy.ts:29「过程折叠程度 = 紧凑」那一档
+   * 是 false）。false 时分隔点与摘要一起不渲染，标题右边直接是箭头；跑动中永远是 true——
+   * 正在写的那一段是「它现在在干什么」的唯一线索，不能因为档位把它藏了。
+   */
+  showPreview?: boolean
 }): JSX.Element {
   // 直播尾挂载即展开（沿用改动前 `open={entry.id < 0}` 的语义）；定稿条目默认折叠。
   // 有存档就认存档：重挂（换会话再切回来）时不能让用户的展开白点。
@@ -116,6 +124,8 @@ export function ThinkingBlock({
   // 摘要（折叠态那一行右边那一段）：跑动中只认写完的段落，收工后取首行；`**` 一律去掉。
   const summaryText = live ? latestCompletedParagraphFirstLine(text) : firstLine(text)
   const summary = summaryText.replaceAll('**', '')
+  // 这一行现在画不画摘要：空摘要不画，紧凑档的定稿条也不画（跑动中照画，见 showPreview 的注释）。
+  const preview = summary !== '' && (live || showPreview)
 
   // 展开内容够长才给快捷栏；阈值判断放在布局之后量，量的是真实像素而不是估算。
   // 直播时 text 一直在变长，所以依赖里带上它，并挂 ResizeObserver 跟着重量。
@@ -140,8 +150,9 @@ export function ThinkingBlock({
       className={`think-block${live ? ' live' : ''}${open ? ' open' : ''}`}
       // 两态走 dsh 的 data-state（ReasoningRow.tsx:80）；.live 是直播尾这个概念，样式里仍在用
       data-state={live ? 'running' : 'ok'}
-      // 折叠态有没有摘要可画（dsh 的 data-preview，ReasoningRow.tsx:82）：空摘要不占位
-      data-preview={summary === '' ? undefined : '1'}
+      // 折叠态有没有摘要可画（dsh 的 data-preview，ReasoningRow.tsx:82）：空摘要不占位，
+      // 紧凑档的定稿条也不占位（那一档的语义就是「只剩标题 + 箭头」）。
+      data-preview={preview ? '1' : undefined}
     >
       {/* 跑动这一态在视觉上是扫光 + 品牌色，读屏读不到「扫光」，所以补一句只给读屏的说明
           （对照 dsh ReasoningRow.tsx:84 的 visuallyHidden 运行中标签）。 */}
@@ -162,15 +173,18 @@ export function ThinkingBlock({
       >
         <IconSpark size={12} className="think-star" />
         <span className="think-label">思考过程</span>
-        {/* 分隔点：只在真有摘要时画（dsh 的 .separator 与 .summary 同生共死） */}
-        {summary !== '' && <span className="think-dot" aria-hidden="true" />}
-        {/* 摘要行始终渲染（空摘要时是个空盒子）：它的 flex:1 负责把行尾箭头与状态推到最后，
-            与定稿时同样在渲染的 .think-status 是同一个用意。 */}
-        <span className="think-summary" data-streaming={live || undefined}>
-          <span className="think-summary-text" data-shimmer={live && summary !== '' ? summary : undefined}>
-            {summary}
+        {/* 分隔点：只在真有摘要时画（dsh 的 .separator 与 .summary 同生共死；
+            紧凑档的定稿条两个都不画，箭头因此紧跟在标题右边，与 dsh 一致）。 */}
+        {preview && <span className="think-dot" aria-hidden="true" />}
+        {/* 摘要行：不是「摘要有内容」时也渲染（空摘要时是个空盒子），它的 flex:1 负责把行尾
+            箭头与状态推到最后；紧凑档定稿条整个不渲染，这时箭头按内容排到标题右侧。 */}
+        {preview && (
+          <span className="think-summary" data-streaming={live || undefined}>
+            <span className="think-summary-text" data-shimmer={live && summary !== '' ? summary : undefined}>
+              {summary}
+            </span>
           </span>
-        </span>
+        )}
         {/* 进行中的小圈：系统里说「少动」时扫光会停，这枚静态环就是那会儿唯一的活动标记，
             所以留着它，而不是只靠扫光表达「还在想」。 */}
         <span className="think-status">{live && <i className="think-spin" aria-hidden />}</span>

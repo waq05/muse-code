@@ -295,7 +295,13 @@ export const runtimePlugin: Plugin.Object = {
                       patch.density !== undefined ||
                       patch.buttonScale !== undefined
                     ? '已保存外观设置'
-                    : '已保存工作区名字'
+                    : patch.processFold !== undefined
+                      ? patch.processFold === 'compact'
+                        ? '过程折叠程度改为紧凑：整轮过程收起，思考行不显示摘要'
+                        : patch.processFold === 'detailed'
+                          ? '过程折叠程度改为详细：过程条目逐条摊开，不做整轮折叠'
+                          : '过程折叠程度改为标准：整轮过程收起，摘要照显'
+                      : '已保存工作区名字'
         return Promise.resolve({ ok: true, notice })
       },
 

@@ -578,10 +578,6 @@
   display: inline-flex;
 }
 
-.shot-reveal .entry-meta {
-  opacity: 1;
-}
-
 .pin-mark {
   display: inline-flex;
   align-items: center;
@@ -1169,57 +1165,11 @@
   margin: 1em 0;
 }
 
-/* 消息操作条：hover 或键盘聚焦时出现。左边一排小图标按钮，右边这条回复的用量
-   （对照 dsh 每条消息底部那行），中间留白把两者顶到两端。 */
-.entry-meta {
-  align-items: center;
-  display: flex;
-  gap: 6px;
-  justify-content: space-between;
-  margin-top: 2px;
-  opacity: 0;
-  transition: opacity var(--dsc-dur) var(--dsc-ease);
-}
-
-.entry-with-meta:hover .entry-meta,
-.entry-with-meta:focus-within .entry-meta {
-  opacity: 1;
-}
-
-.entry-meta .meta-actions {
-  align-items: center;
-  display: flex;
-  gap: 2px;
-}
-
-.entry-meta .meta-btn {
-  align-items: center;
-  border-radius: var(--dsc-r-control);
-  color: var(--dsc-text-tertiary);
-  display: inline-flex;
-  font-size: var(--dsc-fs-ui);
-  padding: 3px 5px;
-  transition:
-    background var(--dsc-dur) var(--dsc-ease),
-    color var(--dsc-dur) var(--dsc-ease);
-}
-
-.entry-meta .meta-btn:hover {
-  background: var(--dsc-control-hover-bg);
-  color: var(--dsc-text-primary);
-}
-
-/* 点过的评价常亮：不然切一次页回来就看不出自己点没点过 */
-.entry-meta .meta-btn.on {
-  background: var(--dsc-control-active-bg);
-  color: var(--dsc-accent);
-}
-
-.entry-meta .meta-usage {
-  color: var(--dsc-text-quaternary);
-  font-size: var(--dsc-fs-tool);
-  font-variant-numeric: tabular-nums;
-}
+/* 消息操作条：复制 / 赞 / 踩原先挂在这里（.entry-meta，hover 或键盘聚焦时出现）。
+   本轮改版把它们搬去了每轮页脚（.round-foot .round-act，见 styles.css 末尾「整轮过程折叠」那一段），
+   这一块连同 .meta-actions / .meta-btn / .meta-usage 的选择器一起删掉了——
+   留着只会让人以为还有一条操作条在某个地方生效。
+   用量那条读数同时从「贴右缘」变成页脚里的一项，且优先显示宿主上报的真值。 */
 
 .entry-system {
   align-self: center;
@@ -5602,6 +5552,16 @@ body.resizing iframe {
 .think-label {
   color: var(--dsc-text-tertiary);
   font-size: var(--dsc-fs-ui);
+  /* flex:none + white-space:nowrap 这两条是「竖排字」那个 bug 的修复。
+     起因：.think-head 是 flex 行，标题旁边那段摘要（.think-summary）写着 flex: 1 1 auto，
+     会把剩余宽度全吃掉；窗口一窄（或摘要很长）时，标题这一格被压到只剩一个汉字的宽度，
+     浏览器就按「汉字之间可以断行」的规矩把「思考过程」四个字一列排下去，成了竖排字。
+     为什么是这两条：flex:none 让标题不参与压缩（按内容取宽度，不缩小），
+     white-space:nowrap 兜住「标题自己比容器还宽」的极端情形——宁可让行内横向溢出、
+     由外层省略号收口，也不能把四个字拆成一列。摘要那一段本来就是 flex:1 且带省略号，
+     余量不够时该收的是它，不是标题。 */
+  flex: none;
+  white-space: nowrap;
 }
 
 .think-head:hover .think-label {
@@ -6133,7 +6093,7 @@ body.resizing iframe {
 /* 这一段只做两件事，别处的规则一行没改（旧段落里必要的改动就地改了：.round-foot 改成贴左、
    .thread-handle 改成贴正文列缘、.think-status 收成 flex: none、.think-body 多一层裁剪、
    .think-bar 换成 .think-block 的直接子项）：
-     1. 助手消息那条操作条：用量搬去了每轮页脚，剩下的按钮要留在原处；
+     1. 助手消息那条操作条：用量搬去了每轮页脚，剩下的按钮这一轮也搬走了（见文件末尾那一段）；
      2. 思考折叠条的折叠态改成 dsh ReasoningRow 的「图标 + 标题 + 分隔点 + 摘要行」：
         这里补分隔点、摘要行（省略号 / 跑动中右缘渐隐）、跑动中的扫光、展开区的高度过渡，
         以及只给读屏的运行标签。
@@ -6141,13 +6101,10 @@ body.resizing iframe {
    每条规则后面给的是 dsh 原文位置：packages/client/ui-chat/src/client/chat/ReasoningRow.tsx、
    ReasoningRow.module.css 与 packages/client/ui-primitives/src/{DisclosureRow,TextShimmer}.tsx。 */
 
-/* ── 助手消息的操作条：只剩复制 / 赞 / 踩 ──
-   用量那一项搬到了每轮页脚（TurnFooter 的最后一项）。这条操作条上就只剩 .meta-actions
-   一组按钮，而旧规则用 justify-content: space-between 把「按钮组 | 用量」顶到两端——
-   一组独占一行时 space-between 会把它推到左端。这里明确右对齐，三颗按钮留在原处。 */
-.entry-meta {
-  justify-content: flex-end;
-}
+/* ── 助手消息那条操作条的收尾 ──
+   复制 / 赞 / 踩这一轮搬去了每轮页脚（.round-foot .round-act，见文件末尾「整轮过程折叠」一段），
+   助手消息末尾不再留操作条：那条 justify-content: flex-end 的覆盖规则（以及 base 段里 .entry-meta
+   整块）一并删掉，免得留着一条指向不存在元素的规则。 */
 
 /* ── 折叠态标题与摘要之间的分隔点 ──
    dsh 是 2px 见方的一个点、两边各 8px（ReasoningRow.module.css:37-44）；紧凑行的 flex gap
@@ -6401,7 +6358,8 @@ body.resizing iframe {
 /* ══════════ 对话区修正批 ══════════ */
 /* 这一段只做两件事，别处的规则一行没改（旧段里 .meta-btn / .user-act 那几条一行没动，
    这里用同具体度的选择器写在后面把宽高、内距与图标倍率补上）：
-     1. 消息操作条上那三处按钮按 dsh 的尺寸校准，并且吃 --dsc-btn-scale；
+     1. 消息操作条那几处按钮按 dsh 的尺寸校准，并且吃 --dsc-btn-scale
+     （助手消息末尾那条已退场，现在轮到每轮页脚里的复制 / 赞 / 踩 / 分叉）；
      2. 暂停自动跟随时那颗「回到底部」按钮。
    每处给的都是 dsh 原文位置：packages/client/ui-chat/src/client/chat/MessageIconActions.tsx
    与 MessageIconActions.module.css。 */
@@ -6414,14 +6372,12 @@ body.resizing iframe {
    dsc 改之前实测：助手操作条 23×19（13px 图标 + 3px 5px 内距、间距 2px）、气泡下的编辑
    20×16、页脚里的分叉 20×14，图标 12/13px，而且不吃 --dsc-btn-scale——「按钮大小」滑杆
    只放大 .icon-btn 一系，这三处纹丝不动。
-   现在三处统一 28px 的框、flex 居中、内距收到 0（框本身就是 hit area，与 dsh 的 border-box
-   口径一致，28px 里放 17px 图标余量更足），图标尺寸由 JSX 传（助手 17、用户与分叉 15），
-   这里只负责乘倍率——与「按钮大小滑杆」段给 .icon-btn svg 的写法同一条路子。 */
-.entry-meta .meta-actions {
-  gap: 8px;
-}
-
-.entry-meta .meta-btn,
+   现在统一 28px 的框、flex 居中、内距收到 0（框本身就是 hit area，与 dsh 的 border-box
+   口径一致，28px 里放 17px 图标余量更足），图标尺寸由 JSX 传（助手那一排与页脚 17、用户 15），
+   这里只负责乘倍率——与「按钮大小滑杆」段给 .icon-btn svg 的写法同一条路子。
+   本轮改版：助手消息末尾那条操作条（.entry-meta）退场，复制 / 赞 / 踩换成页脚里的 .round-act，
+   所以这里的选择器从 .entry-meta .meta-btn 换成 .round-foot .round-act（同一套 28px 规格）。 */
+.round-foot .round-act,
 .user-turn .user-act,
 .round-foot .user-act {
   align-items: center;
@@ -6432,15 +6388,16 @@ body.resizing iframe {
   width: calc(28px * var(--dsc-btn-scale));
 }
 
-.entry-meta .meta-btn svg,
+.round-foot .round-act svg,
 .user-turn .user-act svg,
 .round-foot .user-act svg {
   height: calc(var(--dsc-icon-size, 1em) * var(--dsc-btn-scale));
   width: calc(var(--dsc-icon-size, 1em) * var(--dsc-btn-scale));
 }
 
-/* 页脚那一行只有分叉一颗按钮（28px），行高由它撑着；文字与按钮的中线对齐交给
-   .round-foot 的 align-items: center，这里不再动旧规则。 */
+/* 页脚那一行现在有四颗按钮（复制 / 赞 / 踩 / 分叉），行高由它们撑着；文字与按钮的中线对齐交给
+   .round-foot 的 align-items: center，图标之间的横向节奏交给它原有的 6px gap，
+   这里不再动旧规则。 */
 
 /* ── 「回到底部」：暂停跟随时才出现的一颗胶囊 ──
    触发条件是用户在流式输出里往上翻（见 ChatView 的 followRef）；那一刻新内容不再把他
@@ -6478,6 +6435,151 @@ body.resizing iframe {
 .chat-to-bottom:focus-visible {
   box-shadow: inset 0 0 0 1px var(--dsc-accent);
   outline: none;
+}
+
+/* ══════════ 整轮过程折叠 ══════════ */
+/* 这一段的对照物是 dsh 的整轮过程开关：packages/client/ui-chat/src/client/chat/TurnProcessNodeView.tsx
+   与同目录的 TurnProcessNodeView.module.css（行为那一半在 ChatView.tsx 的 roundFold / TurnFoldRow——
+   哪些条目归它管、跑动中的轮永不折叠、轮收尾时把展开态复位成默认收起）。
+   dsh 长什么样：一行左对齐的整行按钮，label 是「用时 X」（算不出用时就报「已完成」），
+   右边跟一枚 chevron，收起时这一轮只剩「用户消息 → 这一行 → 最终回答」。
+   两处有意的差异：
+     1. dsh 那一行高 33px 且带一条下边框（.root:7-10），dsc 的过程条目各自是独立卡片
+        （.think-block / .tool-card 都有描边与圆角），再来一条横线会让这一行被读成「又一张卡」，
+        所以这里做成与 .think-head 同规格的行内按钮：同款行高、内距、圆角、hover 底色、
+        按下底色、焦点圈，不画边框；
+     2. dsh 的 label 还会报「已停止 / 失败」这类结束原因（TurnProcessNodeView.tsx:26-29），
+        dsc 的 transcript 里没有这个字段，只有时间，所以算不出用时退回「已完成」。 */
+
+/* ── 总开关行：整行可点（原生 button，role=button 自带），左对齐、行内小字 ──
+   字号取 --dsc-fs-ui，与 .think-label 同一档（都是「过程」这一层的标题字）。
+   width: 100% 是为了 hover 底色铺满整行——「整行可点」得让整行看上去都可点。 */
+.turn-fold {
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-quaternary);
+  cursor: pointer;
+  display: flex;
+  font-family: inherit;
+  font-size: var(--dsc-fs-ui);
+  gap: 0;
+  justify-content: flex-start;
+  min-height: var(--dsc-row-h);
+  padding: 0 8px;
+  text-align: left;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+  width: 100%;
+}
+
+/* 悬停给底色、按下给更深一档：与 .think-head / .tool-head 同一组令牌（那次改版定的），
+   三处过程条目共用一套「可以点的行」的观感。 */
+.turn-fold:hover {
+  background: var(--dsc-row-hover-bg);
+}
+
+.turn-fold:active {
+  background: var(--dsc-row-active-bg);
+}
+
+/* 键盘也能开合：焦点圈跟全站行内按钮口径走（inset 描边，不撑开布局）。 */
+.turn-fold:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* 截图钩子（?reveal=1）：真实 :hover 抓不进静态图，沿用仓库既有的 .shot-reveal 约定。 */
+.shot-reveal .turn-fold {
+  background: var(--dsc-row-hover-bg);
+}
+
+.turn-fold-label {
+  color: var(--dsc-text-tertiary);
+  /* 大字号下「用时 2分41秒」也不会把箭头挤走（同 .think-label 那条修复的道理） */
+  flex: none;
+  white-space: nowrap;
+}
+
+.turn-fold:hover .turn-fold-label {
+  color: var(--dsc-text-secondary);
+}
+
+/* 行尾箭头：收起 ∨、展开 ∧，靠 180° 旋转复用同一个图标（同 .think-chevron）。
+   它紧跟在 label 右边 4px（dsh 的 .chevron 就是 margin-left: 4px，:26-33），
+   不是推到整行最右端——这一行读完就两个信息，拉开距离反而要多扫一眼。 */
+.turn-fold-chevron {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  margin-left: 4px;
+  transition: transform var(--dsc-dur) var(--dsc-ease);
+}
+
+.turn-fold[data-open] .turn-fold-chevron {
+  color: var(--dsc-text-tertiary);
+  transform: rotate(180deg);
+}
+
+/* ── 页脚里那三颗新按钮（复制 / 赞 / 踩）──
+   它们从助手消息末尾的 .entry-meta 搬进每轮页脚（.round-foot），28px 的框与图标倍率在
+   上面「对话区修正批」那一段（与分叉、用户消息的编辑按钮同一套规格）。
+   这里只补颜色与三态：静息 tertiary、悬停提一档并给底色、点过的评价常亮。
+   评价常亮为什么必要：赞 / 踩只记在本机（localStorage），不给常亮的话切一次会话回来
+   就看不出自己点没点过——这一条沿用改版前 .meta-btn.on 的口径。 */
+.round-foot .round-act {
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.round-foot .round-act:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.round-foot .round-act:active {
+  background: var(--dsc-control-active-bg);
+}
+
+.round-foot .round-act:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+.round-foot .round-act.on {
+  background: var(--dsc-control-active-bg);
+  color: var(--dsc-accent);
+}
+
+/* 分叉那颗分叉图标与复制 / 赞 / 踩同处一行，静息色提到同一档（quaternary → tertiary）：
+   dsh 那一行里所有 .action 共用 label-tertiary（MessageIconActions.module.css:73），
+   同一个框里出现两种灰会让「这一排是同一组动作」读不出来。
+   旧段那两条 .round-foot .user-act 的规则仍然管形状、hover、置灰，这里只覆盖颜色。 */
+.round-foot .user-act {
+  color: var(--dsc-text-tertiary);
+}
+
+.round-foot .user-act:disabled:hover {
+  color: var(--dsc-text-tertiary);
+}
+
+/* 用量读数（真值「用量 N tok」/ 估算「~N tok」）与时刻：等宽数字，读数不随字宽抖动。 */
+.round-foot .round-tokens,
+.round-foot .round-clock {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-fold,
+  .turn-fold-chevron,
+  .round-foot .round-act {
+    transition: none;
+  }
 }
 
 

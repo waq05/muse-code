@@ -58,7 +58,7 @@ function readTimeout(passed: unknown): number {
 
 /** 权限模式四档的界面文案（界面画档位按钮时读这份，不再自己抄一份）。 */
 const POLICY_OPTIONS: ReadonlyArray<TierOption<ApprovalPolicy>> = [
-  { id: 'readonly', label: '仅查看', hint: '只读模式：写/执行类工具一律拒绝' },
+  { id: 'readonly', label: '仅查看', hint: '只读模式：读类操作放行，写/执行类一律拒绝' },
   { id: 'auto-edit', label: '自动编辑', hint: '工作区内写操作自动放行，其余需审批' },
   { id: 'full-access', label: '完全访问', hint: '全部工具自动放行，谨慎使用' },
   { id: 'ai-review', label: 'AI 审查', hint: '由模型逐次判断是否放行，失败回退人工审批' },
@@ -282,7 +282,7 @@ export const approvalPlugin: Plugin.Object = {
         policy = next
         const label =
           next === 'readonly'
-            ? '仅查看（写/执行类工具将被拒绝）'
+            ? '仅查看（读类操作放行，写/执行类一律拒绝）'
             : next === 'auto-edit'
               ? '工作区自动编辑（工作区内写操作自动放行，其余审批）'
               : next === 'full-access'
@@ -362,6 +362,13 @@ export const approvalPlugin: Plugin.Object = {
         // 第 5 层：权限模式自己的裁决（protected 文件不参与，强制走人工卡）。
         if (protectedWhy === null && forced === '') {
           if (policy === 'readonly') {
+            // 「仅查看」的字面意思就是只读：策略引擎判成 allow 的命令（查看目录、看 git 状态、
+            // 管道里只做筛选与格式化）原样放行，只有写与执行类才一律拒。
+            // 少了这一条，`Get-ChildItem | Format-Table` 这种纯查看也会被这档拒掉，用户要读代码都没法读。
+            if (verdict !== null && verdict.decision === 'allow') {
+              autoLog('auto-allow', request, '仅查看模式：只读命令放行')
+              return 'allow-once'
+            }
             autoLog('auto-deny', request, '当前是「仅查看」权限模式，写与执行类工具一律拒绝')
             return 'reject'
           }

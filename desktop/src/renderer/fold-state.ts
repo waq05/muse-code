@@ -17,6 +17,20 @@
 
 const folds = new Map<string, boolean>()
 
+/**
+ * 整轮过程折叠的存档键：`会话id:turn:轮序号`。
+ *
+ * 与条目的 `会话id:e内容序号` 同一风格（都带会话前缀，两条会话不会互相借展开态）。
+ * 用轮序号而不是条目 id 的原因与 ChatView 的 contentOrdinalAt 一样：宿主重放历史时
+ * 条目 id 从 1 重新发号，而「第几轮」在两条加载路径上完全一致。
+ *
+ * @param sessionId 当前会话 id；未知传 null（这时整条键只有序号，也不会串味）
+ * @param roundIndex 轮次序号（0 基，与 turn-timing 的 RoundInfo.index 同源）
+ */
+export function turnFoldKey(sessionId: string | null, roundIndex: number): string {
+  return `${sessionId ?? ''}:turn:${String(roundIndex)}`
+}
+
 /** 读存档；没有记录就用调用方给的默认值（首次挂载与「没存档」是同一种情况）。 */
 export function readFold(key: string | undefined, fallback: boolean): boolean {
   if (key === undefined) return fallback

@@ -141,8 +141,9 @@ export const transcriptPlugin: Plugin.Object = {
 }
 
 /**
- * 两份条目表的「内容」是否一致：`id`（每次重建都从 1 重新发号）与 `ts`（同一份历史
- * 重放两次时刻会差几毫秒）不算内容，其余字段逐个比。
+ * 两份条目表的「内容」是否一致：`id`（每次重建都从 1 重新发号）、`ts`（同一份历史
+ * 重放两次时刻会差几毫秒）与 `usage`（本轮累计 token，重放历史时造不出来——会话日志
+ * 只存消息、不存每次请求的用量）都不算内容，其余字段逐个比。
  * 为什么用 JSON 字符串比而不是逐字段写：条目是纯数据、没有函数与循环引用，
  * 序列化顺序由同一段代码产出，键序天然一致；逐字段写要跟着 contract 的六种条目改，
  * 加一个字段就会静静漏比。
@@ -155,7 +156,12 @@ function sameEntries(left: readonly TranscriptEntry[], right: readonly Transcrip
 function shape(entries: readonly TranscriptEntry[]): string {
   return JSON.stringify(
     entries.map((entry) => {
-      const { id, ts, ...rest } = entry
+      // 用删字段而不是解构：条目是联合类型，`usage` 只有 text/tool 两种成员有，
+      // 直接写 `const { usage, ...rest } = entry` 编译器不认（TS2339）。
+      const rest: Record<string, unknown> = { ...entry }
+      delete rest['id']
+      delete rest['ts']
+      delete rest['usage']
       return rest
     }),
   )

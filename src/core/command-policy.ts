@@ -360,7 +360,24 @@ const READONLY_HEADS = new Set([
   'Get-Content', 'Get-Item', 'Test-Path', 'Get-Location', 'Get-Date', 'git', 'rg', 'grep', 'find',
   'node', 'python', 'python3', 'date', 'env', 'printenv', 'ps', 'tasklist', 'Get-Process', 'sort',
   'uniq', 'sed', 'awk', 'jq', 'Get-CimInstance', 'Resolve-Path', 'Get-Command', 'Select-String',
+  // 纯展示 / 纯查询的 PowerShell cmdlet：它们只加工管道里已有的对象，自己不碰盘、不起进程。
+  // 管道按段判定，右侧少一个名字就把整条只读命令判成 ask（用户看到的是「查看个目录也要审批」）。
+  'Select-Object', 'Where-Object', 'Sort-Object', 'Measure-Object', 'Group-Object', 'Compare-Object',
+  'Format-Table', 'Format-List', 'Format-Wide', 'Format-Custom', 'Out-String', 'Out-Host', 'Out-Null',
+  'Get-Member', 'Get-Unique',
+  // 上面这些的常见纯别名（select=Select-Object、measure=Measure-Object、ft/fl/fw=三种 Format-*）。
+  'select', 'measure', 'ft', 'fl', 'fw',
 ])
+
+/**
+ * 明确不许进上面那份名单的 PowerShell 动作，写在这里存档，免得下次有人「顺手补全」：
+ *   - `ForEach-Object` / `%` / `foreach`：它们的 scriptblock 能执行任意代码，
+ *     `Get-ChildItem | ForEach-Object { Remove-Item $_ }` 头是只读的，刀在花括号里；
+ *   - `Tee-Object` 与 `Out-File`：把输出落到盘上，落盘就是动手；重定向那道防线对它们不生效
+ *     （写法里没有 `>`，`segment.redirect` 是 false），只能靠不进名单来拦；
+ *   - 一切 `Set-*` / `Remove-*` / `Invoke-*` / `Start-*` / `Stop-*` / `New-*`：改状态、删东西、起进程，
+ *     它们落在「不在名单里 = 默认要问」这条路上，保持现状即可。
+ */
 
 /** 这些一级子命令即便是 git/node 也算写操作。 */
 const WRITING_SUBCOMMANDS = new Set([

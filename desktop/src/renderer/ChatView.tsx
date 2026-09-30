@@ -9,17 +9,30 @@
  * 末尾）与自己刚发出一条用户消息（要立刻看到它和它的回复）。内容自己变高不算「用户滚离」——
  * 那不发 scroll 事件，程序性的高度变化因此不会被误判。
  *
- * 消息底部对照 dsh 的构图：悬停时浮出一排小图标按钮（复制 / 赞 / 踩）；
- * 每轮最后一条条目下面是一行页脚（TurnFooter：本轮时刻 · 用时 · 分叉 · 本轮用量）。
- * 页脚这四项都贴正文列左缘、跟正文同一条起跑线（对照 dsh 的消息脚注排法，
- * 见 TurnFooter.tsx 的模块注释）；敲定之前它贴在对话区最右缘、用量还挂在消息末尾右端，
- * 离正文太远。
+ * 消息底部对照 dsh 的构图：每条条目下面是一行页脚（TurnFooter：复制 · 赞 · 踩 · 分叉 · 用量 · 时刻
+ * 一条左对齐行，顺序照 dsh 图 4，见 TurnFooter.tsx 的模块注释）；复制 / 赞 / 踩原先挂在助手消息
+ * 末尾那条悬停操作条（.entry-meta）上，这一轮搬进页脚——它们本来就是「对这条回复做什么」，
+ * 跟这一轮的用量与时刻是同一件事的几面，同一行读完就不用再把眼睛挪回消息末尾。
+ * 页脚这六项都贴正文列左缘、跟正文同一条起跑线（对照 dsh 的消息脚注排法）；
+ * 敲定之前它贴在对话区最右缘、用量还挂在消息末尾右端，离正文太远。
  * 宿主记了每条条目的落盘时刻（contract.ts 的 TranscriptEntry.ts），
  * 老会话没有这个字段时那一行的两端各自降级，绝不显示 NaN。
  *
+ * 整轮过程折叠（对照 dsh 的 standard 档，见 TurnProcessNodeView.tsx 与 ChatNodeSeat.tsx）：
+ * 一轮跑完以后，这一轮的过程条目（思考 / 工具卡 / 中间几段正文）整组收起，原位只留一行左对齐的
+ * 总开关（「用时 X」+ 箭头，整行可点）；收起时这一轮只剩「用户消息 → 总开关行 → 最终回答」。
+ * - 定稿轮默认收起，展开态存 fold-state（键 `会话id:turn:轮序号`，见 turnFoldKey）；
+ * - 跑动中的轮永远展开、连总开关都不画（dsh 的 turnProcessAlwaysOpen + liveProcess 语义）；
+ * - plan 条目不进组：它是审批流的一部分（dsh 的 TURN_PROCESS_INDEPENDENT_KINDS），收起过程
+ *   不能把「等你点批准」也一起藏掉；
+ * - 最终回答正文与页脚不折叠；
+ * - 展示档位（props.processFold）可以整层关掉这件事：详细档不做整轮折叠，紧凑档另外把定稿
+ *   思考行的摘要预览收掉（那一档由 ThinkingBlock 的 showPreview 管）。
+ *
  * 每条条目外面套一层 `<div class="entry-row" data-round="N">`（样式里是 display:contents，
  * 不产生盒子、不改变 flex 布局）：一是让右缘刻度条能做真正的命中测试
- * （命中哪个条目就知道是第几轮，见 JumpStrip.tsx），二是每轮的页脚有地方挂。
+ * （命中哪个条目就知道是第几轮，见 JumpStrip.tsx），二是每轮的页脚有地方挂，
+ * 三是整轮折叠的总开关行有地方站（就站在组内第一条的位置上，收起时那些条目根本不渲染）。
  *
  * 用户消息的两个操作分处两地（都是悬停出现）：
  * - 「编辑」挂在气泡正下方的气泡外（`.user-turn` 里、`.entry-user` 之外）：铅笔压在气泡
@@ -37,7 +50,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { StatusView, TranscriptEntry } from '@dsc/runtime/contract.js'
+import type { StatusView, TranscriptEntry, UiProcessFold } from '@dsc/runtime/contract.js'
 import type { RuntimeProxy } from './bridge.js'
 import { AT_BOTTOM_EPS, JumpStrip } from './JumpStrip.js'
 import { PlanReview } from './TaskDock.js'
@@ -46,9 +59,10 @@ import { ToolCard } from './ToolCard.js'
 import { TurnFooter } from './TurnFooter.js'
 import { TurnStatusLine } from './TurnStatusLine.js'
 import { isSessionMarker } from './session-marker.js'
-import { liveActivity, roundInfos, turnStartedAt, type RoundInfo } from './turn-timing.js'
+import { readFold, turnFoldKey, writeFold } from './fold-state.js'
+import { formatDuration, liveActivity, roundDuration, roundInfos, turnStartedAt, type RoundInfo } from './turn-timing.js'
 import { toastErr, toastOk } from './components/toast.js'
-import { IconCopy, IconEdit, IconThumbDown, IconThumbUp } from './icons.js'
+import { IconChevronDown, IconEdit } from './icons.js'
 import { estimateTextTokens } from './token-estimate.js'
 
 /** 一条回复的本机评价：只有赞 / 踩两态，再点一次取消。 */
@@ -81,6 +95,60 @@ function loadFeedback(): Record<string, Feedback> {
 /** 本机评价只说明一次（第一次点的时候），免得每点一次都弹一条提示。 */
 let toldFeedbackOnce = false
 
+/**
+ * 一轮过程区的折叠情况（下标 = round.index 存进 Map）。
+ *
+ * 为什么单独算一份：哪些条目归总开关管、开关画在哪一行、这一轮能不能折，是三件互相牵连的事，
+ * 分散在 map 回调里每次渲染重算一遍既慢又容易前后不一致（比如开关画了、组内却没有条目）。
+ */
+interface RoundFold {
+  /** 轮次序号（0 基，与 RoundInfo.index 同源）：存展开态时要用它拼键。 */
+  roundIndex: number
+  /** 总开关行画在这一条前面（= 组内第一条可折叠条目）；-1 = 这一轮没有过程内容。 */
+  startIndex: number
+  /** 组内最后一条可折叠条目的下标（含）。 */
+  endIndex: number
+  /** 有没有可折叠的过程内容：没有就不画总开关，这一轮照旧全摊开。 */
+  foldable: boolean
+  /** 跑动中：整组强制展开、连总开关都不画（dsh 的 turnProcessAlwaysOpen 语义）。 */
+  running: boolean
+}
+
+/**
+ * 整轮过程折叠的总开关行（对照 dsh 的 TurnProcessNodeView.tsx:36-53）：
+ * 一行左对齐的小字按钮，「用时 X」（算不出用时就是「已完成」，绝不显示 NaN）+ 行尾箭头，整行可点。
+ *
+ * 只给定稿轮画（跑动中的轮不渲染这一行，见下面 map 里那处条件）：dsh 的 turn-process 节点
+ * 同样只在本轮 status === 'closed' 时才渲染（TurnProcessNodeView.tsx:18）。
+ *
+ * 为什么标题是「用时」而不是「思考过程 / 工具调用」：dsh 那一行报的是「这一轮花了多久」
+ * （TurnProcessNodeView.tsx:21-29 的 took / worked），条数之类的统计留在 data-* 属性上给
+ * 自检用，不占人眼。这一行收起来的是过程，用户最想知道的是「值不值得展开看一眼」。
+ */
+function TurnFoldRow(props: {
+  open: boolean
+  round: RoundInfo
+  onToggle(): void
+}): JSX.Element {
+  const used = formatDuration(roundDuration(props.round))
+  const label = used === null ? '已完成' : `用时 ${used}`
+  return (
+    <button
+      type="button"
+      className="turn-fold"
+      // 展开态走 data-open（对照 dsh 的 css.root[data-open]），样式里靠它转箭头
+      data-open={props.open ? '1' : undefined}
+      data-round-index={props.round.index}
+      aria-expanded={props.open}
+      data-tip={props.open ? '收起这一轮的过程（思考与工具调用）' : '展开这一轮的过程（思考与工具调用）'}
+      onClick={props.onToggle}
+    >
+      <span className="turn-fold-label">{label}</span>
+      <IconChevronDown size={11} className="turn-fold-chevron" />
+    </button>
+  )
+}
+
 export function ChatView(props: {
   entries: TranscriptEntry[]
   turnState: StatusView['turnState']
@@ -98,6 +166,13 @@ export function ChatView(props: {
    * 真的把会话换过去，才能把改好的正文发给新会话——早一步就发到旧会话里去了。
    */
   onOpenSession?: (path?: string) => Promise<void>
+  /**
+   * 过程折叠程度（设置 → 通用 → 过程折叠程度）：
+   * - 'compact' / 'standard'：整轮过程折叠（紧凑档另外把定稿思考行的摘要预览收掉）；
+   * - 'detailed'：不做整轮折叠。
+   * 不传按 'standard'（只读视图如队友运行记录不传这个 prop，跟着默认档走）。
+   */
+  processFold?: UiProcessFold
 }): JSX.Element {
   const scroller = useRef<HTMLDivElement | null>(null)
   const [feedback, setFeedback] = useState<Record<string, Feedback>>(loadFeedback)
@@ -105,6 +180,15 @@ export function ChatView(props: {
   const [editing, setEditing] = useState<{ index: number; text: string } | null>(null)
   /** 重发请求已经发出去、还在等宿主换会话：这期间按钮置灰，防止连点分叉出两份。 */
   const [sending, setSending] = useState(false)
+  /**
+   * 整轮过程折叠的展开态（键 = turnFoldKey，见 fold-state.ts）。
+   *
+   * 为什么要 React state 而不是只读 fold-state：fold-state 是个普通 Map，写它不会触发重渲染
+   * （设计如此，见那儿的模块注释——它只为「重挂时读回初值」而生）。点总开关是当场要看到变化的
+   * 动作，所以这一层 state 管「立刻重画」，fold-state 管「重挂后读回来」，两边的键相同。
+   * 键里带会话 id，换会话不会串味，所以这里不需要在切会话时清空。
+   */
+  const [turnOpen, setTurnOpen] = useState<Record<string, boolean>>({})
   /**
    * 还在不在「跟随最新内容」（流式输出时自动贴底）。
    *
@@ -267,6 +351,146 @@ export function ChatView(props: {
     }
     return map
   }, [rounds])
+  /** 这一轮还在跑（回合没结束）：跑动中的轮永远展开，永不提供折叠。 */
+  const live = props.turnState !== 'idle'
+  /** 最后一轮的下标；跑动判定只看它（历史轮次全是定稿轮）。 */
+  const lastRoundIndex = rounds.length - 1
+  /** 详细档不做整轮折叠；紧凑 / 标准两档都折。 */
+  const foldTurns = (props.processFold ?? 'standard') !== 'detailed'
+  /** 紧凑档把定稿思考行的摘要预览收掉；跑动中的摘要不受档位影响（见 ThinkingBlock）。 */
+  const showReasoningPreview = (props.processFold ?? 'standard') !== 'compact'
+  /**
+   * 每轮的过程区（下标 = round.index）：哪些条目归总开关管、开关画在哪、这一轮跑不跑。
+   *
+   * 为什么把「哪几条算过程」算在这里而不是散在 map 回调里：这条线是「用户消息之后、
+   * 这一轮最后一条定稿正文之前」，要一次看完这一轮才知道末条正文在哪；逐条判的话每条都要
+   * 反扫一遍自己的轮次。同时这也让「开关画了、组内却没条目」这种不一致根本不可能发生。
+   *
+   * 三类条目不进组：
+   * - plan：审批流的一部分（dsh 的 TURN_PROCESS_INDEPENDENT_KINDS），收起过程不能把
+   *   「等你点批准」一起藏掉；
+   * - 本轮最后一条定稿 text（id>=0）：那是这一轮的最终回答，折叠的目标就是「过程收起来、
+   *   回答留着」；
+   * - 定稿轮里的直播尾（id<0）——它只可能出现在还没收尾的那一轮，而那一轮强制展开。
+   */
+  const roundFold = useMemo(() => {
+    const out = new Map<number, RoundFold>()
+    for (const round of rounds) {
+      // 本轮最后一条定稿正文（从后往前找，找到就走）；它之后（含它自己）都不折叠。
+      let answerIndex = -1
+      for (let at = round.endIndex; at > round.startIndex; at -= 1) {
+        const entry = props.entries[at]
+        if (entry !== undefined && entry.kind === 'text' && entry.id >= 0) {
+          answerIndex = at
+          break
+        }
+      }
+      let startIndex = -1
+      let endIndex = -1
+      let hasLiveEntry = false
+      for (let at = round.startIndex + 1; at <= round.endIndex; at += 1) {
+        const entry = props.entries[at]
+        if (entry === undefined) continue
+        if (entry.id < 0) hasLiveEntry = true
+        if (entry.kind !== 'thinking' && entry.kind !== 'tool' && entry.kind !== 'text') continue
+        if (answerIndex >= 0 && at >= answerIndex) continue
+        if (startIndex < 0) startIndex = at
+        endIndex = at
+      }
+      out.set(round.index, {
+        roundIndex: round.index,
+        startIndex,
+        endIndex,
+        foldable: foldTurns && startIndex >= 0,
+        // 跑动中的两种形态都算「这一轮还没收尾」：出现了直播条目（id<0），或者这就是最后一轮
+        // 而回合还没结束，或者用户刚发完消息、助手一个字都还没回（answered 为假）。
+        running: hasLiveEntry || (live && round.index === lastRoundIndex) || !round.answered,
+      })
+    }
+    return out
+  }, [props.entries, rounds, foldTurns, live, lastRoundIndex])
+  /**
+   * 每轮的最终回答（下标 = round.index）：这一轮最后一条定稿 text。
+   *
+   * 页脚的复制按钮抄的就是它（改版前复制按钮挂在每条助手消息上，现在按轮收进页脚）；
+   * 一轮以工具结果收尾、没有最终正文时这一轮就没有可复制的东西，复制按钮整颗不画。
+   */
+  const roundAnswer = useMemo(() => {
+    const out = new Map<number, { id: number; text: string }>()
+    props.entries.forEach((entry, index) => {
+      if (entry.kind !== 'text' || entry.id < 0) return
+      const round = roundAt.get(index)
+      if (round === undefined) return
+      // 按顺序覆盖，循环结束时留下的就是这一轮最后一条定稿正文
+      out.set(round.index, { id: entry.id, text: entry.text })
+    })
+    return out
+  }, [props.entries, roundAt])
+  /**
+   * 每轮的真实用量（下标 = round.index）：宿主上报的整轮累计（见 contract.ts 的 TranscriptEntry）。
+   *
+   * 为什么是「最后一条带 usage 的条目」：同一轮里靠前的条目挂的是「到那一刻为止」的累计
+   * （多步工具轮每次请求都重发整份上下文），只有轮内最后一条才是整轮真值。按顺序覆盖正好
+   * 留下最后一条。一次都没上报过的老会话这里全是 null，页脚回落按正文字数估算。
+   */
+  const roundUsage = useMemo(() => {
+    const out = new Array<{ inputTokens: number; outputTokens: number } | null>(rounds.length).fill(null)
+    props.entries.forEach((entry, index) => {
+      if (entry.kind !== 'text' && entry.kind !== 'tool') return
+      const usage = entry.usage
+      if (usage === undefined) return
+      const round = roundAt.get(index)
+      if (round === undefined) return
+      out[round.index] = usage
+    })
+    return out
+  }, [props.entries, roundAt, rounds])
+  /** 跑动中的轮次键集合（键 = turnFoldKey）：轮收尾时靠它认出「这一轮刚定稿」。 */
+  const runningFoldKeys = useMemo(() => {
+    const keys = new Set<string>()
+    for (const fold of roundFold.values()) {
+      if (fold.foldable && fold.running) keys.add(turnFoldKey(props.sessionId, fold.roundIndex))
+    }
+    return keys
+  }, [roundFold, props.sessionId])
+  /** 上一轮渲染还在跑的键：用来发现「跑动 → 定稿」这一次跳变。 */
+  const previousRunningFoldKeys = useRef<Set<string>>(new Set())
+  /**
+   * 轮收尾（跑动 → 定稿）时把这一轮的展开态复位成默认收起。
+   *
+   * 为什么要这一步：跑动中那一轮是强制展开的、连总开关都不画，用户没机会做任何选择；
+   * 一旦这一轮收尾（回答落定、回合结束），它就该按「定稿轮默认收起」的规矩长回去——
+   * 否则刚写完的那一轮会一直摊着，用户每发一条消息都要看一整轮过程。
+   * 口径对照 dsh 的 enclosing-Turn reset（ChatNodeSeat.tsx:111-122 把隐藏的成员那次
+   * disclosureReset 递增，让轮内折叠条下次展开时回到默认态）。
+   */
+  useEffect(() => {
+    for (const key of previousRunningFoldKeys.current) {
+      if (runningFoldKeys.has(key)) continue
+      // 存档写回默认值，React state 里那条直接删掉（于是回落到 readFold 的默认收起）
+      writeFold(key, false)
+      setTurnOpen((current) => {
+        if (current[key] === undefined) return current
+        const next = { ...current }
+        delete next[key]
+        return next
+      })
+    }
+    previousRunningFoldKeys.current = runningFoldKeys
+  }, [runningFoldKeys])
+  /** 这一轮的过程组现在收起来没有：跑动中的轮永远展开（不提供折叠）。 */
+  const foldCollapsed = (fold: RoundFold): boolean => {
+    if (!fold.foldable || fold.running) return false
+    const key = turnFoldKey(props.sessionId, fold.roundIndex)
+    return !(turnOpen[key] ?? readFold(key, false))
+  }
+  /** 点总开关：React state 管当场重画，fold-state 管重挂后读回来（键相同，见 turnFoldKey）。 */
+  const toggleRoundFold = (roundIndex: number): void => {
+    const key = turnFoldKey(props.sessionId, roundIndex)
+    const next = !(turnOpen[key] ?? readFold(key, false))
+    writeFold(key, next)
+    setTurnOpen((current) => ({ ...current, [key]: next }))
+  }
   /**
    * 每轮助手正文的 token 估算（下标 = round.index）：页脚里最后那一项「~N tok」。
    *
@@ -303,10 +527,8 @@ export function ChatView(props: {
     }
   }
 
-  const live = props.turnState !== 'idle'
   const activity = liveActivity(props.entries, props.turnState)
   const startedAt = turnStartedAt(props.entries)
-  const lastRoundIndex = rounds.length - 1
 
   /** 与宿主 readUserMessages 一样的正文压法：空白折成一个空格、截前 50 字。 */
   const collapse = (text: string): string => text.replace(/\s+/g, ' ').trim().slice(0, 50)
@@ -420,15 +642,25 @@ export function ChatView(props: {
       <div className="chat" ref={scroller}>
         <div className="chat-inner">
           {props.entries.map((entry, index) => {
-            // 本机评价的键：按「会话:条目」拼，条目 id 只在一条会话内唯一
-            const feedbackKey = `${props.sessionId ?? ''}:${entry.id}`
-            const voteState = feedback[feedbackKey]
             const round = roundAt.get(index)
             // 每轮只在「这一轮的最后一条条目」下面挂页脚。这一轮还在跑（最后一轮）时照片面挂：
-            // 时间与用时先不画（状态行正在报同一份时间），但页脚里的分叉按钮留着——置灰，
+            // 时间与用量先不画（状态行正在报同一份时间），但页脚里的分叉按钮留着——置灰，
             // 用户一眼看得到「这一轮结束时在哪分叉」。还没回复的轮次（answered 为假）不挂。
             const running = live && round !== undefined && round.index === lastRoundIndex
             const foot = round !== undefined && round.endIndex === index && round.answered
+            /**
+             * 这一轮的过程折叠组（见 roundFold）：inFold 说明这条条目归总开关管，
+             * foldHead 说明总开关就画在这一条的位置上（组内第一条）。
+             *
+             * 收起时组内条目一律不渲染（不是藏起来而是根本不画）：各自的展开态、吸附快捷栏
+             * 都跟着一起下线，省掉一整轮的过程 DOM 与它的测量工作。
+             * 但总开关自己所在的那一条例外——开关要留在原位（用户消息正下方）。
+             */
+            const fold = round === undefined ? undefined : roundFold.get(round.index)
+            const inFold =
+              fold !== undefined && fold.foldable && fold.startIndex >= 0 && index >= fold.startIndex && index <= fold.endIndex
+            const foldOpen = inFold && fold !== undefined ? !foldCollapsed(fold) : true
+            const foldHead = inFold && fold !== undefined && index === fold.startIndex
             let node: ReactNode
             switch (entry.kind) {
               case 'user': {
@@ -501,9 +733,10 @@ export function ChatView(props: {
                         entry.text
                       )}
                     </div>
-                    {/* 编辑按钮：只在悬停/键盘聚焦这条消息时浮出（与助手消息底部那条操作条同一套令牌），
+                    {/* 编辑按钮：只在悬停/键盘聚焦这条消息时浮出（与页脚那一排动作同一套令牌），
                         位置在气泡正下方、气泡之外。只读视图（队友运行记录）里 canAct 为假，这颗不渲染。
-                        分叉按钮不在这里——它跟着这一轮的时间行走，见下面 TurnFooter。
+                        复制 / 赞 / 踩 / 分叉都不在这里——它们跟这一轮的用量与时刻一起收进 TurnFooter
+                        （本轮改版），这一块只剩「改这条消息」这件专属于用户消息的事。
                         图标 15px 对齐 dsh 用户那条操作条的图标（MessageIconActions.module.css:80-81），
                         hit area 的 28px 在 styles.css 末尾「对话区修正批」那一段。 */}
                     {!open && canAct && (
@@ -537,41 +770,9 @@ export function ChatView(props: {
                   break
                 }
                 node = (
-                  <div className="entry-text entry-with-meta">
+                  <div className="entry-text">
                     <div className="markdown">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.text}</ReactMarkdown>
-                    </div>
-                    <div className="entry-meta">
-                      <div className="meta-actions">
-                        {/* 三颗图标 17px：dsh 助手消息末尾那条操作条（data-clock='end'）的图标就是
-                            15px + 2px（MessageIconActions.module.css:79-87），行高与 hit area 见
-                            styles.css 末尾「对话区修正批」那一段。 */}
-                        <button
-                          className="meta-btn"
-                          title="复制这条回复的原文"
-                          onClick={() => void navigator.clipboard.writeText(entry.text)}
-                        >
-                          <IconCopy size={17} />
-                        </button>
-                        <button
-                          className={`meta-btn${voteState === 'up' ? ' on' : ''}`}
-                          title="这条回复不错（只记在本机）"
-                          aria-pressed={voteState === 'up'}
-                          onClick={() => vote(feedbackKey, 'up')}
-                        >
-                          <IconThumbUp size={17} />
-                        </button>
-                        <button
-                          className={`meta-btn${voteState === 'down' ? ' on' : ''}`}
-                          title="这条回复不好（只记在本机）"
-                          aria-pressed={voteState === 'down'}
-                          onClick={() => vote(feedbackKey, 'down')}
-                        >
-                          <IconThumbDown size={17} />
-                        </button>
-                      </div>
-                      {/* 用量不在这里了：它跟着这一轮的页脚走（TurnFooter 的最后一项），
-                          贴正文左缘一行读完，不再孤零零顶在对话区右缘。 */}
                     </div>
                   </div>
                 )
@@ -583,11 +784,13 @@ export function ChatView(props: {
                 // storeKey 让展开态活过「整表重建」：换会话再切回来，用户之前展开的还开着
                 // （键里带会话 id，两条会话的条目 id 都从 1 开始也不会串味）。
                 // 直播尾（id<0）不给键：它每一段都是新的，默认展开就是它该有的样子。
+                // showPreview：紧凑档把定稿行的摘要预览收掉（跑动中照显，见 ThinkingBlock）。
                 node = (
                   <ThinkingBlock
                     text={entry.text}
                     live={entry.id < 0}
                     storeKey={foldKey(entry.id, contentOrdinalAt.get(index))}
+                    showPreview={showReasoningPreview}
                   />
                 )
                 break
@@ -606,7 +809,18 @@ export function ChatView(props: {
               default:
                 node = null
             }
-            if (node === null) return null
+            // 收起的整轮里，组内条目根本不渲染（不是用 CSS 藏起来）：它们各自的展开态、
+            // 吸附快捷栏、高度测量一并下线。两种例外要留下：
+            // - 总开关自己所在的那一条（开关要留在原位）；
+            // - 这一轮页脚所在的那一条——一轮以工具结果收尾、没有最终正文时，页脚正好挂在
+            //   组内最后一条上，收起过程不能把复制 / 分叉 / 用量整行也收掉。
+            if (inFold && !foldHead && !foldOpen && !foot) return null
+            if (node === null && !foldHead) return null
+            // 页脚上的复制与评价都按「这一轮的最终回答」算：
+            // - 复制抄最终 text 条目的原文（改版前挂在每条助手消息上的口径不变）；
+            // - 评价还是按「会话:条目」存（键用最终回答那条的 id），改版前点过的赞不会丢。
+            const answer = round === undefined ? undefined : roundAnswer.get(round.index)
+            const feedbackKey = answer === undefined ? undefined : `${props.sessionId ?? ''}:${String(answer.id)}`
             return (
               // data-round 给刻度条命中测试用（第几轮）；display:contents 见 styles.css
               //
@@ -623,13 +837,31 @@ export function ChatView(props: {
               // 退回默认折叠态；改之前那是靠实例复用「碰巧」保住的。这里选跨会话保持展开
               // 这个主场景：它每天都在发生，而往前插历史是低频动作，重挂后重展开一次可以接受。
               <div key={`${props.sessionId ?? ''}:${String(entry.id)}`} className="entry-row" data-round={round?.index}>
-                {node}
+                {/* 总开关行站在组内第一条的位置上：收起时它是这一轮过程区唯一看得见的东西，
+                    展开时它下面接着就是原样的过程条目（对照 dsh TurnProcessNodeView 的位置）。
+                    跑动中的轮**不画这一行**：dsh 那边 turn-process 节点只有轮次收尾（status === 'closed'）
+                    才会渲染（TurnProcessNodeView.tsx:18），整轮展开、压根不给折叠入口——
+                    这样就不会出现「看着能点、点了没反应」的一行。 */}
+                {foldHead && fold !== undefined && !fold.running && round !== undefined && (
+                  <TurnFoldRow open={foldOpen} round={round} onToggle={() => toggleRoundFold(fold.roundIndex)} />
+                )}
+                {foldOpen ? node : null}
                 {foot && round !== undefined && (
                   <TurnFooter
                     round={round}
                     running={running}
-                    // 这一轮正文的估算用量（见 roundTokens）：与时刻、用时同处一行
+                    // 用量两个口径一起给：有宿主上报的真值就用真值（不带 ~），
+                    // 老会话回落这一轮正文的估算（带 ~）。取舍在 TurnFooter 里说明。
+                    usage={roundUsage[round.index] ?? null}
                     tokens={roundTokens[round.index] ?? null}
+                    // 复制的就是这一轮最终回答的原文；一轮以工具结果收尾时没有可复制的正文
+                    copyText={answer?.text}
+                    voteState={feedbackKey === undefined ? undefined : feedback[feedbackKey]}
+                    onVote={
+                      feedbackKey === undefined
+                        ? undefined
+                        : (next) => vote(feedbackKey, next)
+                    }
                     // 只读视图（队友运行记录）不传 proxy/sessionPath，canAct 为假，这里整颗按钮不画
                     onFork={canAct ? forkAt : undefined}
                     // 一轮正在跑时不给分叉（换会话会把这一轮打断），第 1 条之前没有内容也分不出来

@@ -39,6 +39,15 @@ export class Transcript {
   private segments: LiveSegment[] = []
   /** 本会话累计 token 用量。 */
   usage: TokenUsageView = { inputTokens: 0, outputTokens: 0 }
+  /**
+   * 本轮（最近一条用户消息起）累计 token 用量。
+   *
+   * 口径：这一轮里每一次模型请求的 prompt_tokens（含系统提示词与全部上下文）
+   * 与 completion_tokens 全部累加。多步工具轮每次请求都重发整份上下文，
+   * 所以这个和就是本轮真实计费量，界面每轮页脚要显示的就是它。
+   * 收 'user' 事件时清零（新一轮的起点），'usage' 事件累加。
+   */
+  private turnUsage: TokenUsageView = { inputTokens: 0, outputTokens: 0 }
   /** 当前 turn 是否已进入工具执行阶段（驱动 working/thinking 状态区分）。 */
   working = false
   /** 事件驱动的 turn 状态（turn/start→true，turn/end→false；避免依赖 agent 瞬时值）。 */
@@ -95,6 +104,7 @@ export class Transcript {
     this.seq = 1
     this.segments = []
     this.usage = { inputTokens: 0, outputTokens: 0 }
+    this.turnUsage = { inputTokens: 0, outputTokens: 0 }
     this.working = false
     this.inTurn = false
   }
@@ -177,6 +187,40 @@ export class Transcript {
   }
 
   /**
+   * 本轮累计的 `usage` 字段：非零才带。
+   * 为什么零就不带：一次请求都还没回过用量时，硬写 `{0,0}` 会让界面把「还没数」
+   * 当成「这一轮真的一分没花」，而带不带这个字段是能给界面区分的信号。
+   */
+  private turnUsageField(): { usage?: { inputTokens: number; outputTokens: number } } {
+    const { inputTokens, outputTokens } = this.turnUsage
+    if (inputTokens === 0 && outputTokens === 0) return {}
+    return { usage: { inputTokens, outputTokens } }
+  }
+
+  /**
+   * 轮末兜底：把本轮最终累计写到「本轮最后一条能挂 usage 的条目」上。
+   *
+   * 为什么 message 那一刻盖过了还要再写一次：`usage` 事件是在 `message` 之后才发的
+   * （loop.ts 先定稿消息、再报用量），所以 message 那时盖上的累计还差本次请求那一笔。
+   * 收尾时补上，轮内最后一条才是整轮真值——界面取的就是它。
+   *
+   * 为什么往前找而不是只看最后一条：一轮以工具结果收尾时最后一条是 tool 卡（能挂），
+   * 但末尾要是又插了 system 行（错误提示之类），仍该落回上一张能挂的条目，别把数字丢了。
+   * 为什么只认 text/tool：contract.ts 里只有这两种条目有 `usage` 字段。
+   */
+  private stampTurnUsage(): void {
+    if (this.turnUsage.inputTokens === 0 && this.turnUsage.outputTokens === 0) return
+    for (let index = this.list.length - 1; index >= 0; index -= 1) {
+      const entry = this.list[index]
+      if (entry === undefined || entry.kind === 'user') return
+      if (entry.kind === 'text' || entry.kind === 'tool') {
+        this.list[index] = { ...entry, usage: { ...this.turnUsage } }
+        return
+      }
+    }
+  }
+
+  /**
    * 折叠一条 core 事件。
    * @param ts 这条事件的时刻；省略取当前时间（运行中的实时事件都这样）。
    *           重放老会话时显式传 null：条目不带 ts，界面据此降级。
@@ -186,6 +230,9 @@ export class Transcript {
     this.eventTs = ts
     switch (event.type) {
       case 'user': {
+        // 一条用户消息就是新一轮的起点：上一轮的累计不能带进这一轮，
+        // 否则界面会把上一轮花掉的量算到这一轮头上。
+        this.turnUsage = { inputTokens: 0, outputTokens: 0 }
         const last = this.list[this.list.length - 1]
         const imageCount = event.images?.length ?? 0
         const sameAsLast =
@@ -263,6 +310,11 @@ export class Transcript {
           inputTokens: this.usage.inputTokens + event.inputTokens,
           outputTokens: this.usage.outputTokens + event.outputTokens,
         }
+        // 会话总量与本轮累计各记一份：前者给状态栏的会话累计，后者随条目送到界面
+        this.turnUsage = {
+          inputTokens: this.turnUsage.inputTokens + event.inputTokens,
+          outputTokens: this.turnUsage.outputTokens + event.outputTokens,
+        }
         return true
       case 'error':
         this.system(`错误：${event.message}`)
@@ -277,6 +329,7 @@ export class Transcript {
         this.segments = []
         this.working = false
         this.inTurn = false
+        this.stampTurnUsage()
         return true
       }
       default:
@@ -296,15 +349,23 @@ export class Transcript {
     }
   }
 
-  /** 定稿文本：合并进相邻的最后一个 text 条目。 */
+  /**
+   * 定稿文本：合并进相邻的最后一个 text 条目。
+   * 顺带盖本轮累计 usage：同一轮里后一条 message 覆盖前一条的累计值（累计在涨），
+   * 界面取轮内最后一条 text 就是整轮消耗。
+   */
   private pushAssistantText(text: string): void {
     const last = this.list[this.list.length - 1]
     if (last !== undefined && last.kind === 'text') {
       // 合并时刷新时间：这条条目最后一次写入就是现在，界面按它算这一轮何时结束
-      this.list[this.list.length - 1] = this.stamp({ ...last, text: `${last.text}\n${text}` })
+      this.list[this.list.length - 1] = this.stamp({
+        ...last,
+        text: `${last.text}\n${text}`,
+        ...this.turnUsageField(),
+      })
       return
     }
-    this.list.push(this.stamp({ kind: 'text', id: this.seq++, text }))
+    this.list.push(this.stamp({ kind: 'text', id: this.seq++, text, ...this.turnUsageField() }))
   }
 
   /** 定稿思考：合并进相邻的最后一个 thinking 条目（折叠展示）。 */

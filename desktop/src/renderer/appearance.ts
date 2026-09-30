@@ -6,10 +6,10 @@
  * 设置画出颜色，等 prefs 到了再用真值覆盖一次。
  * 主题色还要额外报给主进程一次：原生窗口控件区不归样式表管，见 pushWindowChrome。
  */
-import type { ThemeMode, UiDensity, UiFontSize, UiPrefsView } from '@dsc/runtime/contract.js'
+import type { ThemeMode, UiDensity, UiFontSize, UiPrefsView, UiProcessFold } from '@dsc/runtime/contract.js'
 import { dsc } from './bridge.js'
 
-export type { ThemeMode, UiDensity, UiFontSize }
+export type { ThemeMode, UiDensity, UiFontSize, UiProcessFold }
 
 /** 字号倍率的可调范围；与 src/core/prefs.ts 读档时的夹取范围一致，改这里要两边一起改。 */
 export const FONT_SCALE_MIN = 0.85
@@ -86,6 +86,20 @@ export function normalizeButtonScale(value: unknown): number {
 }
 
 /**
+ * 把外部来的过程折叠程度归一成三档之一。
+ *
+ * 认不出的值（老宿主没这一项、手改坏的字符串、null）一律回落 `standard`——与宿主
+ * core/prefs.ts 的 readProcessFold 同一张表、同一个默认值，改这里要两边一起改。
+ * 首帧的 localStorage 镜像与宿主回读值都先过这里，所以最多是档位不对，不会画出空屏。
+ *
+ * @param value 任意来源的过程折叠程度
+ * @returns 可以直接交给 ChatView 的档位
+ */
+export function normalizeProcessFold(value: unknown): UiProcessFold {
+  return value === 'compact' || value === 'detailed' ? value : 'standard'
+}
+
+/**
  * 只改按钮大小时用：把倍率写到 `<html>` 的内联 `--dsc-btn-scale` 上。
  *
  * 设置页滑杆在拖动过程中走这里做即时预览（松手才落盘），正式生效仍走
@@ -110,7 +124,8 @@ export function normalizeUiPrefs(prefs: UiPrefsView): UiPrefsView {
   return {
     ...prefs,
     fontSize: normalizeFontScale(prefs.fontSize),
-    buttonScale: normalizeButtonScale(prefs.buttonScale)
+    buttonScale: normalizeButtonScale(prefs.buttonScale),
+    processFold: normalizeProcessFold(prefs.processFold)
   }
 }
 

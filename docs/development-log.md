@@ -462,3 +462,21 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 **事故与教训**：一个子智能体自检时用 `$home` 当临时目录变量名——PowerShell 里 `$HOME` 是只读自动变量，赋值静默失败，后续写入落到真实 `~/.dsc`：settings.json 被覆盖（按桌面端 localStorage 镜像证据修回外观三项）、一个活动会话 jsonl 被换成 31 字节路径文本（内容不可恢复）。整改：自检脚本模板统一改用自命名变量（`$shotHome` 等）并加「跑前跑后对真实目录全量指纹比对」为固定验收项，本轮各组均已执行（135→186 文件逐个 SHA256）。另记：隔离新目录必须先建 `AppData\Roaming`，否则 Chromium 在 app ready 前直接崩（0x80000003、零输出）。
 
 验收：根 + 桌面 typecheck/build 0 错误；sandbox 193/0、file-review 59+9/0、approval-floor 95/0、integration/m5/modes 四项 ask 相关检查全过；ask 批量化端到端 33 条断言全 PASS（同卡 3 题、翻页草稿保留、统一提交回显按题序且各一次、单题不回归）；流式滚动改前 200ms 被拽回、改后 gap 420→552 冻结 + 两条恢复路径实证；折叠修复改前 `expandedSurvived=false` 改后 true。诚实边界：modes-shots 两条检查需真模型且不隔离 HOME（会写真实目录），本轮未跑，与用户在场时补；dsh 的提问卡最小化/关闭按钮没有做（AskService 无取消通道，做了是假按钮）；自由输入仍单行。发布：`muse-code-0.6.2.tgz` + `dist/win-unpacked`。
+
+---
+
+## 阶段 19：审批语义、整轮折叠与真实用量（0.6.3）
+
+0.6.2 交付后用户实测反馈 3 条（自动编辑下只读 bash 仍弹卡 / 会话折叠与 dsh「完全不同」/ 脚注图标跑右边 + tok 口径不对）。主控先把三处现状读到根上、写成审阅稿经用户逐条裁决后才派工：三个并行子智能体（deepseek v4.1 flash）分两批（宿主两件并行 → 渲染层一件），渲染层改动集中在 ChatView/styles.css，合并给一个代理避免互相覆盖。
+
+| 决策 | 理由 |
+| --- | --- |
+| 弹卡的根因是只读命令名单缺 PowerShell 管道段，不是模式逻辑错 | `classifyCommand` 按管道分段判定，`Get-ChildItem` 在名单里但 `Select-Object`/`Format-Table` 不在，一段不认识整条判 ask；`READONLY_HEADS` 补 20 项纯展示 cmdlet 与别名，**故意不收** `ForEach-Object`/`%`（scriptblock 能执行任意代码，`Get-ChildItem \| ForEach-Object { Remove-Item $_ }` 头只读、刀在花括号里）与 `Tee-Object`/`Out-File`（落盘且不走 `>` 重定向防线） |
+| 「仅查看」档从一刀切拒改成读类放行 | 原实现连纯只读命令都拒，与「只读：读放行」的字面语义相悖；在拒绝前先认 `classifyCommand` 判成 allow 的命令 |
+| 会话折叠补上 dsh 的第一层：整轮过程总开关 | dsh 的 `foldCompletedTurns`（presentation-policy.ts）是把**整轮**思考+工具行收进一行「用时 X」总开关，收起只剩问题→开关→回答；此前 0.6.2 做的只是第二层（单条折叠）。跑动轮强制展开且不画开关（对齐 `TurnProcessNodeView` 的 `status!=='closed'→null`）；plan/system 不进组；展开态键 `会话:turn:轮序号`；轮收尾自动复位成收起 |
+| 过程折叠程度做成三档设置进通用设置 | 用户点名「学 dsh 加折叠程度设置项」：紧凑（整轮折叠 + 定稿思考不显摘要预览，对应 dsh `settledReasoningPreview:false`）/ 标准（默认）/ 详细（不折叠）。偏好链路照 buttonScale 先例抄全：prefs 白名单 + runtime 回执校验，漏一层就出「已保存工作区名字」假提示 |
+| tok 从字数估算换成真实累计口径 | 宿主每次请求本就拿到 `prompt_tokens+completion_tokens`（llm.ts 末块 usage）但从未暴露；transcript 按轮记账：'user' 清零、'usage' 累加、'message' 盖当时累计、'turn/end' 用最终累计**覆盖**轮内最后一条——因为 loop 先发 message 后发 usage，按「已有就跳过」会系统性少算末次请求；`plugins/transcript` 的 `shape()` 比对剔除 usage，否则 `replayIsRedundant` 永判 false 导致重放丢数 + id 重发号。页脚真值显示「用量 N tok」，老会话回落估算保留 `~` |
+| 脚注合成一条左对齐行，顺序照 dsh | 复制·赞·踩·分叉·用量·时刻（dsh `MessageIconActions` 是行内条不是右缘浮层）；「用时」收进整行悬停提示（dsh 行面不显示）；复制/赞/踩从 `.entry-meta`（写死 flex-end）搬进 TurnFooter，旧规则整块删除 |
+| 顺带修「思考过程」竖排字 | `.think-label` 缺 `flex:none`/`white-space:nowrap`，`.think-summary` 的 `flex:1` 吃光余量后标题被压成一列汉字 |
+
+验收：根 + 桌面 typecheck/build 0 错误；sandbox 193/0、file-review 59+9/0、approval-floor 95/0、modes-security 172/0（新增 13 条：管道筛选格式化判 allow、`ForEach-Object`/`Tee-Object` 不判只读）、integration 104/0（新增 5 条：仅查看档真内核裁决）、transcript 用量 13/0（新建脚本，仓库原无 transcript 测试）、compact 53/0、整轮折叠探针 65/65、隔离截图自检 38/38（含紧凑档摘要消失、隔离 settings.json 真被写成 detailed、实时轮页脚「用量 330 tok」为真值不带 `~`）；三个真实 `~/.dsc` 指纹比对全部零改动。诚实边界：命令 tokenizer 不解析子表达式括号，`Get-Item (Remove-Item x)` 这类「头只读、括号里带刀」仍判 allow（既有风险面，收口另立阶段）；「plan 不折叠」只有产物断言没有截图用例（种子造不出 plan 条目）；分叉图标保留 15px 与复制/赞/踩的 17px 并存；页脚动作从 hover 浮出改为常驻（对齐 dsh 收尾轮）；浅色主题与 reduced-motion 只写了样式降级。发布：`muse-code-0.6.3.tgz` + `dist/win-unpacked`。
