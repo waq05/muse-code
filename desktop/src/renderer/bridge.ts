@@ -29,6 +29,23 @@ import type {
   UsageStatsView,
 } from '@dsc/runtime/contract.js'
 
+/**
+ * 会话用量投影：壳进程读 `~/.dsc/usage/usage.jsonl` 后按会话 id 汇总的结果。
+ *
+ * 形状与 `electron/main/session-usage.ts` 里的 SessionUsageView 一致：
+ * 渲染层与壳进程分属两个 tsconfig 子项目（web / node），类型文件互相看不到，
+ * 只能各写一份；改一边记得改另一边。
+ */
+export interface SessionUsageView {
+  /** 这个会话的模型请求条数。 */
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  /** 最后一次请求的输入 token = 当前上下文占用（服务端真值）。 */
+  lastInputTokens: number
+  lastAt: number
+}
+
 export interface DscBridge {
   invoke(method: string, args?: unknown[]): Promise<unknown>
   onSnapshot(listener: (snapshot: RuntimeSnapshot) => void): () => void
@@ -42,6 +59,8 @@ export interface DscBridge {
   switchCwd(path: string): Promise<{ ok: true; cwd: string } | { ok: false; error: string }>
   /** 最近用过的工作目录（最新的排最前）。 */
   recentCwds(): Promise<string[]>
+  /** 当前会话的累计用量（底部状态栏第二段与上下文卡的数据源；只读）。 */
+  sessionUsage(sessionId: string): Promise<SessionUsageView | null>
   installPlugin(): Promise<string[]>
   /** 技能导入（系统选择器 → 复制进 ~/.dsc/skills/）；返回技能名列表。 */
   installSkill(): Promise<string[]>

@@ -16,6 +16,7 @@ import { Composer } from './Composer.js'
 import { Dock } from './Dock.js'
 import { PluginsView } from './PluginsView.js'
 import { SessionPicker } from './SessionPicker.js'
+import { isSessionMarker } from './session-marker.js'
 import { SettingsModal } from './SettingsModal.js'
 import { Sidebar } from './Sidebar.js'
 import { SkillsView } from './SkillsView.js'
@@ -340,6 +341,9 @@ export function App(): JSX.Element {
   // 空态 = 没有任何用户/回复/工具条目（宿主预写的 system 提示行随欢迎态一起显示）
   const empty =
     !snapshot.entries.some((entry) => entry.kind !== 'system') && snapshot.status.turnState === 'idle'
+  // 状态栏第三段（上下文占用）要知道当前模型的窗口：在 listModels 里按模型名认领，
+  // 认不到（清单还没回来 / 模型被换掉）就是 null，那一段整个不画，不猜一个数出来。
+  const contextWindow = models.find((choice) => choice.model === snapshot.status.model)?.contextWindow ?? null
   // /resume 选择器只列还在活动区的会话：归档会话的恢复入口在设置 → 归档，
   // 侧栏那份列表才是按「筛选会话」把两区混在一起看的地方。
   const resumable = snapshot.sessions.filter((session) => session.archivedAt === undefined)
@@ -420,12 +424,12 @@ export function App(): JSX.Element {
               onInstall={installPlugin}
               onRestartHost={restartHost}
             />
-            <StatusBar status={snapshot.status} />
+            <StatusBar status={snapshot.status} entries={snapshot.entries} contextWindow={contextWindow} />
           </>
         ) : view === 'skills' ? (
           <>
             <SkillsView proxy={proxy} />
-            <StatusBar status={snapshot.status} />
+            <StatusBar status={snapshot.status} entries={snapshot.entries} contextWindow={contextWindow} />
           </>
         ) : (
           <>
@@ -493,7 +497,11 @@ export function App(): JSX.Element {
               ) : empty ? (
                 <Welcome systemEntries={snapshot.entries.filter((entry) => entry.kind === 'system')} />
               ) : (
-                <ChatView entries={snapshot.entries as TranscriptEntry[]} turnState={snapshot.status.turnState} />
+                <ChatView
+                  entries={snapshot.entries as TranscriptEntry[]}
+                  turnState={snapshot.status.turnState}
+                  sessionId={snapshot.status.sessionId}
+                />
               )}
 
               <div className="composer-zone">
@@ -563,7 +571,7 @@ export function App(): JSX.Element {
               ) : null}
             </div>
 
-            <StatusBar status={snapshot.status} />
+            <StatusBar status={snapshot.status} entries={snapshot.entries} contextWindow={contextWindow} />
           </>
         )}
       </div>
@@ -594,16 +602,17 @@ export function App(): JSX.Element {
   )
 }
 
-/** 空会话欢迎态：居中品牌 + 引导文案 + 宿主预写的 system 提示行。 */
+/** 空会话欢迎态：居中引导文案 + 宿主预写的 system 提示行。 */
 function Welcome({ systemEntries }: { systemEntries: { id: number; text: string }[] }): JSX.Element {
+  // 开场那条「会话 x · 模型 y」不画：它已经在状态栏第一段的悬浮提示里（见 session-marker.ts）。
+  const notes = systemEntries.filter((entry) => !isSessionMarker(entry.text))
   return (
     <div className="welcome">
-      <div className="welcome-mark">MC</div>
       <h1>有什么可以帮忙的？</h1>
       <p>
         输入 <code>/</code> 查看可用指令 · 消息会携带当前工作目录上下文
       </p>
-      {systemEntries.map((entry) => (
+      {notes.map((entry) => (
         <div key={entry.id} className="welcome-note">
           {entry.text}
         </div>

@@ -424,3 +424,48 @@ export function IconQueue(props: IconProps): JSX.Element {
     props,
   )
 }
+
+/** 轮次（圆环 + 中心点）：状态栏第一段「N 轮 M 步」。 */
+export function IconActivity(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="3" />
+    </>,
+    props,
+  )
+}
+
+/** 累计用量（数据库柱体）：状态栏第二段「N tok」。 */
+export function IconDatabase(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <ellipse cx="12" cy="6" rx="7.5" ry="3" />
+      <path d="M4.5 6v12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6" />
+      <path d="M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3" />
+    </>,
+    props,
+  )
+}
+
+/** 赞（拇指向上）：消息底部的本机评价。 */
+export function IconThumbUp(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M7 10.5 10.8 3.6a2 2 0 0 1 2.7 2.5L12.6 9.6h4.9a1.8 1.8 0 0 1 1.74 2.28l-1.3 5.2A2 2 0 0 1 16 18.6H7" />
+      <rect x="3.4" y="10.5" width="3.6" height="8.1" rx="1" />
+    </>,
+    props,
+  )
+}
+
+/** 踩（拇指向下）：同一对评价的否定那半。 */
+export function IconThumbDown(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M17 13.5 13.2 20.4a2 2 0 0 1-2.7-2.5l.9-3.5H6.5a1.8 1.8 0 0 1-1.74-2.28l1.3-5.2A2 2 0 0 1 8 5.4h9" />
+      <rect x="17" y="5.4" width="3.6" height="8.1" rx="1" />
+    </>,
+    props,
+  )
+}

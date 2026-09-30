@@ -657,8 +657,8 @@ textarea.ctl {
 /* 对话框遮罩与卡片 */
 .dsc-overlay {
   align-items: center;
-  backdrop-filter: blur(8px);
-  background: color-mix(in srgb, #000 40%, transparent);
+  backdrop-filter: blur(var(--dsc-scrim-blur));
+  background: var(--dsc-scrim);
   display: grid;
   inset: 0;
   justify-items: center;

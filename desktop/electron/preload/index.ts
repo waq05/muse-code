@@ -5,6 +5,7 @@
  * @module desktop/preload
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import type { SessionUsageView } from '../main/session-usage.js'
 
 const api = {
   /** 调用 DscRuntime 方法（宿主侧白名单校验）。 */
@@ -64,6 +65,11 @@ const api = {
   /** 最近用过的工作目录（最新的排最前）。 */
   recentCwds(): Promise<string[]> {
     return ipcRenderer.invoke('dsc:recent-cwds')
+  },
+
+  /** 当前会话在宿主用量日志里的累计（只读；这个会话没有记录时为 null）。 */
+  sessionUsage(sessionId: string): Promise<SessionUsageView | null> {
+    return ipcRenderer.invoke('dsc:session-usage', sessionId) as Promise<SessionUsageView | null>
   },
 
   /** 系统文件选择器挑选 .js 插件并复制到 ~/.dsc/plugins/；返回复制的文件名列表。 */

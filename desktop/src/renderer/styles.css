@@ -19,6 +19,31 @@
   height: 100%;
 }
 
+/* 补齐「还没迁到原语的那批视图类」的 hover 过渡。
+ *
+ * 为什么写在这一处：原语层（.dsc-btn / .dsc-row 等）自己带着 100ms 过渡，
+ * 但这批列表行、轻按钮是在原语层之前就写好的，只有 hover 规则、没有过渡，
+ * 鼠标扫过去底色是「啪」地跳一下。逐个补要改十几处，改成一条共用声明后
+ * 节奏只有一个来源；写在文件最顶部，后面任何一条自己的 transition 都会盖住它。 */
+.drop-tail,
+.fork-item,
+.sidebar-footer .row-btn,
+.trace-think > summary,
+.plugin-more,
+.file-row,
+.picker .row,
+.skills-tabs button,
+.model-chip,
+.attach-remove,
+.arch-row,
+.task-clear,
+.goal-btn {
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease),
+    border-color var(--dsc-dur) var(--dsc-ease);
+}
+
 /* ══════════ 侧栏 ══════════ */
 
 .sidebar {
@@ -31,8 +56,9 @@
   /* 收起/展开时让宽度过渡一下。拖动中由 body.resizing 关掉它，
      否则手柄会永远比鼠标慢半拍。 */
   transition: width var(--dsc-dur) var(--dsc-ease);
-  /* 侧栏右边只留一道 7.5% 的发丝线：这里靠边框分界，不靠阴影。 */
-  border-right: 1px solid color-mix(in srgb, var(--dsc-base) 7.5%, transparent);
+  /* 侧栏右边只留一道发丝线：这里靠边框分界，不靠阴影。颜色走全站唯一那条
+     分隔线令牌（--dsc-stroke-3），好跟顶栏、聊天流里的线保持同一个色。 */
+  border-right: 1px solid var(--dsc-stroke-3);
 }
 
 /* 右边界拖拽调宽：9px 热区压在 1px 分界线上（往两侧各伸 4px），
@@ -152,32 +178,34 @@
   -webkit-app-region: no-drag;
 }
 
-/* 侧栏唯一的主行动。软填充 + 内描边，不用 border，避免 hover 时字被挤走。
-   尺寸对照 dsh 的大号新会话钮（38px 高、8px 圆角），刻意不入行高/圆角阶梯——
-   它是侧栏唯一放大档的主行动，跟着行高缩放会缩成普通行。 */
+/* 侧栏唯一的主行动：对照 hermes 的「New session」——它就是列表里的第一行
+   （同样的行高、同样的 hover 底色、行首一枚小图标），不是一块带描边的浅蓝大砖。
+   所以这里跟 .nav-item 共用几何，只留两处区别：图标走品牌色、文字走一级色，
+   让它在整列灰字里仍然是那一下。 */
 .btn-new {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin: 8px 10px calc(var(--dsc-sp-2) * var(--dsc-density));
-  min-height: 38px;
-  padding: 4px 10px;
-  border-radius: var(--dsc-r-overlay);
-  background: var(--dsc-fill-quaternary);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsc-stroke-2) 60%, transparent);
-  font-size: var(--dsc-fs-ui-lg);
-  font-weight: 500;
+  gap: var(--dsc-row-gap);
+  /* 左右各 8px：跟下面 .sidebar-nav 的内距同值，行首的「+」才和技能/插件两行的
+     图标落在同一列上（原来这一块是 10px，比它们多缩 2px）。 */
+  margin: 8px 8px calc(var(--dsc-sp-2) * var(--dsc-density));
+  min-height: var(--dsc-row-h);
+  padding-inline: var(--dsc-row-pad-x);
+  border-radius: var(--dsc-r-control);
   color: var(--dsc-text-primary);
-  transition: background var(--dsc-dur) var(--dsc-ease);
+  font-size: var(--dsc-fs-body);
+  text-align: left;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .btn-new:hover {
-  background: var(--dsc-control-hover-bg);
+  background: var(--dsc-row-hover-bg);
 }
 
 .btn-new svg {
-  color: var(--dsc-text-secondary);
+  color: var(--dsc-accent);
   height: 15px;
   width: 15px;
 }
@@ -378,6 +406,7 @@
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-caption);
   text-align: left;
+  transition: color var(--dsc-dur) var(--dsc-ease);
 }
 
 .expand-link:hover {
@@ -552,10 +581,16 @@
   outline: none;
 }
 
-/* 截图钩子（?reveal=1）：把 hover 才出现的行内按钮常驻，便于留证 */
+/* 截图钩子（?reveal=1）：把 hover 才出现的行内按钮常驻，便于留证。
+   消息操作条只提不透明度、不动 display：它是一条两端对齐的横栏，
+   换成 inline-flex 会让右边的用量缩到正文末尾，拍出来的构图就不是真的。 */
 .shot-reveal .row-actions,
 .shot-reveal .group-row .grip {
   display: inline-flex;
+}
+
+.shot-reveal .entry-meta {
+  opacity: 1;
 }
 
 .pin-mark {
@@ -583,6 +618,10 @@
   z-index: var(--dsc-z-menu);
 }
 
+/* 侧栏/顶栏的行菜单。浮起来这件事跟原语 .dsc-pop 用同一套做法
+   （弹层底色 + 发丝边 + shadow-md），圆角同一档；以前这里用 shadow-float
+   （浮层那一档更重的阴影）+ 3px 与 4px 两种圆角，于是同一个应用里
+   「⋯ 菜单」和别处的菜单不是一个长相。 */
 .row-menu {
   position: absolute;
   top: calc(100% - 2px);
@@ -591,26 +630,34 @@
   min-width: 190px;
   padding: 4px;
   border: 1px solid var(--dsc-stroke-2);
-  border-radius: var(--dsc-r-icon);
-  background: var(--dsc-bg-card);
-  box-shadow: var(--dsc-shadow-float);
+  border-radius: var(--dsc-r-badge);
+  background: var(--dsc-bg-popover);
+  /* 弹层底色带 4% 透明，配一层模糊才不会透出下面的字（跟原语 .dsc-pop 一致）。 */
+  backdrop-filter: blur(12px);
+  box-shadow: var(--dsc-shadow-md);
 }
 
+/* 菜单行：几何跟着原语 .dsc-menu__item 走（4px 8px 内距、2.5px 圆角、
+   选中态用控件底色）。以前这里自己一套（6px 内距、6px 圆角、行 hover 底色），
+   同一个应用里两种菜单行高度差 4px。 */
 .menu-item {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 8px;
-  border-radius: var(--dsc-r-row);
+  padding: 4px 8px;
+  border-radius: var(--dsc-r-control);
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
   text-align: left;
   white-space: nowrap;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .menu-item:hover {
-  background: var(--dsc-row-hover-bg);
+  background: var(--dsc-control-active-bg);
   color: var(--dsc-text-primary);
 }
 
@@ -885,7 +932,7 @@
 
 /* 顶栏两行（对照 dsh）：标题一行，对话/轨迹页签一行，分界线压在页签行下沿。 */
 .topbar {
-  border-bottom: 1px solid color-mix(in srgb, var(--dsc-base) 7.5%, transparent);
+  border-bottom: 1px solid var(--dsc-stroke-3);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -967,21 +1014,6 @@
   justify-content: center;
   gap: 6px;
   padding-bottom: 8vh;
-}
-
-.welcome-mark {
-  width: 52px;
-  height: 52px;
-  display: grid;
-  place-items: center;
-  /* 品牌方块是首屏的固定视觉锚点：圆角与字号按 52px 方块定死，不随字号/密度缩放，故不入阶梯。 */
-  border-radius: 16px;
-  background: linear-gradient(135deg, #4d6bfe, #7a5cff);
-  color: #fff;
-  font-size: 19px;
-  font-weight: 800;
-  margin-bottom: 14px;
-  box-shadow: 0 8px 30px color-mix(in srgb, var(--dsc-accent) 25%, transparent);
 }
 
 .welcome h1 {
@@ -1139,18 +1171,27 @@
   margin: 1em 0;
 }
 
-/* 消息操作条：hover 出现 */
+/* 消息操作条：hover 或键盘聚焦时出现。左边一排小图标按钮，右边这条回复的用量
+   （对照 dsh 每条消息底部那行），中间留白把两者顶到两端。 */
 .entry-meta {
   align-items: center;
   display: flex;
   gap: 6px;
+  justify-content: space-between;
   margin-top: 2px;
   opacity: 0;
   transition: opacity var(--dsc-dur) var(--dsc-ease);
 }
 
-.entry-with-meta:hover .entry-meta {
+.entry-with-meta:hover .entry-meta,
+.entry-with-meta:focus-within .entry-meta {
   opacity: 1;
+}
+
+.entry-meta .meta-actions {
+  align-items: center;
+  display: flex;
+  gap: 2px;
 }
 
 .entry-meta .meta-btn {
@@ -1159,13 +1200,27 @@
   color: var(--dsc-text-tertiary);
   display: inline-flex;
   font-size: var(--dsc-fs-ui);
-  gap: 5px;
-  padding: 2px 6px;
+  padding: 3px 5px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .entry-meta .meta-btn:hover {
   background: var(--dsc-control-hover-bg);
   color: var(--dsc-text-primary);
+}
+
+/* 点过的评价常亮：不然切一次页回来就看不出自己点没点过 */
+.entry-meta .meta-btn.on {
+  background: var(--dsc-control-active-bg);
+  color: var(--dsc-accent);
+}
+
+.entry-meta .meta-usage {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
 }
 
 .entry-system {
@@ -1419,6 +1474,7 @@
   list-style: none;
   min-height: var(--dsc-row-h);
   padding: 0 10px;
+  transition: color var(--dsc-dur) var(--dsc-ease);
   user-select: none;
 }
 
@@ -1563,8 +1619,8 @@
 }
 
 .approval.risk-high {
-  background: color-mix(in srgb, var(--dsc-red, #e5534b) 10%, transparent);
-  border-color: color-mix(in srgb, var(--dsc-red, #e5534b) 55%, transparent);
+  background: color-mix(in srgb, var(--dsc-red) 10%, transparent);
+  border-color: color-mix(in srgb, var(--dsc-red) 55%, transparent);
 }
 
 .approval-head {
@@ -1580,14 +1636,14 @@
 }
 
 .risk-badge {
-  border-radius: 999px;
+  border-radius: var(--dsc-r-pill);
   font-size: var(--dsc-fs-ui);
   padding: 1px 7px;
 }
 
 .risk-badge.tone-low {
-  background: color-mix(in srgb, var(--dsc-green, #4ac26b) 18%, transparent);
-  color: var(--dsc-green, #4ac26b);
+  background: color-mix(in srgb, var(--dsc-green) 18%, transparent);
+  color: var(--dsc-green);
 }
 
 .risk-badge.tone-medium {
@@ -1596,8 +1652,8 @@
 }
 
 .risk-badge.tone-high {
-  background: color-mix(in srgb, var(--dsc-red, #e5534b) 22%, transparent);
-  color: var(--dsc-red, #e5534b);
+  background: color-mix(in srgb, var(--dsc-red) 22%, transparent);
+  color: var(--dsc-red);
 }
 
 .approval-mode {
@@ -1623,7 +1679,7 @@
 }
 
 .approval-hardline {
-  color: var(--dsc-red, #e5534b);
+  color: var(--dsc-red);
 }
 
 .approval-actions {
@@ -1634,17 +1690,17 @@
 
 .approval-actions kbd {
   border: 1px solid var(--dsc-stroke-2);
-  border-radius: 4px;
+  border-radius: var(--dsc-r-badge);
   color: var(--dsc-text-tertiary);
   font-family: var(--dsc-font-mono);
-  font-size: 10px;
+  font-size: var(--dsc-fs-label);
   margin-left: 5px;
   padding: 0 3px;
 }
 
 .approval-actions .btn.danger {
-  border-color: color-mix(in srgb, var(--dsc-red, #e5534b) 50%, transparent);
-  color: var(--dsc-red, #e5534b);
+  border-color: color-mix(in srgb, var(--dsc-red) 50%, transparent);
+  color: var(--dsc-red);
 }
 
 .approval .hint {
@@ -1728,9 +1784,11 @@
 }
 
 .completions .item {
+  border-radius: var(--dsc-r-control);
   cursor: pointer;
   min-height: var(--dsc-row-h);
   padding: 5px 12px;
+  transition: background var(--dsc-dur) var(--dsc-ease);
 }
 
 .completions .item .label {
@@ -1874,8 +1932,9 @@
   flex-direction: column;
   padding: 12px;
   border: 1px solid var(--dsc-stroke-2);
-  /* 320px 宽的模型浮层独有的大圆角，全站就这一处，属一次性几何值，不入阶梯。 */
-  border-radius: 14px;
+  /* 跟状态栏那张上下文卡、会话选择面板同一档圆角（浮层那一档）。
+     以前这里是全站唯一的 14px，同一个输入区上下弹出的两张卡圆角差一倍。 */
+  border-radius: var(--dsc-r-overlay);
   background: var(--dsc-bg-popover);
   box-shadow: var(--dsc-shadow-float);
   z-index: var(--dsc-z-menu);
@@ -1912,7 +1971,12 @@
   border: 1px solid var(--dsc-stroke-2);
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
-  transition: all var(--dsc-dur) var(--dsc-ease);
+  /* 指名要过渡的属性，不用 transition: all：全量过渡会把 border-color 之外的
+     布局属性也拖进动画，浮层里连点几档时会看到文字跟着抖。 */
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    border-color var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .effort-btn:hover {
@@ -2143,7 +2207,11 @@
   white-space: nowrap;
 }
 
-/* 开关（对照 dsh 的 toggle） */
+/* 开关（对照 dsh 的 toggle）。
+   滑块用文字一级色而不是写死 #fff：浅色主题下滑块是深色、深色主题下是浅色，
+   两边都能从这个灰底的轨道上看清（以前写死白色，浅色主题里滑块几乎糊在轨道上）。
+   关态给轨道补一圈发丝内描边，开态去掉——那圈线压在品牌色上会显脏。
+   这两条都跟 hermes 的开关一个做法（apps/desktop/src/components/ui/switch.tsx:8,23）。 */
 .switch {
   position: relative;
   flex-shrink: 0;
@@ -2151,7 +2219,10 @@
   height: 22px;
   border-radius: var(--dsc-r-pill);
   background: var(--dsc-row-active-bg);
-  transition: background var(--dsc-dur) var(--dsc-ease);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsc-base) 10%, transparent);
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    box-shadow var(--dsc-dur) var(--dsc-ease);
 }
 
 .switch::after {
@@ -2162,15 +2233,20 @@
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #fff;
-  transition: transform var(--dsc-dur) var(--dsc-ease);
+  background: var(--dsc-text-primary);
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 30%, transparent);
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    transform var(--dsc-dur) var(--dsc-ease);
 }
 
 .switch.on {
   background: var(--dsc-accent);
+  box-shadow: none;
 }
 
 .switch.on::after {
+  background: var(--dsc-text-on-accent);
   transform: translateX(18px);
 }
 
@@ -2692,7 +2768,8 @@ body.resizing iframe {
 }
 
 /* ══════════ 状态栏 ══════════ */
-/* 状态栏只借文字颜色分段，不做底色条，也不占高度预算。 */
+/* 状态栏只借文字颜色分段，不做底色条，也不占高度预算。
+   三段对照 dsh：轮次/步数与输出速度 · 累计用量 · 上下文占用（悬浮出详情卡）。 */
 .statusbar {
   align-items: center;
   color: var(--dsc-text-quaternary);
@@ -2701,12 +2778,22 @@ body.resizing iframe {
   font-size: var(--dsc-fs-tool);
   font-variant-numeric: tabular-nums;
   justify-content: center;
-  padding: 3px 20px 5px;
+  /* 左右内距跟正文列、输入区同一个 24px：状态栏虽然居中，但窗口收窄到
+     贴边时，三处留给窗口的余量得是同一个数。 */
+  padding: 3px 24px 5px;
 }
 
 .statusbar .segments {
   align-items: center;
   display: flex;
+}
+
+.statusbar .segment {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  /* 第三段的悬浮卡以这一段为定位基准 */
+  position: relative;
 }
 
 .statusbar .segment:not(:first-child)::before {
@@ -2715,20 +2802,165 @@ body.resizing iframe {
   margin: 0 8px;
 }
 
-.statusbar .state-working,
-.statusbar .state-thinking {
+/* 段首的小图标：颜色跟着这一段走，状态色只染图标，不把整段文字染蓝 */
+.statusbar .seg-icon {
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+}
+
+.statusbar .seg-icon.state-working,
+.statusbar .seg-icon.state-thinking {
   color: var(--dsc-accent);
 }
 
-.statusbar .state-awaiting-approval {
+.statusbar .seg-icon.state-awaiting-approval {
   color: var(--dsc-yellow);
+}
+
+/* 速度那截压暗半档，让「N 轮 M 步」稳坐这一段的主信息 */
+.statusbar .seg-dim {
+  opacity: 0.85;
+}
+
+/* 第三段：圆环 + 百分比，悬浮（或键盘聚焦）弹出上下文详情卡 */
+.statusbar .ctx-trigger {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: inherit;
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px 5px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.statusbar .ctx-trigger:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-secondary);
+}
+
+/* 焦点环跟其余控件一个长相（3px 品牌色 50% 的环）。以前这里是 1px 实描边，
+   状态栏里唯一一处细环，键盘走到第三段时看着像另一个控件的残影。 */
+.statusbar .ctx-trigger:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
+  outline: none;
+}
+
+/* 详情卡向上弹（状态栏贴着窗口底边），右边对齐到这一段，窗口窄时也不会被裁掉 */
+.ctx-card {
+  background: var(--dsc-bg-popover);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-overlay);
+  bottom: calc(100% + 6px);
+  box-shadow: var(--dsc-shadow-float);
+  color: var(--dsc-text-secondary);
+  display: grid;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+  opacity: 0;
+  padding: 10px 12px;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  transition: opacity var(--dsc-dur) var(--dsc-ease), visibility var(--dsc-dur) var(--dsc-ease);
+  visibility: hidden;
+  width: 272px;
+  z-index: var(--dsc-z-menu);
+}
+
+.statusbar .seg-context:hover .ctx-card,
+.statusbar .seg-context:focus-within .ctx-card {
+  opacity: 1;
+  visibility: visible;
+}
+
+.ctx-head {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.ctx-title {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-ui);
+}
+
+.ctx-numbers {
+  color: var(--dsc-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 进度条：整条轨道 = 整个上下文窗口，填充 = 已用；已用里面再按两段构成上色 */
+.ctx-bar {
+  background: var(--dsc-fill-quaternary);
+  border-radius: var(--dsc-r-pill);
+  display: flex;
+  height: 5px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.ctx-bar-fill {
+  background: var(--dsc-accent);
+  border-radius: var(--dsc-r-pill);
+}
+
+.ctx-bar-base {
+  background: var(--dsc-purple);
+  border-radius: var(--dsc-r-pill);
+}
+
+/* 构成分解：色块图例 + 名称 + 估算值，每行一段 */
+.ctx-legend {
+  display: grid;
+  gap: 4px;
+}
+
+.ctx-legend-row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.ctx-dot {
+  border-radius: var(--dsc-r-badge);
+  display: block;
+  flex-shrink: 0;
+  height: 8px;
+  width: 8px;
+}
+
+.ctx-dot-messages {
+  background: var(--dsc-accent);
+}
+
+.ctx-dot-base {
+  background: var(--dsc-purple);
+}
+
+.ctx-legend-value {
+  color: var(--dsc-text-primary);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+/* 卡脚注：说清这些数是估的还是服务端真值——不写清就成了编数据 */
+.ctx-note {
+  border-top: 1px solid var(--dsc-stroke-4);
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
+  line-height: 1.5;
+  padding-top: 8px;
 }
 
 /* ══════════ 会话选择 overlay（/resume） ══════════ */
 
 .overlay {
   align-items: center;
-  background: rgb(0 0 0 / 55%);
+  background: var(--dsc-scrim);
+  backdrop-filter: blur(var(--dsc-scrim-blur));
   display: flex;
   inset: 0;
   justify-content: center;
@@ -3177,7 +3409,10 @@ body.resizing iframe {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgb(0 0 0 / 55%);
+  /* 遮罩走全站唯一那条令牌 + 同一档模糊：以前这里是 55% 不带模糊，
+     而确认框是 40% 带模糊，开不同的框压暗程度不一样。 */
+  background: var(--dsc-scrim);
+  backdrop-filter: blur(var(--dsc-scrim-blur));
 }
 
 .settings {
@@ -3186,7 +3421,9 @@ body.resizing iframe {
   height: min(680px, calc(100vh - 72px));
   overflow: hidden;
   border: 1px solid var(--dsc-stroke-2);
-  border-radius: var(--dsc-r-block);
+  /* 对话框统一用浮层那一档圆角：以前这里是 5px，而确认框是 8px，
+     同样一张「浮在应用上的大卡」两个角。 */
+  border-radius: var(--dsc-r-overlay);
   background: var(--dsc-bg-card);
   box-shadow: var(--dsc-shadow-md);
 }
@@ -3220,6 +3457,9 @@ body.resizing iframe {
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-body);
   text-align: left;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .settings-nav-item:hover {
@@ -3227,8 +3467,10 @@ body.resizing iframe {
   color: var(--dsc-text-primary);
 }
 
+/* 选中态跟侧栏的 .nav-item.on / .rail-btn.on 用同一档底色：全站「我在这一页」
+   只该有一个长相（以前这里是 11% 品牌色填充，比别处重一档）。 */
 .settings-nav-item.on {
-  background: var(--dsc-fill-secondary);
+  background: var(--dsc-row-active-bg);
   color: var(--dsc-text-primary);
 }
 
@@ -4375,7 +4617,7 @@ body.resizing iframe {
 }
 
 .hm-cell {
-  border-radius: 2.5px;
+  border-radius: var(--dsc-r-control);
   display: block;
   height: 10px;
   width: 10px;
@@ -4553,7 +4795,7 @@ body.resizing iframe {
 
 /* ── 任务清单条（输入框上方常驻，折叠时只给进度与在做的那一步） ── */
 .task-dock {
-  background: var(--dsc-bg-raised, color-mix(in srgb, var(--dsc-bg-surface) 70%, transparent));
+  background: var(--dsc-bg-raised);
   border: 1px solid var(--dsc-stroke-1);
   border-radius: var(--dsc-r-block);
   display: flex;
@@ -4590,14 +4832,14 @@ body.resizing iframe {
 
 .task-progress {
   background: var(--dsc-stroke-2);
-  border-radius: 999px;
+  border-radius: var(--dsc-r-pill);
   flex: 0 0 90px;
   height: 4px;
   overflow: hidden;
 }
 
 .task-progress-fill {
-  background: var(--dsc-green, #4ac26b);
+  background: var(--dsc-green);
   display: block;
   height: 100%;
 }
@@ -4670,8 +4912,8 @@ body.resizing iframe {
 /* ── 目标条 ── */
 .goal-bar {
   align-items: center;
-  background: color-mix(in srgb, var(--dsc-accent, #7c5cff) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--dsc-accent, #7c5cff) 35%, transparent);
+  background: color-mix(in srgb, var(--dsc-accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dsc-accent) 35%, transparent);
   border-radius: var(--dsc-r-block);
   display: flex;
   gap: 8px;
@@ -4682,7 +4924,7 @@ body.resizing iframe {
 }
 
 .goal-bar.phase-blocked {
-  border-color: color-mix(in srgb, var(--dsc-red, #e5534b) 45%, transparent);
+  border-color: color-mix(in srgb, var(--dsc-red) 45%, transparent);
 }
 
 .goal-bar.phase-paused,
@@ -4691,7 +4933,7 @@ body.resizing iframe {
 }
 
 .goal-label {
-  color: var(--dsc-accent, #7c5cff);
+  color: var(--dsc-accent);
   flex: 0 0 auto;
   font-size: var(--dsc-fs-label);
   font-weight: 700;
@@ -4734,8 +4976,8 @@ body.resizing iframe {
 
 /* ── 计划卡 ── */
 .plan-card {
-  background: var(--dsc-bg-raised, color-mix(in srgb, var(--dsc-bg-surface) 70%, transparent));
-  border: 1px solid color-mix(in srgb, var(--dsc-accent, #7c5cff) 40%, transparent);
+  background: var(--dsc-bg-raised);
+  border: 1px solid color-mix(in srgb, var(--dsc-accent) 40%, transparent);
   border-radius: var(--dsc-r-block);
   display: flex;
   flex-direction: column;
@@ -4763,7 +5005,7 @@ body.resizing iframe {
 }
 
 .plan-verdict {
-  color: var(--dsc-accent, #7c5cff);
+  color: var(--dsc-accent);
   font-size: var(--dsc-fs-ui);
   margin-left: auto;
 }
@@ -4800,7 +5042,7 @@ body.resizing iframe {
 
 /* ── 模型提问卡 ── */
 .ask-card {
-  background: var(--dsc-bg-raised, color-mix(in srgb, var(--dsc-bg-surface) 70%, transparent));
+  background: var(--dsc-bg-raised);
   border: 1px solid var(--dsc-stroke-2);
   border-radius: var(--dsc-r-block);
   display: flex;
@@ -4841,11 +5083,15 @@ body.resizing iframe {
   gap: 2px;
   padding: 6px 10px;
   text-align: left;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    border-color var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .ask-option:hover,
 .ask-option.picked {
-  border-color: var(--dsc-accent, #7c5cff);
+  border-color: var(--dsc-accent);
   color: var(--dsc-text-primary);
 }
 
@@ -4876,11 +5122,15 @@ body.resizing iframe {
 
 /* ── 协作模式按钮（输入框底栏，与权限模式并排的两根独立旋钮） ── */
 .mode-btn.mode-plan {
-  color: var(--dsc-accent, #7c5cff);
+  color: var(--dsc-accent);
 }
 
+/* 探索模式原来写的是 var(--dsc-blue, #4a9eff)：--dsc-blue 这个令牌从来没定义过，
+   所以它永远落回那个硬编码蓝——浅色主题下也照用深色主题的蓝（白底上对比度不够），
+   而且跟上面计划模式的品牌蓝几乎分不出来。改用系统里已有的紫色：两个模式一眼可分，
+   深浅主题各有自己的那一档。 */
 .mode-btn.mode-explore {
-  color: var(--dsc-blue, #4a9eff);
+  color: var(--dsc-purple);
 }
 
 .mode-btn.mode-quiet {

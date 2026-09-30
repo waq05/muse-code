@@ -260,6 +260,14 @@
     0 36px 48px -28px color-mix(in srgb, #000 0%, transparent);
   --dsc-shadow-composer: 0 1px 2px color-mix(in srgb, #000 5%, transparent);
 
+  /* ── 模态遮罩：设置面板、会话选择、确认框共用这一档 ──
+     以前三处各写一个值（设置面板 55% 不带模糊、确认框 40% 带模糊），
+     于是开不同的框看到的压暗程度不一样。hermes 那边只有一套遮罩
+     （apps/desktop/src/components/ui/dialog.tsx:36 的 bg-black/22 + 2px 模糊）；
+     dsc 没有窗口玻璃那层底色衬着，所以取 40% 比它重一点，深浅主题同值。 */
+  --dsc-scrim: color-mix(in srgb, #000 40%, transparent);
+  --dsc-scrim-blur: 8px;
+
   /* ── 浮层层级：谁的层次由这个阶梯说，不许在组件里写裸 z-index。
      组件内部自己的前后叠压照旧用 z-index: 1/2。── */
   --dsc-z-dock: 20;

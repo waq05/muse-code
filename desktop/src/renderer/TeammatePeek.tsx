@@ -45,7 +45,12 @@ export function TeammatePeek(props: {
       {props.entries.length === 0 ? (
         <div className="peek-empty">该队友还没有产生运行记录。</div>
       ) : (
-        <ChatView entries={props.entries} turnState={teammate.state === 'working' ? 'thinking' : 'idle'} />
+        <ChatView
+          entries={props.entries}
+          turnState={teammate.state === 'working' ? 'thinking' : 'idle'}
+          // 队友的记录不是当前会话：拿它的日志文件当评价键，和自己的会话不会撞
+          sessionId={teammate.file}
+        />
       )}
     </div>
   )

@@ -15,6 +15,7 @@ import type { NativeImage } from 'electron'
 import { HostProtocol } from './protocol.js'
 import { registerDockIpc } from './dock.js'
 import { readState, resolveHeadlessEntry, writeState } from './dsc-core.js'
+import { readSessionUsage } from './session-usage.js'
 
 let mainWindow: BrowserWindow | null = null
 let protocol: HostProtocol | null = null
@@ -258,6 +259,10 @@ function registerIpc(): void {
 
   // 最近用过的工作目录（侧栏切换菜单与「有会话的目录」合并成候选清单）
   ipcMain.handle('dsc:recent-cwds', (): string[] => readState().recentCwds ?? [])
+
+  // 当前会话的累计用量（底部状态栏第二段与上下文悬浮卡的数据源）。
+  // 只读宿主写的用量日志，按会话 id 汇总；没有记录时返回 null，由渲染层省略那两段。
+  ipcMain.handle('dsc:session-usage', (_event, sessionId: unknown) => readSessionUsage(String(sessionId ?? '')))
 
   // 选择 .js 插件文件并复制到 ~/.dsc/plugins/；返回复制的文件名（取消返回 []）
   ipcMain.handle('dsc:plugins-install', async () => {
