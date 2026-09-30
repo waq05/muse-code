@@ -32,8 +32,10 @@ export const transcriptPlugin: Plugin.Object = {
     }
 
     ctx.on('dsc/changed', () => invalidate())
-    ctx.on('dsc/notice', (text) => {
-      transcript.system(text)
+    // 第二个参数是通知的类别：'compaction' = 「历史刚被压缩」的落点（compact 插件发）。
+    // 本插件认这个类别给条目打压缩标记；不认识的类别按普通通知处理。
+    ctx.on('dsc/notice', (text, kind) => {
+      transcript.system(text, kind === 'compaction')
       invalidate()
     })
     ctx.on('dsc/plan', (plan) => {
@@ -144,6 +146,15 @@ export const transcriptPlugin: Plugin.Object = {
  * 两份条目表的「内容」是否一致：`id`（每次重建都从 1 重新发号）、`ts`（同一份历史
  * 重放两次时刻会差几毫秒）与 `usage`（本轮累计 token，重放历史时造不出来——会话日志
  * 只存消息、不存每次请求的用量）都不算内容，其余字段逐个比。
+ *
+ * 工具卡里的 `startedAt` / `durationMs` 同样剔掉，理由比 usage 还硬：实时路径记的是
+ * 「事件到达宿主那一刻」，重放路径记的是「消息落盘那一刻」，同一件事两边差几毫秒，
+ * 留着比必然不等——`replayIsRedundant` 于是永远判 false，重复打开同一条会话每次都
+ * 整表重建、条目 id 从头重发，渲染层按 key 对账就会把折叠态与直播尾一起抹掉。
+ *
+ * 压缩标记 `compaction` 不剔：它由条目正文推出来（摘要的 SUMMARY_BANNER 前缀、通知的
+ * 类别），两条路径算出的值必然相同，属于「内容」而不是「现场测出来的量」。
+ *
  * 为什么用 JSON 字符串比而不是逐字段写：条目是纯数据、没有函数与循环引用，
  * 序列化顺序由同一段代码产出，键序天然一致；逐字段写要跟着 contract 的六种条目改，
  * 加一个字段就会静静漏比。
@@ -162,6 +173,13 @@ function shape(entries: readonly TranscriptEntry[]): string {
       delete rest['id']
       delete rest['ts']
       delete rest['usage']
+      // startedAt / durationMs 嵌在工具卡的 call 里而不是条目顶层，所以得进 call 再删
+      if (entry.kind === 'tool') {
+        const call: Record<string, unknown> = { ...(rest['call'] as Record<string, unknown>) }
+        delete call['startedAt']
+        delete call['durationMs']
+        rest['call'] = call
+      }
       return rest
     }),
   )

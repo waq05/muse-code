@@ -488,3 +488,19 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 0.6.3 交付后用户先要求去掉「回到底部」按钮，随即改口：按钮保留，真正的问题是**贴底时滚轮轻滑一格就弹按钮**——一格滚轮约 100px，旧判定离底超过 32px 就暂停，天然会误触发；且 `onWheel` 是无条件暂停，内容一屏装得下时滚轮上滑也会弹。处理：先回退未提交的删按钮改动（`git checkout` + 删掉探针里 3 条退场断言），再引入双阈值滞回——`PAUSE_EPS = 120`（大于一格滚轮的行程）暂停、`AT_BOTTOM_EPS = 32`（复用 JumpStrip 的导出）恢复，区间 (32, 120] 内跟随中不动、暂停中不闪；`onWheel` 改成预估落点离底超 120 才抢先暂停（防回弹的原始理由照留），`onWheel`/`onTouchMove` 补 `maxScroll <= 0` 早退。派发任务书里的落点公式 `scrollTop - deltaY` 方向写反了（向上滚 deltaY 为负），子代理按判据本身改成离底距离 `limit - scrollTop - deltaY`，物理正确——**给子代理的数值公式要自己先推一遍方向**。
 
 验收：根 + 桌面 typecheck/build 0 错误；fold-check 65/65；产物探针：按钮 JSX 与 `PAUSE_EPS = 120` 声明及三处使用在位，数值推演（贴底单格 100px 不暂停、两格抢先暂停、离底 60px 滞留、20px 恢复、limit≤0 不暂停）全部符合。发布：`muse-code-0.6.4.tgz` + `dist/win-unpacked`。
+
+---
+
+## 阶段 21：轨迹页对标 dsh（0.6.5）
+
+用户要求轨迹机制功能对标 dsh（ui-trajectory 包）。主控先出差距清单经用户裁决：TTFT/每 token 时间戳（宿主没记，不加埋点做不了真值）、嵌套子工具内部步骤、虚拟化+加载更早分页这三项明确出圈；远程控制插件（用户同批提出）经可行性调查确认 **npm 包直接装不可行**——`@linxin666/dsh-web-all/remote-web-ui` 真身是 `@linxin666/dsh-remote-web-ui`，双面 cordis 插件深度绑定 dsh 基建（`dsh web` webserver/profile/cordis.patch.yml/auth fence/`ctx.layout`/`/api` SDK），而 dsc 无 Web 通道（Electron 渲染层 + preload IPC），用户裁决先只做轨迹，远程控制待议。
+
+| 决策 | 理由 |
+| --- | --- |
+| 工具耗时进 ToolCallView（startedAt/durationMs） | transcript 在 tool/result 时 stamp() 覆盖条目 ts，开始时间丢失——检查器与时间条都没原料；done/failed/rejected 都算耗时（中断同样花了时间），日志乱序（结果早于发起）宁缺不编 |
+| 压缩识别选「字段标记」而不是新条目 kind | 压缩落两条路：实时是 system 条目（dsc/notice），重放只有摘要那条 user 消息（system 条目不进日志，replayHistory 只重放 messages）——稳定标记是摘要正文的 SUMMARY_BANNER 前缀，adapter 认掉后给 user/system 条目盖 `compaction:{count}`；换新 kind 会让摘要气泡当场从对话页和终端消失（`default:` 不渲染），数据任务不能顺手制造信息丢失 |
+| shape() 比对剔除新字段照 usage 先例 | 否则 replayIsRedundant 永判 false：重放丢数 + id 重发号；反证验证过（注释掉 delete 后第 8 组立刻 FAIL） |
+| 时间条诚实口径：没耗时的只画起点刻度 | dsh 同款语义——thinking/system/running 的行不虚构宽度，有 durationMs 的工具才投影成条；刻度一律 2px，「条 vs 刻度」一眼分得清有没有真耗时 |
+| 渲染层崩在截图环节由主控接手验完 | 子代理留下约 1900 行完整代码（探针 85/85 已过）；主控复跑发现一处**真组件 bug**：检查器输入块 Block 内部又调了一次 prettyMaybeJson，父组件切回原文的单行参数被二次美化，「格式化/原文」开关切不回去——格式化决策必须只留一处；另三处 false（tick 数写死 5、带图消息在 round 3 却开了 round 2、内容不够滚 400px）全是探针/种子的锅 |
+
+验收：根 + 桌面 typecheck/build 0 错误；sandbox 193/0、file-review 59+9/0、approval-floor 95/0、modes-security 全过、integration 全过、transcript-usage 全过、trace-data 25 项全过、composer 全过、compact 53/0、轨迹探针 85/85；隔离截图自检（dark+light 双主题）全部布尔旗标通过——时间条投影（63s 条宽 ≈ 4.2s 条 15 倍）、进行中调用只有刻度没有耗时格、失败红/被拒琥珀双色、检查器五段（输入/输出/计时/用量/附件）、格式化开关真切换、复制参数回执、附件缩略图 132px + 灯箱开合、压缩区段行「已压缩历史 · 第 1 次」、拖选聚焦（命中 3 条、暗淡 12 条、点选/右键两种清除）、回底跟随（内容不足 150px 可滚时持住判定如实跳过）；真实 `~/.dsc` 指纹零改动。诚实边界：滚动持住用例因种子内容不足一屏没量到（逻辑与 ChatView 同款、代码已核），真实长会话里再验；拖选聚焦用 chip 的「已选 1m30s · 3 步」表达，不改动对话页。发布：`muse-code-0.6.5.tgz` + `dist/win-unpacked`。

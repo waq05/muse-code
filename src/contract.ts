@@ -163,6 +163,53 @@ export interface ToolCallView {
   /** 工具结果文本（可能为空：无结果或尚未完成）。 */
   resultText?: string
   status: ToolStatus
+  /**
+   * 这次调用发起的时刻（epoch ms）：宿主收到 `tool/call` 那一刻。
+   *
+   * 为什么不复用条目上的 `ts`：`ts` 的口径是「这条条目最后一次被写入的时刻」，
+   * 拿到结果时会被刷成结果时刻（见 adapter/transcript.ts 的 `tool/result` 分支），
+   * 光凭它算不出这次调用从头到尾花了多久。发起时刻因此单独存一份，只写一次不再改。
+   *
+   * 为什么是可选的：2026-09 之前的会话日志没记时间，重放老会话时拿不到——
+   * 界面据此不显示耗时，绝不拿「现在」冒充历史时刻。
+   */
+  startedAt?: number
+  /**
+   * 这次调用从发起到结果回来花掉的毫秒数（结果到达时刻 − `startedAt`）。
+   *
+   * 口径：`done` / `failed` / `rejected` 一视同仁都算——跑挂了、被审批拒掉、用户中途
+   * 打断的工具调用同样占用了这段时间，轨迹页的时间线要如实显示。只有还停在 `running`
+   * （结果没回来）时才没有这个数。
+   *
+   * 为什么是可选的：① 老会话没有 `startedAt`，算不出来；② 日志时间乱序（手改过、
+   * 跨机器拷过）导致结果时刻早于发起时刻时也不写——宁可让界面不显示，也不编一个 0 秒。
+   */
+  durationMs?: number
+}
+
+/**
+ * 压缩落点标记：条目带上它，就说明「从这一刻起，模型看到的历史已经是压缩后的」。
+ * 轨迹页据此把压缩历史渲染成独立区段（对照 dsh 的 Between turns），不必去猜正文。
+ *
+ * `count` = 本会话累计到这一条为止发生过的压缩次数（也就是「第几次压缩」），1 基。
+ * 为什么用次数而不是「折进去多少条消息」：实时路径算得出条数，但会话日志里只记了
+ * 保留了多少条（见 core/session.ts 的 `replaceWithSummary`，只写 `keep`），重放时
+ * 反推不回来——同一个字段两条路径给不出同一个口径，索性不带。
+ *
+ * 压缩有两个落点，各自留在原本的 kind 上：
+ * - 实时：compact 插件经 `dsc/notice(text, 'compaction')` 写下的 **system** 条目；
+ * - 重放：摘要自己在内存里就是一条 `role: 'user'` 的消息（core/compact.ts 造的），
+ *   正文固定以 `SUMMARY_BANNER` 开头，adapter 靠这个前缀把它认出来，仍是 **user** 条目。
+ *   没有换成专属 kind，是因为「对话」页现在把摘要当用户气泡渲染——换 kind 会让摘要
+ *   正文当场从对话页和终端界面消失。
+ *
+ * 老会话（日志里只有那条摘要消息）重放照样认得出，只是日志里只留最后一条摘要
+ * （core/session.ts 的 `case 'summary'` 会把更早的记录换掉），所以重放路径的 `count`
+ * 永远是 1。
+ */
+export interface CompactionMark {
+  /** 本会话里这是第几次压缩，1 基。 */
+  count: number
 }
 
 /**
@@ -185,8 +232,11 @@ export interface ToolCallView {
  * ② 重放历史日志造不出这个数——会话日志只存消息，不存每次请求的用量。
  */
 export type TranscriptEntry =
-  /** images 是 data URL 清单（用户贴进来的图）；界面渲染成缩略图。 */
-  | { kind: 'user'; id: number; text: string; images?: string[]; ts?: number }
+  /**
+   * images 是 data URL 清单（用户贴进来的图）；界面渲染成缩略图。
+   * `compaction` 只出现在重放出来的压缩摘要上（见 {@link CompactionMark}）。
+   */
+  | { kind: 'user'; id: number; text: string; images?: string[]; ts?: number; compaction?: CompactionMark }
   | { kind: 'thinking'; id: number; text: string; ts?: number }
   /** usage 是整轮累计口径，见本类型头部的说明。 */
   | { kind: 'text'; id: number; text: string; ts?: number; usage?: { inputTokens: number; outputTokens: number } }
@@ -194,7 +244,8 @@ export type TranscriptEntry =
   | { kind: 'tool'; id: number; call: ToolCallView; ts?: number; usage?: { inputTokens: number; outputTokens: number } }
   /** 计划卡：exit_plan_mode 交上来的计划，带用户批没批。 */
   | { kind: 'plan'; id: number; plan: PlanView; ts?: number }
-  | { kind: 'system'; id: number; text: string; ts?: number }
+  /** `compaction` 只出现在压缩插件写下的那条通知上（见 {@link CompactionMark}）。 */
+  | { kind: 'system'; id: number; text: string; ts?: number; compaction?: CompactionMark }
 
 /** 会话累计 token 用量。 */
 export interface TokenUsageView {

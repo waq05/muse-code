@@ -830,7 +830,13 @@ declare module '@deepseek-ai/cordis' {
 
   interface Events {
     'dsc/changed'(): void
-    'dsc/notice'(text: string): void
+    /**
+     * 请求写一条 system 条目（transcript 监听）。
+     * @param kind - 通知的类别；`'compaction'` = 这条通知是「历史刚被压缩」的落点，
+     *               transcript 会给这条条目打上压缩标记（轨迹页据此切区段），
+     *               省略 = 普通通知（错误、状态说明这类）。
+     */
+    'dsc/notice'(text: string, kind?: 'compaction'): void
     /** 计划卡内容或评审结果有变（plan 插件发出，transcript 折叠成会话流里的计划条目）。 */
     'dsc/plan'(plan: PlanView): void
     'dsc/session-open'(payload: SessionOpenPayload): void

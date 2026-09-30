@@ -6583,3 +6583,650 @@ body.resizing iframe {
 }
 
 
+
+/* ══════════ 轨迹页对标 dsh 改版 ══════════
+   这一整段只服务轨迹页（TraceView / TraceTimeline / TraceInspector），别的界面一行没动：
+     1. 时间概览条（sticky 在记录表上方）：有耗时的工具画有宽度的条，其余只画起点刻度；
+     2. 轮次记录表：轮头一行 + 行内元信息（时刻 / 耗时 / 用量）+ 打开检查器的入口；
+     3. 压缩区段行「已压缩历史 · 第 N 次」：轮与轮之间的一条分隔行；
+     4. 检查器：右侧滑出面板 + 遮罩 + 贴图放大浮层。
+   颜色一律走现有令牌（--dsc-text-* / --dsc-stroke-* / --dsc-fill-* / --dsc-r-*），
+   语义色也只沿用工具卡那套配方（红 68% / 黄 74% 与 --dsc-base 混），不写死十六进制。 */
+
+/* 外层：记录表（自己滚）与检查器（浮层）共用一层定位上下文。 */
+.trace-page {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.trace-page > .chat {
+  min-width: 0;
+}
+
+/* ── 时间概览条 ──
+   固定高度 44px（需求给的 36~48px 档），sticky 贴在滚动区顶端；底色必须不透明，
+   否则滚过去的记录会从条底透出来。::before 补上 .chat 顶部那 12px 内距的缝——
+   与工具卡吸附快捷栏（.tc-bar.stuck）补缝是同一个原因、同一个高度。 */
+.trace-timeline {
+  background: var(--dsc-bg-page);
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-card);
+  box-sizing: border-box;
+  flex: none;
+  height: calc(44px * var(--dsc-density));
+  margin-bottom: calc(8px * var(--dsc-density));
+  padding: 5px 10px 0;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.trace-timeline::before {
+  background: var(--dsc-bg-page);
+  bottom: 100%;
+  content: '';
+  height: 12px;
+  left: 0;
+  position: absolute;
+  right: 0;
+}
+
+.trace-timeline.is-empty {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  padding: 0 10px;
+}
+
+.ttl-head {
+  align-items: center;
+  display: flex;
+  gap: var(--dsc-sp-3);
+  height: 16px;
+}
+
+.ttl-title {
+  color: var(--dsc-text-quaternary);
+  flex-shrink: 0;
+  font-size: var(--dsc-fs-micro);
+  letter-spacing: var(--dsc-label-track);
+  text-transform: var(--dsc-label-case);
+}
+
+.ttl-range,
+.ttl-note {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 选中区间的读数与清除入口：顶到行尾，不占轨道。 */
+.ttl-chip {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid color-mix(in srgb, var(--dsc-accent) 40%, transparent);
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-accent-text);
+  font-size: var(--dsc-fs-micro);
+  margin-left: auto;
+  padding: 1px 8px;
+}
+
+.ttl-chip:hover {
+  background: var(--dsc-control-hover-bg);
+}
+
+.ttl-chip:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
+  outline: none;
+}
+
+/* 轨道：中间一条基线，标记浮在它上面。touch-action: none 让拖选不触发页面滚动。 */
+.ttl-track {
+  cursor: crosshair;
+  height: 14px;
+  margin-top: 4px;
+  position: relative;
+  touch-action: none;
+}
+
+.ttl-track::after {
+  background: var(--dsc-stroke-3);
+  content: '';
+  height: 1px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* 只画起点刻度：宽 2px 是「一根刻度线」的线宽，不是耗时投影出来的宽度。 */
+.ttl-tick {
+  background: var(--dsc-text-quaternary);
+  border-radius: var(--dsc-r-pill);
+  height: 10px;
+  margin-left: -1px;
+  position: absolute;
+  top: 2px;
+  width: 2px;
+}
+
+.ttl-tick.kind-thinking {
+  background: color-mix(in srgb, var(--dsc-purple) 72%, transparent);
+}
+
+.ttl-tick.kind-plan {
+  background: color-mix(in srgb, var(--dsc-cyan) 72%, transparent);
+}
+
+/* 有耗时的工具：宽度的来源只有 durationMs，没有第二个来源。 */
+.ttl-bar {
+  background: color-mix(in srgb, var(--dsc-accent) 62%, transparent);
+  border-radius: var(--dsc-r-pill);
+  height: 8px;
+  min-width: 2px;
+  position: absolute;
+  top: 3px;
+}
+
+.ttl-bar.kind-tool:hover {
+  background: var(--dsc-accent);
+}
+
+/* 轮次边界：一条贯穿轨道的竖刻度。 */
+.ttl-sep {
+  background: var(--dsc-stroke-2);
+  bottom: 0;
+  position: absolute;
+  top: 0;
+  width: 1px;
+}
+
+/* 拖选出来的区间：淡蓝底 + 两条边，压在标记之上（pointer-events: none 免得挡住悬停）。 */
+.ttl-sel {
+  background: color-mix(in srgb, var(--dsc-accent) 16%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--dsc-accent) 55%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--dsc-accent) 55%, transparent);
+  bottom: -2px;
+  pointer-events: none;
+  position: absolute;
+  top: -2px;
+}
+
+/* 悬停提示（500ms 延迟后才渲染）：往轨道**下方**弹——往上会被滚动容器裁掉。 */
+.ttl-tip {
+  background: var(--dsc-bg-popover);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-block);
+  box-shadow: var(--dsc-shadow-float);
+  color: var(--dsc-text-secondary);
+  display: flex;
+  flex-direction: column;
+  font-size: var(--dsc-fs-micro);
+  gap: 1px;
+  max-width: 240px;
+  padding: 4px 8px;
+  pointer-events: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: var(--dsc-z-menu);
+}
+
+.ttl-tip b {
+  color: var(--dsc-text-primary);
+  font-family: var(--dsc-font-mono);
+  font-weight: 600;
+}
+
+/* ── 轮次记录表：轮头一行 + 打开用户消息检查器的入口 ── */
+.round-line {
+  align-items: center;
+  display: flex;
+  gap: 2px;
+}
+
+.round-line .round-head {
+  flex: 1;
+  min-width: 0;
+}
+
+.round-attach,
+.round-tok {
+  color: var(--dsc-text-quaternary);
+  flex-shrink: 0;
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+}
+
+.round-open {
+  align-items: center;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+  flex-shrink: 0;
+  height: var(--dsc-ctl-sm);
+  justify-content: center;
+  width: var(--dsc-ctl-sm);
+}
+
+.round-open:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-secondary);
+}
+
+.round-open:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
+  outline: none;
+}
+
+/* ── 一条步骤：左内容 + 右行内元信息 ──
+   元信息常驻（低一档的灰），悬停 / 命中 / 打开检查器时提亮：急着看数的时候不用先找位置。 */
+.trace-step {
+  align-items: flex-start;
+  border-radius: var(--dsc-r-control);
+  display: flex;
+  gap: var(--dsc-sp-2);
+}
+
+.trace-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.trace-meta {
+  align-items: center;
+  color: var(--dsc-text-quaternary);
+  display: flex;
+  flex-shrink: 0;
+  font-size: var(--dsc-fs-micro);
+  font-variant-numeric: tabular-nums;
+  gap: var(--dsc-sp-3);
+  min-height: var(--dsc-row-h);
+  white-space: nowrap;
+}
+
+.trace-step:hover .trace-meta,
+.trace-step.is-hit .trace-meta,
+.trace-step.is-inspecting .trace-meta {
+  color: var(--dsc-text-tertiary);
+}
+
+.tmeta-dur {
+  font-family: var(--dsc-font-mono);
+}
+
+/* 失败 / 被拒：ToolCard 的 status 位已经用颜色说过一次「怎么了」，这里不重复那个词，
+   改把这一行的时刻与耗时染成同一套语义色——扫时间列时一眼看得见哪几条不对劲。 */
+.trace-step[data-status='failed'] .tmeta-clock,
+.trace-step[data-status='failed'] .tmeta-dur {
+  color: color-mix(in srgb, var(--dsc-red) 68%, var(--dsc-base));
+}
+
+.trace-step[data-status='rejected'] .tmeta-clock,
+.trace-step[data-status='rejected'] .tmeta-dur {
+  color: color-mix(in srgb, var(--dsc-yellow) 74%, var(--dsc-base));
+}
+
+.tmeta-open {
+  align-items: center;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+  height: var(--dsc-ctl-sm);
+  justify-content: center;
+  width: var(--dsc-ctl-sm);
+}
+
+.tmeta-open:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-secondary);
+}
+
+.tmeta-open:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
+  outline: none;
+}
+
+/* 时间条拖选后的聚焦：命中的行加一条左侧强调线，未命中的压暗（不删、不藏）。 */
+.trace-step.is-hit {
+  background: color-mix(in srgb, var(--dsc-accent) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--dsc-accent);
+}
+
+.trace-step.is-dim {
+  opacity: 0.32;
+}
+
+.trace-step.is-inspecting {
+  background: var(--dsc-row-active-bg);
+}
+
+/* 计划卡：轨迹页原本把它渲染成一个空行（只有圆点没有内容），这里补一行可读的摘要。 */
+.trace-plan {
+  align-items: center;
+  color: var(--dsc-text-tertiary);
+  display: flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+  min-height: var(--dsc-row-h);
+  overflow: hidden;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.trace-plan .plan-title {
+  color: var(--dsc-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trace-plan .plan-file {
+  color: var(--dsc-text-quaternary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  margin-left: auto;
+}
+
+/* 聚焦读数的那颗小标（统计条里）。 */
+.trace-focus-chip {
+  border: 1px solid color-mix(in srgb, var(--dsc-accent) 40%, transparent);
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-accent-text);
+  padding: 0 8px;
+}
+
+/* ── 压缩区段行：轮与轮之间的独立区段（对照 dsh 的 Between turns）──
+   两侧拉出等长的分隔线、中间一枚胶囊标签，与普通步骤行（左侧时间线圆点）明显不同。 */
+.trace-compact {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  margin: calc(10px * var(--dsc-density)) 0;
+  padding: 0 4px;
+}
+
+.trace-compact-rule {
+  background: var(--dsc-stroke-3);
+  flex: 1;
+  height: 1px;
+}
+
+.trace-compact-tag {
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-text-quaternary);
+  flex-shrink: 0;
+  font-size: var(--dsc-fs-micro);
+  letter-spacing: 0.05em;
+  padding: 2px 10px;
+}
+
+/* ── 检查器：右侧滑出面板 + 遮罩 ──
+   面板贴 .trace-page 的右缘（记录表那一层），不跟着内容滚：关掉它记录表还在原位。 */
+.trace-scrim {
+  animation: trace-fade var(--dsc-dur-slow) var(--dsc-ease);
+  background: var(--dsc-scrim);
+  inset: 0;
+  position: absolute;
+  z-index: var(--dsc-z-menu);
+}
+
+.trace-inspector {
+  animation: trace-slide-in var(--dsc-dur-slow) var(--dsc-ease);
+  background: var(--dsc-bg-card);
+  border-left: 1px solid var(--dsc-stroke-2);
+  bottom: 0;
+  box-shadow: var(--dsc-shadow-float);
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: min(420px, 46%);
+  z-index: calc(var(--dsc-z-menu) + 1);
+}
+
+@keyframes trace-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes trace-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.ti-head {
+  align-items: center;
+  border-bottom: 1px solid var(--dsc-stroke-3);
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.ti-kind {
+  color: var(--dsc-accent-text);
+  flex-shrink: 0;
+  font-size: var(--dsc-fs-micro);
+  letter-spacing: var(--dsc-label-track);
+  text-transform: var(--dsc-label-case);
+}
+
+.ti-title {
+  color: var(--dsc-text-secondary);
+  flex: 1;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ti-close {
+  align-items: center;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-tertiary);
+  display: inline-flex;
+  flex-shrink: 0;
+  height: var(--dsc-ctl-sm);
+  justify-content: center;
+  width: var(--dsc-ctl-sm);
+}
+
+.ti-close:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.ti-close:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
+  outline: none;
+}
+
+.ti-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: calc(12px * var(--dsc-density));
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.ti-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ti-sec-head {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.ti-label {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
+  letter-spacing: var(--dsc-label-track);
+  text-transform: var(--dsc-label-case);
+}
+
+.ti-tools {
+  display: flex;
+  gap: var(--dsc-sp-1);
+  margin-left: auto;
+}
+
+.ti-btn {
+  align-items: center;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  display: inline-flex;
+  font-size: var(--dsc-fs-micro);
+  gap: var(--dsc-sp-1);
+  height: var(--dsc-ctl-sm);
+  padding: 0 8px;
+}
+
+.ti-btn:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.ti-btn:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
+  outline: none;
+}
+
+/* 当前是美化态时给开关一个「已打开」的样子，免得点了看不出变化。 */
+.ti-btn[data-state='pretty'] {
+  border-color: color-mix(in srgb, var(--dsc-accent) 40%, transparent);
+  color: var(--dsc-accent-text);
+}
+
+.ti-code {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-block);
+  color: var(--dsc-text-secondary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-code);
+  line-height: 1.6;
+  margin: 0;
+  max-height: calc(var(--dsc-tool-detail-max-h) * 1.6);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+}
+
+.ti-empty {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+}
+
+.ti-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+}
+
+.ti-fact {
+  display: flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+}
+
+.ti-fact dt {
+  color: var(--dsc-text-quaternary);
+  flex-shrink: 0;
+  margin: 0;
+  width: 64px;
+}
+
+.ti-fact dd {
+  color: var(--dsc-text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+
+/* 附件区：缩略图复用对话页的 .entry-user-images 图片通道（132×96 的固定展示框），
+   这里只把外层从 <a> 换成 <button>（点开是浮层，不是跳转）。 */
+.ti-shots {
+  margin-bottom: 0;
+}
+
+.ti-shot {
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-control);
+  cursor: zoom-in;
+  line-height: 0;
+  padding: 0;
+}
+
+.ti-shot:hover img {
+  border-color: var(--dsc-stroke-1);
+}
+
+.ti-shot:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
+  outline: none;
+}
+
+/* 贴图放大浮层：盖住整个窗口（含检查器），点任意处关闭。 */
+.trace-lightbox {
+  align-items: center;
+  animation: trace-fade var(--dsc-dur-slow) var(--dsc-ease);
+  background: var(--dsc-scrim);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 8vh 6vw;
+  position: fixed;
+  z-index: var(--dsc-z-modal);
+}
+
+.trace-lightbox img {
+  border-radius: var(--dsc-r-card);
+  box-shadow: var(--dsc-shadow-float);
+  max-height: 100%;
+  max-width: 100%;
+}
+
+.trace-lightbox .lightbox-close {
+  background: var(--dsc-bg-card);
+  position: absolute;
+  right: 12px;
+  top: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trace-inspector,
+  .trace-lightbox,
+  .trace-scrim {
+    animation: none;
+  }
+}

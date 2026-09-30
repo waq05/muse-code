@@ -4,8 +4,10 @@
  * 数据来源分工：
  * - `delta` 事件维护直播尾 `segments`（流式渲染）；
  * - `message` 事件是定稿：清直播尾、折叠 text/reasoning 条目；
- * - `tool/call` ↔ `tool/result` 按 callId 配对成工具卡；
- * - `usage` 累计；`error` 折成 system 条目。
+ * - `tool/call` ↔ `tool/result` 按 callId 配对成工具卡（发起时刻与耗时分别记在
+ *   `call.startedAt` / `call.durationMs` 上，条目上的 `ts` 只表示最后写入时刻）；
+ * - `usage` 累计；`error` 折成 system 条目；压缩落点标 `compaction`（实时走
+ *   `system()`，重放靠摘要正文的 {@link SUMMARY_BANNER} 前缀认）。
  *
  * 条目对象一旦发布视为不可变，更新靠替换（tool 卡 running→done）。
  *
@@ -13,7 +15,8 @@
  */
 import type { CoreEvent } from '../core/events.js'
 import { contentImages, contentText, type ChatMessage } from '../core/llm.js'
-import type { TokenUsageView, ToolCallView, ToolStatus, TranscriptEntry } from '../contract.js'
+import { SUMMARY_BANNER } from '../core/compact-anchors.js'
+import type { CompactionMark, TokenUsageView, ToolCallView, ToolStatus, TranscriptEntry } from '../contract.js'
 
 /** 工具卡条目（替换对象实现不可变更新）。 */
 type ToolEntry = Extract<TranscriptEntry, { kind: 'tool' }>
@@ -53,6 +56,11 @@ export class Transcript {
   /** 事件驱动的 turn 状态（turn/start→true，turn/end→false；避免依赖 agent 瞬时值）。 */
   inTurn = false
   /**
+   * 本会话已经落过几条压缩标记（`clear()` 归零）。新标记的 `count` 就是它加一，
+   * 因此这个数就是「第几次压缩」。标记只在真正压过的地方产生，所以不必认识压缩服务。
+   */
+  private compactionCount = 0
+  /**
    * 当前这次折叠的事件时刻，加入条目时统一盖上去（见 {@link stamp}）。
    * null = 正在重放老会话，日志里没记时间：条目就不带 ts，
    * 界面据此降级（不显示时间与用时），而不是拿现在的钟点冒充历史时刻。
@@ -76,10 +84,25 @@ export class Transcript {
     )
   }
 
-  /** 追加一条系统提示（错误/状态说明）。 */
-  system(text: string): void {
+  /**
+   * 追加一条系统提示（错误/状态说明）。
+   * @param compaction - 这条提示是「历史刚被压缩」的落点：带标记，轨迹页据此切区段。
+   */
+  system(text: string, compaction = false): void {
     // 这条不走 reduce，时间戳在这里自己取
-    this.list.push({ kind: 'system', id: this.seq++, text, ts: Date.now() })
+    this.list.push({
+      kind: 'system',
+      id: this.seq++,
+      text,
+      ts: Date.now(),
+      ...(compaction ? { compaction: this.compactionMark() } : {}),
+    })
+  }
+
+  /** 下一个压缩标记；只有真压过的地方才调用，所以序号不会跳。 */
+  private compactionMark(): CompactionMark {
+    this.compactionCount += 1
+    return { count: this.compactionCount }
   }
 
   /**
@@ -107,6 +130,7 @@ export class Transcript {
     this.turnUsage = { inputTokens: 0, outputTokens: 0 }
     this.working = false
     this.inTurn = false
+    this.compactionCount = 0
   }
 
   /**
@@ -241,12 +265,18 @@ export class Transcript {
           last.text === event.text &&
           (last.images?.length ?? 0) === imageCount
         if (sameAsLast) return false
+        // 压缩摘要本身在内存里就是一条 role:'user' 的消息（core/compact.ts 造的），
+        // 正文固定以 SUMMARY_BANNER 开头：这是它和真用户消息唯一的区别。
+        // 老会话重放时系统提示不落进条目（日志里根本不存 system 行），全靠这个前缀
+        // 才能认出「这里压过一次」，所以标记就打在摘要这条 user 条目上（kind 不动）。
+        const compacted = event.text.startsWith(SUMMARY_BANNER)
         this.list.push(
           this.stamp({
             kind: 'user',
             id: this.seq++,
             text: event.text,
             ...(imageCount > 0 ? { images: event.images } : {}),
+            ...(compacted ? { compaction: this.compactionMark() } : {}),
           }),
         )
         return true
@@ -274,6 +304,9 @@ export class Transcript {
         // 工具调用意味着模型输出已定稿，直播尾让位
         const hadLive = this.segments.length > 0
         this.segments = []
+        // 发起时刻就是这条条目第一次写入的时刻，只在这里取一次；结果回来时不许覆盖
+        // （条目的 ts 是「最后写入时刻」，只留给界面算轮次计时）
+        const startedAt = this.eventTs
         const entry: ToolEntry = {
           kind: 'tool',
           id: this.seq++,
@@ -282,6 +315,8 @@ export class Transcript {
             name: event.name,
             argsText: event.args,
             status: 'running' satisfies ToolStatus,
+            // 重放老会话（eventTs 为 null）时拿不到发起时刻，干脆不写，界面据此降级
+            ...(startedAt === null ? {} : { startedAt }),
           } satisfies ToolCallView,
         }
         this.toolIndex.set(event.callId, this.list.length)
@@ -295,12 +330,22 @@ export class Transcript {
         const failed = event.error !== undefined && event.error !== 'rejected'
         // 时间戳跟着结果刷新：这张卡「最后一次写入」是拿到结果那一刻，
         // 界面按最后一条条目的 ts 算这一轮的结束时刻，刷新了才准
+        const startedAt = previous.call.startedAt
+        const arrivedAt = this.eventTs
+        // 耗时 = 结果到达时刻 − 发起时刻。done / failed / rejected 一视同仁：跑挂了、
+        // 被审批拒掉、用户打断的工具调用同样占用了这段时间（见 contract.ts 的口径）。
+        // 两头缺一个就写不出来；结果时刻早于发起时刻（日志乱序）也不写，不编 0 秒。
+        const durationMs =
+          startedAt === undefined || arrivedAt === null || arrivedAt < startedAt
+            ? undefined
+            : arrivedAt - startedAt
         this.list[index] = this.stamp({
           ...previous,
           call: {
             ...previous.call,
             status: event.error === 'rejected' ? 'rejected' : failed ? 'failed' : 'done',
             resultText: truncate(event.text),
+            ...(durationMs === undefined ? {} : { durationMs }),
           },
         })
         return true

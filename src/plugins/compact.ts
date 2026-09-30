@@ -2,6 +2,8 @@
  * compact 插件：provide `compact` 服务（自动压缩检查 + /compact 手动压缩 + 原样带过去的文本登记）。
  * 逻辑迁自 v2 adapter/core-runtime 的 autoCompact 段与 /compact 命令分支；
  * 结果提示统一经 dsc/notice 事件，注册 /compact 命令进 commands 注册表。
+ * 真正压出结果的那条提示带 `'compaction'` 类别：transcript 据此给条目打压缩标记，
+ * 轨迹页才能把「压缩历史」画成独立区段；失败与「无需压缩」的提示不带这个类别。
  *
  * 「哪些内容不许被摘要模型改写」由功能点自己登记（`registerCarry`）：任务清单与会话目标
  * 各登记一段文本，这个插件因此不认识任何具体功能。
@@ -122,8 +124,11 @@ export const compactPlugin: Plugin.Object = {
           carry(),
           limits(),
         )
-        ctx.emit('dsc/notice', '上下文接近模型上限，已自动压缩历史')
-        if (outcome === 'compacted') ctx.emit('dsc/compacted')
+        const compacted = outcome === 'compacted'
+        // 只有真压出结果才打压缩标记：noop 时这条提示照旧发（文案不动），
+        // 但轨迹页不该凭空多出一段「压缩历史」
+        ctx.emit('dsc/notice', '上下文接近模型上限，已自动压缩历史', compacted ? 'compaction' : undefined)
+        if (compacted) ctx.emit('dsc/compacted')
       },
 
       /** 请求已经因爆窗失败，强制压一次（2026-09-29）：压出空间返回 true，循环方重试请求。 */
@@ -137,7 +142,8 @@ export const compactPlugin: Plugin.Object = {
           true,
         )
         if (outcome === 'compacted') {
-          ctx.emit('dsc/notice', '上下文超出模型窗口：已自动压缩历史并重试')
+          // 打上 'compaction' 类别：transcript 据此把这条通知标成压缩落点（轨迹页切区段）
+          ctx.emit('dsc/notice', '上下文超出模型窗口：已自动压缩历史并重试', 'compaction')
           ctx.emit('dsc/compacted')
           return true
         }
@@ -153,9 +159,14 @@ export const compactPlugin: Plugin.Object = {
             carry(),
             limits(),
           )
-          ctx.emit('dsc/notice', outcome === 'compacted' ? '上下文已压缩（任务清单与目标原样保留）' : '历史不长，无需压缩')
+          const compacted = outcome === 'compacted'
+          ctx.emit(
+            'dsc/notice',
+            compacted ? '上下文已压缩（任务清单与目标原样保留）' : '历史不长，无需压缩',
+            compacted ? 'compaction' : undefined,
+          )
           // 压完等于换了半本历史：加载时冻结的东西该重算了（记忆栏就是这么挂上去的）
-          if (outcome === 'compacted') ctx.emit('dsc/compacted')
+          if (compacted) ctx.emit('dsc/compacted')
         } catch (error) {
           ctx.emit('dsc/notice', `压缩失败：${errText(error)}`)
         }
