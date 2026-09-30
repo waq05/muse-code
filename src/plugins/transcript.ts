@@ -13,7 +13,7 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { Transcript } from '../adapter/transcript.js'
-import type { PlanView, RuntimeSnapshot, StatusView } from '../contract.js'
+import type { PlanView, RuntimeSnapshot, StatusView, TranscriptEntry } from '../contract.js'
 import type { TranscriptService } from '../services/types.js'
 
 export const transcriptPlugin: Plugin.Object = {
@@ -40,10 +40,36 @@ export const transcriptPlugin: Plugin.Object = {
       transcript.plan(plan)
       invalidate()
     })
+    /**
+     * 这次重放会不会得到与当前条目一模一样的条目表。
+     *
+     * 为什么要这个判断：`clear()` + `replayHistory()` 是整表重建，条目 id 从 1 重新发号；
+     * 渲染层按 `key` 对账，同一个 key 上换成了别的条目类型就卸载重挂，于是折叠态回默认、
+     * 正在流式的直播尾被抹掉。同一条会话被重复打开（桌面端启动、点击已在看的会话、
+     * 宿主补发一次事件）时内容本来没变，重建纯属白做。
+     *
+     * 比对口径：只看重放会产出的那些条目。当前条目里还夹着 session-open 写的
+     * 「已恢复会话」等 system 行（重放不产出 system 行），先摘掉再逐条对，
+     * 顺带忽略 id 与时间戳——这两样每次重建都不一样，不能算内容变了。
+     */
+    const replayIsRedundant = (): boolean => {
+      const current = ctx.session.current()
+      if (current.messages.length === 0) return false
+      const probe = new Transcript()
+      probe.replayHistory(current.messages, current.toolErrors)
+      return sameEntries(
+        probe.entries.filter((entry) => entry.kind !== 'system'),
+        transcript.entries.filter((entry) => entry.kind !== 'system'),
+      )
+    }
+
     ctx.on('dsc/session-open', ({ filePath }) => {
+      // 重复打开同一条会话：条目一个字都不动（连「已恢复会话」那行提示也不重复写），
+      // 否则这次重建会把渲染层重挂一遍。
+      if (filePath !== undefined && replayIsRedundant()) return
       transcript.clear()
       if (filePath !== undefined) {
-        // 恢复会话：历史消息重放进条目（桌面端/TUI 点历史会话要能回看内容）
+        // 恢复会话：历史消息重放进条目（桌面端/TUI 点历史会话能回看内容）
         transcript.replayHistory(ctx.session.current().messages, ctx.session.current().toolErrors)
         transcript.system(`已恢复会话 ${ctx.session.current().meta.id.slice(0, 8)}`)
       } else {
@@ -112,4 +138,25 @@ export const transcriptPlugin: Plugin.Object = {
 
     ctx.provide('transcript', service)
   },
+}
+
+/**
+ * 两份条目表的「内容」是否一致：`id`（每次重建都从 1 重新发号）与 `ts`（同一份历史
+ * 重放两次时刻会差几毫秒）不算内容，其余字段逐个比。
+ * 为什么用 JSON 字符串比而不是逐字段写：条目是纯数据、没有函数与循环引用，
+ * 序列化顺序由同一段代码产出，键序天然一致；逐字段写要跟着 contract 的六种条目改，
+ * 加一个字段就会静静漏比。
+ */
+function sameEntries(left: readonly TranscriptEntry[], right: readonly TranscriptEntry[]): boolean {
+  if (left.length !== right.length) return false
+  return shape(left) === shape(right)
+}
+
+function shape(entries: readonly TranscriptEntry[]): string {
+  return JSON.stringify(
+    entries.map((entry) => {
+      const { id, ts, ...rest } = entry
+      return rest
+    }),
+  )
 }

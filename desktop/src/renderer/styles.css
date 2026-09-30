@@ -5137,3 +5137,761 @@ body.resizing iframe {
   color: var(--dsc-text-tertiary);
 }
 
+/* ══════════ 侧栏与状态栏优化 ══════════ */
+/* 这一段只做三件事，别处的规则一行没改：
+     1. 文件夹行的会话数量徽标不再被悬停按钮挤动——按钮组改成贴在徽标左侧的浮层；
+     2. 文件夹行的「在此新建会话」按钮（和 ··· 菜单同一个浮层，互不挤动）；
+     3. 状态栏前两段各配一张详情卡，容器长相（底色、圆角、遮罩阴影、出现动画）
+        与第三段的 .ctx-card 完全共用。
+   凡是要压过旧规则的地方，都用更高特异性的选择器写在这里。 */
+
+/* ── 文件夹行尾舱：数量徽标 + 悬停按钮组 ──
+   对齐 dsh 的行尾交互：平时只显示数量徽标；悬停时徽标隐藏、按钮组在
+   同一个槽位 in-flow 出现（不绝对定位、不悬浮），行右缘稳定，
+   没有「数量被挤走」的位移感。 */
+.sidebar .group-row .row-tail {
+  align-items: center;
+  display: inline-flex;
+  position: relative;
+}
+
+.sidebar .group-row .row-tail .row-actions {
+  border-radius: var(--dsc-r-control);
+  display: none;
+  gap: 1px;
+}
+
+/* 徽标在悬停时让位：display:none 而不是 visibility，让按钮组真正接管槽位 */
+.sidebar .group-row:hover .row-tail .count,
+.sidebar .group-row:focus-within .row-tail .count {
+  display: none;
+}
+
+/* 悬停、键盘聚焦、截图钩子三处都点亮按钮组 */
+.sidebar .group-row:hover .row-tail .row-actions,
+.sidebar .group-row:focus-within .row-tail .row-actions,
+.shot-reveal .sidebar .group-row .row-tail .row-actions {
+  display: inline-flex;
+}
+
+/* 会话行同理对齐 dsh：悬停时时间隐藏、操作按钮接管同一个行尾槽位
+   （.row-actions 的显隐由文件顶部的 .sess-item:hover 规则管，这里只管时间让位） */
+.sess-item:hover > .when,
+.sess-item:focus-within > .when {
+  display: none;
+}
+
+/* ── 状态栏：前两段也配详情卡 ──
+   容器沿用 .ctx-card，这里补的是「悬停展开」那一条规则。 */
+.statusbar .seg-hover:hover .ctx-card,
+.statusbar .seg-hover:focus-within .ctx-card {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* 第一段在最左边：卡从这一段的左缘向右展开，窗口窄时不会被左边裁掉
+   （第三段的卡照旧右对齐，两张卡不会同时出现，位置互不干扰）。 */
+.statusbar .seg-turn .ctx-card {
+  left: 0;
+  right: auto;
+}
+
+/* 行式明细：「标签 …… 值」，值右对齐成一列（对照 dsh 的底部信息卡）。 */
+.ctx-rows {
+  display: grid;
+  gap: 4px;
+}
+
+.ctx-row {
+  align-items: baseline;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.ctx-label {
+  color: var(--dsc-text-tertiary);
+}
+
+.ctx-value {
+  color: var(--dsc-text-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* 标题行与明细行之间的分隔线：只画上边，纵向间距由 .ctx-card 的 8px 网格给。 */
+.ctx-rule {
+  border-top: 1px solid var(--dsc-stroke-3);
+}
+
+/* ══════════ 对话区状态与刻度优化 ══════════ */
+/* 这一段只动对话区（消息流 + 右缘刻度条），别处的规则一行没改：
+     1. 刻度条有自己的一条轨道，和对话区的竖向滚动条不再叠在一起；
+     2. 每条条目外套的 .entry-row 是个「不产生盒子」的容器（给刻度条命中测试
+        和每轮页脚当 DOM 落点）；
+     3. 回合进行中的状态行（圈 + 阶段 / 星标 + 活动名 + 实时用时 + 动画省略号）；
+     4. 每轮底部的时间与用时（.round-foot）。
+   凡是要压过旧规则的地方，都用更高特异性的选择器写在这里。 */
+
+/* ── 条目的外层容器：display: contents ──
+   这个盒子自己不参与布局，里面的条目顶上来当 .chat-inner 的 flex 项，
+   所以原来的间距（gap）、对齐（align-self: flex-end / center）与旧代码分毫不差；
+   它只提供两个落点：data-round（刻度条命中测试认回合）和每轮的页脚。 */
+.entry-row {
+  display: contents;
+}
+
+/* ── 刻度条与滚动条各占一条轨道 ──
+   旧规则把刻度条放在 right: 16px，这个数字与滚动条宽度毫无关系，而且正文可以一直
+   伸到右缘——实测（1124px 窗口）旧布局里正文可用的右缘是 1116，刻度条占 1092–1108，
+   整条落在正文的内容带里，与滚动条也只隔 8px。本次改成三条互不重叠的纵向带：
+     [正文] 4px [刻度条 16px] 12px [滚动条 8px] 窗口边
+   - scrollbar-gutter: stable 让滚动条那一栏永久预留，滚动条出现/消失都不推动正文，
+     刻度条因此有个固定不变的参照；
+   - 刻度条的 right 由 --dsc-scrollbar-w 算出来：滚动条画宽（主题、缩放不同）时
+     它自动往左让位，不会像写死 16px 那样被压住。
+   （覆盖的是顶部 .chat { padding: 12px 0 20px } 与 .jump-strip { right: 16px }。） */
+.chat-wrap > .chat {
+  padding-right: var(--dsc-jump-lane);
+  scrollbar-gutter: stable;
+}
+
+.chat-wrap > .jump-strip {
+  right: calc(var(--dsc-scrollbar-w) + 12px);
+}
+
+/* ── 回合进行中的状态行 ──
+   对照 dsh：两行，第一行圈 + 阶段说明，第二行星标 + 活动名 + 用时 + 省略号。
+   整体贴左，与助手正文同一条起跑线；颜色比正文轻一档，不抢内容。 */
+.turn-status {
+  align-self: flex-start;
+  color: var(--dsc-text-secondary);
+  display: flex;
+  flex-direction: column;
+  font-size: var(--dsc-fs-caption);
+  gap: 3px;
+  line-height: var(--dsc-lh-caption);
+  padding: 2px 0;
+}
+
+.turn-status-row {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+}
+
+/* 圈：底环用品牌蓝的浅色，顶弧用实心蓝，转起来像在「转圈」；
+   只转不闪——闪烁的加载图标在长回答里很吵。 */
+.turn-status-spin {
+  animation: dsc-turn-spin 900ms linear infinite;
+  border: 2px solid color-mix(in srgb, var(--dsc-accent) 24%, transparent);
+  border-radius: var(--dsc-r-pill);
+  border-top-color: var(--dsc-accent);
+  flex: none;
+  height: 12px;
+  width: 12px;
+}
+
+@keyframes dsc-turn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.turn-status-stage {
+  color: var(--dsc-text-secondary);
+}
+
+.turn-status-icon {
+  color: var(--dsc-accent);
+  flex: none;
+}
+
+/* 活动名 + 用时合成一句：数字用等宽数字，秒数跳动时整行不会左右抖 */
+.turn-status-activity {
+  color: var(--dsc-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 尾部动画省略号：三个点依次亮起，表示「还在继续」 */
+.turn-status-dots {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.turn-status-dots i {
+  animation: dsc-turn-dot 1.2s ease-in-out infinite;
+  background: currentColor;
+  border-radius: var(--dsc-r-pill);
+  height: 3px;
+  opacity: 0.25;
+  width: 3px;
+}
+
+.turn-status-dots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.turn-status-dots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes dsc-turn-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.22;
+  }
+
+  40% {
+    opacity: 1;
+  }
+}
+
+/* 系统里说「少动」就真不动：圈停成一枚静态环，点停成三个灰点，信息一条不少。 */
+@media (prefers-reduced-motion: reduce) {
+  .turn-status-spin {
+    animation: none;
+  }
+
+  .turn-status-dots i {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* ── 每轮底部的时间与用时 ──
+   贴在操作条那一列（右对齐），与上面的用量统计成一条竖线；
+   比正文再轻一档，长时间看不会变成噪音。缺 ts 的老会话整行不画。
+   负的 margin-top 是用来吃掉 .chat-inner 的 16px 间距的：那一档间距是给「轮与轮之间」
+   留的，页脚属于这一轮的收尾，得跟在正文下面而不是被推开半个身位。 */
+.round-foot {
+  align-items: center;
+  color: var(--dsc-text-quaternary);
+  display: flex;
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+  gap: 5px;
+  justify-content: flex-end;
+  margin-top: calc(1px - var(--dsc-turn-gap));
+  padding-right: 1px;
+}
+
+.round-foot .round-sep {
+  opacity: 0.55;
+}
+
+/* ══════════ 工具卡折叠优化 ══════════
+   改动前：每条工具调用都把入参原文摊在唯一一行上，参数一长整行被撑满，一屏只看得下
+   四五条；展开之后也没有任何回到折叠态的入口，长结果只能一路滚过去。
+   改动后：默认只有一条紧凑行（工具名 + 从入参里挑出来的一句摘要 + 状态 + 箭头），
+   点开才是完整参数与结果；展开内容超过 400px 时顶部吸附一条快捷栏。
+   下面只做覆盖与新增，颜色、圆角、阴影、过渡全部走 tokens.css 里的现有令牌。 */
+
+/* sticky 要求祖先别自己当滚动容器：.tool-card 原本用 overflow: hidden 裁圆角，
+   那会让 .tc-bar 的吸附参照系变成这张卡自己（卡不滚，等于不吸附）。只在展开态放开，
+   因为展开态的子块各自带圆角与底色，不会被卡片的圆角裁到。 */
+.tool-card.open {
+  overflow: visible;
+}
+
+/* 整行可点：悬停给底色、按下给更深一档，都是 100ms 控件时长。 */
+.tool-card .tool-head {
+  border-radius: var(--dsc-r-control);
+  transition: background var(--dsc-dur) var(--dsc-ease);
+}
+
+.tool-card .tool-head:hover {
+  background: var(--dsc-row-hover-bg);
+}
+
+.tool-card .tool-head:active {
+  background: var(--dsc-row-active-bg);
+}
+
+/* 键盘也能展开/收起：焦点圈跟着全站的行内按钮口径走（inset 描边，不撑开布局）。 */
+.tool-card .tool-head:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* 行尾箭头：折叠 ∨、展开 ∧，靠 180° 旋转复用同一个图标，省一个状态位。 */
+.tool-card .tc-chevron {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  transition: transform var(--dsc-dur) var(--dsc-ease);
+}
+
+.tool-card.open .tc-chevron {
+  color: var(--dsc-text-tertiary);
+  transform: rotate(180deg);
+}
+
+/* 状态位沿用语义色，但往前景色靠一档（与 --dsc-accent-text 同一套做法），
+   这样浅底深底都能读，也不至于比正文还亮。 */
+.tool-card.status-running .tool-head .status {
+  color: var(--dsc-accent-text);
+}
+
+.tool-card.status-done .tool-head .status {
+  color: color-mix(in srgb, var(--dsc-green) 62%, var(--dsc-base));
+}
+
+.tool-card.status-failed .tool-head .status {
+  color: color-mix(in srgb, var(--dsc-red) 68%, var(--dsc-base));
+}
+
+.tool-card.status-rejected .tool-head .status {
+  color: color-mix(in srgb, var(--dsc-yellow) 74%, var(--dsc-base));
+}
+
+/* 进行中的小圈：复用状态行那枚 spinner 的动画与配色，尺寸再收小一档，
+   免得比 11px 的工具名还抢眼。 */
+.tool-card .tc-spin {
+  animation: dsc-turn-spin 900ms linear infinite;
+  border: 1.5px solid color-mix(in srgb, var(--dsc-accent) 24%, transparent);
+  border-radius: var(--dsc-r-pill);
+  border-top-color: var(--dsc-accent);
+  display: inline-block;
+  height: 9px;
+  margin-right: 4px;
+  vertical-align: -1px;
+  width: 9px;
+}
+
+/* 展开区顶部的吸附快捷栏：长内容往下滑时它一直贴在滚动容器（.chat）顶端，
+   随时能「收起」。只在内容超过 400px 时渲染（判断在 ToolCard.tsx），所以小卡没有这条。
+   底色必须不透明，否则滚过去的参数会从栏底透出来。 */
+.tc-bar {
+  align-items: center;
+  background: var(--dsc-bg-page);
+  border-bottom: 1px solid var(--dsc-stroke-3);
+  display: flex;
+  font-family: var(--dsc-font-mono);
+  gap: var(--dsc-sp-3);
+  justify-content: space-between;
+  /* 负的左右外边距把栏拉到卡片左右边缘（.tool-body 自己有 8px 内距）。 */
+  margin: 0 -8px var(--dsc-sp-2);
+  min-height: var(--dsc-row-h);
+  padding: 0 8px;
+  position: sticky;
+  top: 0;
+  /* 压住下面滚过去的参数/结果块：这是组件内部的叠压，用 1，不动浮层层级阶梯。 */
+  z-index: 1;
+}
+
+.tc-bar-status {
+  color: var(--dsc-text-scaffold-meta);
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-card.status-running .tc-bar-status {
+  color: var(--dsc-accent-text);
+}
+
+/* 吸住时才补上栏顶那条缝：sticky 的落点是滚动容器的内容盒顶端，而 .chat 顶上还有
+   --dsc-sp-5（12px）内距，不补的话会露出半行滚过去的参数。这一条底用不带模糊的
+   box-shadow 画，等于给栏加一块同宽的实心补丁；不吸住时不加，否则它会盖在紧凑行的
+   下半截文字上。.stuck 由 ToolCard.tsx 按「栏顶是否贴住滚动容器」切换。 */
+.tc-bar.stuck {
+  box-shadow: 0 calc(-1 * var(--dsc-sp-5)) 0 var(--dsc-bg-page);
+}
+
+/* 「收起」按钮：与全站小控件同口径（描边 + 悬停底色 + 100ms），不做实心按钮，
+   因为它是撤回动作、不是这一屏的主行为。 */
+.tc-collapse {
+  align-items: center;
+  background: none;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: inline-flex;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  gap: 3px;
+  height: var(--dsc-ctl-sm);
+  padding: 0 6px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.tc-collapse:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.tc-collapse:active {
+  background: var(--dsc-control-active-bg);
+}
+
+.tc-collapse:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* 系统里说「少动」就真不动：圈停成一枚静态环，箭头瞬时翻转，信息一条不少。
+   （base.css 那条全局兜底已经把时长压到 0，这里再点名一次是因为 spinner 是无限动画，
+   压时长会留下一个转不动的半圈。） */
+@media (prefers-reduced-motion: reduce) {
+  .tool-card .tc-spin {
+    animation: none;
+  }
+
+  .tool-card .tc-chevron,
+  .tool-card .tool-head,
+  .tc-collapse {
+    transition: none;
+  }
+}
+
+/* ══════════ 思考过程折叠优化 ══════════ */
+/* 改动前：思考是一条原生 details，折起来只有「✦ 思考过程 ∨」一行——12px 正文灰、10px 内距、
+   箭头靠 [open] 旋转；可它和同一屏里紧挨着的工具卡紧凑行（11px 等宽、8px 内距、hover 底色、
+   100ms 过渡）不是一套形状，扫视时要重新认一次样式。展开之后长思考也没有快捷收起手段，
+   只能一路滚到底再回头点那一行。
+   改动后：紧凑行 + 展开区 + 展开超 400px 时顶部吸附的快捷栏，与 ToolCard 的紧凑行保持同一
+   规格——行高 --dsc-row-h、内距 0 8px、圆角 --dsc-r-control、悬停 --dsc-row-hover-bg、
+   按下 --dsc-row-active-bg、过渡 --dsc-dur、行尾箭头 11px + 180° 旋转、快捷栏 sticky top:0
+   配不透明底色。下面只做新增，颜色/圆角/间距/动效全部走 tokens.css 的现有令牌，
+   深浅两套主题各核一遍。 */
+
+/* ── 容器：外形与 .tool-card 同口径（圆角、描边、小一号的底色）──
+   为什么这里不写 overflow: hidden：sticky 的吸附参照系必须落在滚动容器 .chat 上，
+   overflow 非 visible 的祖先会把吸附参照系换成这个盒子自己（盒子不滚，等于不吸附）。
+   不裁剪也不会让内容溢出圆角：展开区只有一条带左竖线的文本，左右各留了 8px 内距。 */
+.think-block {
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+}
+
+/* ── 紧凑行：min-height / padding / gap / border-radius / cursor / user-select / transition
+   这 7 项与 ToolCard.tsx 的 .tool-head 逐项同值 ── */
+.think-head {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  min-height: var(--dsc-row-h);
+  padding: 0 8px;
+  transition: background var(--dsc-dur) var(--dsc-ease);
+  user-select: none;
+}
+
+/* 整行可点：悬停给底色、按下给更深一档，都是 100ms 控件时长（与工具卡同一组令牌）。 */
+.think-head:hover {
+  background: var(--dsc-row-hover-bg);
+}
+
+.think-head:active {
+  background: var(--dsc-row-active-bg);
+}
+
+/* 键盘也能展开/收起：焦点圈跟全站行内按钮口径走（inset 描边，不撑开布局）。 */
+.think-head:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* hover 态的截图钩子：真实 :hover 抓不进静态图，沿用仓库既有的 .shot-reveal 约定
+   （见本文件顶部侧栏那三条规则）把底色点亮，用来出「hover 有反馈」的证据图。 */
+.shot-reveal .think-head {
+  background: var(--dsc-row-hover-bg);
+}
+
+/* 行首星标：改动前是 CSS 里的 '✦ ' 文字前缀，换成同一枚 IconSpark 图标，颜色照旧。 */
+.think-star {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+}
+
+/* 标题：字号沿用思考自己的 --dsc-fs-ui（12px）。为什么不跟工具名一样用 11px 等宽——
+   思考正文是给人读的脚手架，标题比它的正文（--dsc-fs-caption 也是 12px）还小会读不出来；
+   形状参数（行高、内距、hover、箭头）与工具卡同值，横向节奏仍是同一条。 */
+.think-label {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
+}
+
+.think-head:hover .think-label {
+  color: var(--dsc-text-secondary);
+}
+
+/* 状态格：定稿时是空的，但始终渲染——它的 flex:1 把行尾箭头顶到最右边
+   （同 ToolCard.tsx 里那个始终渲染的 .preview）。 */
+.think-status {
+  align-items: center;
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+  flex: 1;
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+  gap: 4px;
+}
+
+/* 直播思考段：星标、标题、状态一起走品牌色，与改动前 .thinking.live 的强调一致。 */
+.think-block.live .think-star,
+.think-block.live .think-label {
+  color: var(--dsc-accent);
+}
+
+.think-block.live .think-status {
+  color: var(--dsc-accent-text);
+}
+
+/* 进行中的小圈：复用状态行与工具卡那枚 spinner 的 keyframes 与配色，尺寸同工具卡
+   （9px，比 12px 的标题小一档，不抢「思考过程」这四个字）。 */
+.think-spin {
+  animation: dsc-turn-spin 900ms linear infinite;
+  border: 1.5px solid color-mix(in srgb, var(--dsc-accent) 24%, transparent);
+  border-radius: var(--dsc-r-pill);
+  border-top-color: var(--dsc-accent);
+  display: inline-block;
+  height: 9px;
+  width: 9px;
+}
+
+/* 行尾箭头：折叠 ∨、展开 ∧，靠 180° 旋转复用同一个图标（同 .tc-chevron）：
+   折叠态是 quaternary，展开态提一档到 tertiary。 */
+.think-chevron {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  transition: transform var(--dsc-dur) var(--dsc-ease);
+}
+
+.think-block.open .think-chevron {
+  color: var(--dsc-text-tertiary);
+  transform: rotate(180deg);
+}
+
+/* ── 展开区 ──
+   左右 8px 内距与紧凑行对齐；正文沿用改动前的「左竖线引用体」造型。 */
+.think-body {
+  padding: 0 8px 8px;
+}
+
+.think-text {
+  border-left: 2px solid var(--dsc-stroke-2);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  padding: 4px 0 4px 12px;
+  white-space: pre-wrap;
+}
+
+.think-block.live .think-text {
+  border-left-color: color-mix(in srgb, var(--dsc-accent) 45%, transparent);
+}
+
+/* ── 展开区顶部的吸附快捷栏 ──
+   只在内容超过 400px 时渲染（判断在 ThinkingBlock.tsx），短思考没有这条。
+   底色必须不透明，否则滚过去的思考文字会从栏底透出来。
+   用 --dsc-bg-raised 而不是工具卡那条的 --dsc-bg-page：思考块自己有一层
+   --dsc-fill-quinary 底色，用页面色会在块里切出一条明显更暗的带子；bg-raised 是
+   「比页面浮起一档」的不透明面，与块底色几乎同亮度，深浅两套主题都定义了它。 */
+.think-bar {
+  align-items: center;
+  background: var(--dsc-bg-raised);
+  border-bottom: 1px solid var(--dsc-stroke-3);
+  display: flex;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  gap: var(--dsc-sp-3);
+  justify-content: space-between;
+  /* 负的左右外边距把栏拉到块的内边缘（.think-body 自己有 8px 内距）。 */
+  margin: 0 -8px var(--dsc-sp-2);
+  min-height: var(--dsc-row-h);
+  padding: 0 8px;
+  position: sticky;
+  top: 0;
+  /* 压住下面滚过去的思考正文：组件内部的叠压用 1，不动浮层层级阶梯。 */
+  z-index: 1;
+}
+
+.think-bar-status {
+  color: var(--dsc-text-scaffold-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.think-block.live .think-bar-status {
+  color: var(--dsc-accent-text);
+}
+
+/* 「收起」按钮：与 .tc-collapse 同口径（描边 + 悬停底色 + 100ms），不做实心按钮，
+   因为它是撤回动作、不是这一屏的主行为。 */
+.think-collapse {
+  align-items: center;
+  background: none;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: inline-flex;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  gap: 3px;
+  height: var(--dsc-ctl-sm);
+  padding: 0 6px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.think-collapse:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.think-collapse:active {
+  background: var(--dsc-control-active-bg);
+}
+
+.think-collapse:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* 系统里说「少动」就真不动：圈停成一枚静态环，箭头瞬时翻转，信息一条不少。
+   （base.css 那条全局兜底已经把时长压到 0，这里再点名一次是因为 spinner 是无限动画，
+   只压时长会留下一个转不动的半圈。） */
+@media (prefers-reduced-motion: reduce) {
+  .think-spin {
+    animation: none;
+  }
+
+  .think-chevron,
+  .think-head,
+  .think-collapse {
+    transition: none;
+  }
+}
+
+/* ══════════ 每轮分叉与编辑重发 ══════════ */
+
+/* 用户气泡上的悬停操作：编辑（铅笔）与分叉（分支）。
+ *
+ * 形状与助手消息底部那条 .entry-meta 同一套规格（两颗 12px 图标、行内按钮、
+ * 3px 5px 内距、--dsc-r-control 圆角），只是它贴在气泡内部右下角而不是另起一行：
+ * 气泡本身是右对齐的软填充块，另起一行会把每一轮的高度撑高一截。
+ *
+ * 显隐沿用同一个节奏：默认 opacity 0，鼠标悬停或键盘 Tab 进来（:focus-within）才现。
+ * 只留 opacity 不留 display —— 按钮始终在无障碍树里，Tab 顺序与读屏都不会因为这层
+ * 视觉隐藏而断掉（display:none 会让按钮不可聚焦，那就成了鼠标专用功能）。 */
+.entry-user .user-actions {
+  display: flex;
+  gap: var(--dsc-sp-0);
+  justify-content: flex-end;
+  margin-top: var(--dsc-sp-0);
+  opacity: 0;
+  transition: opacity var(--dsc-dur) var(--dsc-ease);
+}
+
+.entry-user:hover .user-actions,
+.entry-user:focus-within .user-actions {
+  opacity: 1;
+}
+
+.entry-user .user-act {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  display: inline-flex;
+  padding: 2px 4px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.entry-user .user-act:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.entry-user .user-act:active {
+  background: var(--dsc-control-active-bg);
+}
+
+.entry-user .user-act:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* 一轮正在跑时不给编辑/分叉（换会话会把这一轮打断），置灰但仍留在 Tab 顺序里，
+   title 里会说明原因，比直接抽掉按钮更好解释。 */
+.entry-user .user-act:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.entry-user .user-act:disabled:hover {
+  background: none;
+  color: var(--dsc-text-tertiary);
+}
+
+/* 编辑态：气泡原地变成编辑框。
+ * 宽度换成「占满正文列」而不是 78%：改一条长消息时，气泡原来的窄栏会把
+ * 每一行都折成两截，看着比原文还费劲。 */
+.entry-user.editing {
+  max-width: 100%;
+  padding: var(--dsc-sp-4) var(--dsc-sp-5) var(--dsc-sp-3);
+  white-space: normal;
+  width: 100%;
+}
+
+.user-edit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsc-sp-2);
+}
+
+.user-edit-box {
+  background: var(--dsc-bg-card);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-primary);
+  display: block;
+  font-family: inherit;
+  font-size: var(--dsc-fs-prose);
+  line-height: var(--dsc-lh-prose);
+  max-height: 40vh;
+  outline: none;
+  padding: var(--dsc-sp-3) var(--dsc-sp-4);
+  resize: vertical;
+  white-space: pre-wrap;
+  width: 100%;
+}
+
+.user-edit-box:focus {
+  border-color: var(--dsc-accent);
+}
+
+/* 说明行：重发到底会发生什么，必须在按下去之前说清楚（codex 与 hermes 都把
+   「之后的对话会被移除」写在按钮旁边或确认框里，这里走常驻说明行）。 */
+.user-edit-note {
+  color: var(--dsc-text-tertiary);
+  /* 气泡那层写了 overflow-wrap: anywhere（长串不回流的正文要能硬断行），
+     说明行是给人读的句子，按词断更自然，所以这里退回 break-word。 */
+  overflow-wrap: break-word;
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.user-edit-actions {
+  display: flex;
+  gap: var(--dsc-sp-2);
+  justify-content: flex-end;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entry-user .user-actions,
+  .entry-user .user-act {
+    transition: none;
+  }
+}
+

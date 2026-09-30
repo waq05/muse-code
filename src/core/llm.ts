@@ -37,6 +37,17 @@ export interface ChatMessage {
   reasoning_content?: string
   tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[]
   tool_call_id?: string
+  /**
+   * 这条消息落进会话日志（jsonl）的时刻，毫秒 epoch。
+   *
+   * 为什么不直接在消息里发出去：协议里没有这一项。多带一个未知字段，
+   * 挑剔的网关会直接判 400，所以 {@link serializeMessages} 发请求前会把它剥掉；
+   * 它只在内存与 jsonl 里活着，给界面算「几点发的」「这一轮用了多久」。
+   *
+   * 老会话日志（2026-09 之前）没有这个字段，读回来是 undefined：界面据此降级，
+   * 不显示时间，不猜一个。
+   */
+  ts?: number
 }
 
 export interface StreamRequest {
@@ -313,14 +324,19 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
 /** assistant 消息重放：reasoning_content 回传保持模型思路连贯（dsh 同款）。 */
 function serializeMessages(messages: ChatMessage[]): unknown[] {
   return messages.map((message) => {
-    if (message.role !== 'assistant') return message
+    // ts 是 dsc 自己记的时间戳（见 ChatMessage.ts）：协议里没这一项，
+    // 整条透传会把它发给端点，挑字段的网关会判 400。其余字段照旧原样过，
+    // 不动别的插件往消息上挂的东西。
+    const wire: ChatMessage = { ...message }
+    delete wire.ts
+    if (wire.role !== 'assistant') return wire
     return {
-      role: message.role,
-      content: message.content,
-      ...(message.reasoning_content !== undefined && message.reasoning_content !== ''
-        ? { reasoning_content: message.reasoning_content }
+      role: wire.role,
+      content: wire.content,
+      ...(wire.reasoning_content !== undefined && wire.reasoning_content !== ''
+        ? { reasoning_content: wire.reasoning_content }
         : {}),
-      ...(message.tool_calls !== undefined ? { tool_calls: message.tool_calls } : {}),
+      ...(wire.tool_calls !== undefined ? { tool_calls: wire.tool_calls } : {}),
     }
   })
 }

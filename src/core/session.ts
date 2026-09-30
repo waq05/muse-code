@@ -27,9 +27,16 @@ export interface SessionMeta {
 
 type SessionRecord =
   | ({ type: 'meta' } & SessionMeta)
-  | { type: 'user'; text: string; images?: string[] }
-  | { type: 'assistant'; text: string; reasoning: string; toolCalls?: ToolCall[] }
-  | { type: 'tool'; callId: string; name: string; text: string; images?: string[]; error?: string }
+  /**
+   * 下面四条都带 `ts`：这条记录写入磁盘的时刻（毫秒 epoch），同时也是内存里
+   * 那条消息 `ChatMessage.ts` 的来源。为什么记在会话日志里而不是另存一份：
+   * 恢复会话是逐行重放 jsonl，只有行内自带时间，历史消息才说得清「几点发的」，
+   * 界面的每轮用时也才算得出来（见 contract.ts 的 TranscriptEntry.ts）。
+   * 老日志没有这个字段，重放时按 undefined 处理。
+   */
+  | { type: 'user'; text: string; images?: string[]; ts?: number }
+  | { type: 'assistant'; text: string; reasoning: string; toolCalls?: ToolCall[]; ts?: number }
+  | { type: 'tool'; callId: string; name: string; text: string; images?: string[]; error?: string; ts?: number }
   | {
       type: 'summary'
       text: string
@@ -40,6 +47,7 @@ type SessionRecord =
        * 老日志没有这个字段，按 0 处理。
        */
       keep?: number
+      ts?: number
     }
   /**
    * 会话状态（模式、清单、计划、目标……）：一条记录一个条目，谁的功能谁自己写。
@@ -177,6 +185,8 @@ export class Session {
                     ...record.images.map((url): ChatContentPart => ({ type: 'image_url', image_url: { url } })),
                   ]
                 : record.text,
+            // 老日志没有 ts：这里就是 undefined，界面据此降级（不显示时间/用时）
+            ...(record.ts === undefined ? {} : { ts: record.ts }),
           })
           break
         case 'assistant': {
@@ -193,6 +203,7 @@ export class Session {
                   })),
                 }
               : {}),
+            ...(record.ts === undefined ? {} : { ts: record.ts }),
           })
           break
         }
@@ -204,7 +215,12 @@ export class Session {
                   ...record.images.map((url): ChatContentPart => ({ type: 'image_url', image_url: { url } })),
                 ]
               : record.text
-          messages.push({ role: 'tool', content, tool_call_id: record.callId })
+          messages.push({
+            role: 'tool',
+            content,
+            tool_call_id: record.callId,
+            ...(record.ts === undefined ? {} : { ts: record.ts }),
+          })
           // 状态取自 error 字段；早于该字段的老日志按固定回执文案把「已拒绝」补回来
           const error = record.error ?? (record.text === REJECTED_TOOL_TEXT ? REJECTED_TOOL_ERROR : undefined)
           if (error !== undefined) toolErrors.set(record.callId, error)
@@ -218,7 +234,11 @@ export class Session {
           const keep = record.keep ?? 0
           const tail = keep > 0 ? messages.slice(-keep) : []
           messages.length = 0
-          messages.push({ role: 'user', content: record.text })
+          messages.push({
+            role: 'user',
+            content: record.text,
+            ...(record.ts === undefined ? {} : { ts: record.ts }),
+          })
           messages.push(...tail)
           break
         }
@@ -255,9 +275,13 @@ export class Session {
   /**
    * 追加用户消息。带图时消息以多模态 content 数组落库（要模型声明了照片输入才发得出去；
    * JSONL 记 text + images 两个字段，跟工具结果带图的写法一致）。
+   *
+   * `ts` 只写一份给内存与磁盘共用：界面按它显示「这条消息几点发的」，
+   * 也是这一轮「用时」的起点（见 contract.ts 的 TranscriptEntry.ts）。
    */
   appendUser(text: string, images?: string[]): void {
     const withImages = images !== undefined && images.length > 0
+    const ts = Date.now()
     this.messages.push({
       role: 'user',
       content: withImages
@@ -266,11 +290,13 @@ export class Session {
             ...images.map((url): ChatContentPart => ({ type: 'image_url', image_url: { url } })),
           ]
         : text,
+      ts,
     })
-    this.write({ type: 'user', text, ...(withImages ? { images } : {}) })
+    this.write({ type: 'user', text, ...(withImages ? { images } : {}), ts })
   }
 
   appendAssistant(text: string, reasoning: string, toolCalls: ToolCall[]): void {
+    const ts = Date.now()
     this.messages.push({
       role: 'assistant',
       content: text,
@@ -284,12 +310,14 @@ export class Session {
             })),
           }
         : {}),
+      ts,
     })
     this.write({
       type: 'assistant',
       text,
       reasoning,
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      ts,
     })
   }
 
@@ -305,6 +333,7 @@ export class Session {
     output: string | { text: string; images?: string[] },
     error?: string,
   ): void {
+    const ts = Date.now()
     const text = typeof output === 'string' ? output : output.text
     const images = typeof output === 'string' ? undefined : output.images
     const content: string | ChatContentPart[] =
@@ -314,7 +343,7 @@ export class Session {
             ...images.map((url): ChatContentPart => ({ type: 'image_url', image_url: { url } })),
           ]
         : text
-    this.messages.push({ role: 'tool', content, tool_call_id: callId })
+    this.messages.push({ role: 'tool', content, tool_call_id: callId, ts })
     if (error !== undefined) this.toolErrors.set(callId, error)
     this.write({
       type: 'tool',
@@ -323,6 +352,7 @@ export class Session {
       text,
       ...(images !== undefined && images.length > 0 ? { images } : {}),
       ...(error !== undefined ? { error } : {}),
+      ts,
     })
   }
 
@@ -336,11 +366,15 @@ export class Session {
    * @param kept - 压缩后内存里要留的消息，第一条就是摘要本身。
    */
   replaceWithSummary(summaryText: string, kept: ChatMessage[]): void {
+    // 摘要那条是压缩现场新造的，补一个落盘时刻；尾部那些本来就在内存里，保持原时间不变
+    // （不然压缩会把历史消息的时间全刷成「现在」）。
+    const ts = Date.now()
+    for (const message of kept) if (message.ts === undefined) message.ts = ts
     this.messages.length = 0
     this.messages.push(...kept)
     // 尾部不重新写盘：那得把 tool 记录的 name 字段反推回来，得不偿失。
     // kept[0] 是摘要本身，所以减一才是尾部条数。
-    this.write({ type: 'summary', text: summaryText, keep: Math.max(kept.length - 1, 0) })
+    this.write({ type: 'summary', text: summaryText, keep: Math.max(kept.length - 1, 0), ts })
   }
 
   /**

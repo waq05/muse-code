@@ -101,14 +101,20 @@ function closeToTrayEnabled(): boolean {
   }
 }
 
-/** 托盘图标：打包后从 resources 取，dev 从 desktop/build 取。 */
+/**
+ * 托盘图标：打包后从 resources 取，dev 从 desktop/build 取。
+ *
+ * 托盘会把它缩到 16px，主图标（512px 水墨人像）缩到这个尺寸只剩一团灰，
+ * 所以单独准备 build/icon-tray.png（只裁头部、压成实墨剪影的 32px 版）。
+ * 该文件缺失时回退到主图标，保证托盘永远不会没图标。
+ */
 function trayIcon(): NativeImage {
-  const file = app.isPackaged
-    ? join(process.resourcesPath, 'icon.png')
-    : join(__dirname, '..', '..', 'build', 'icon.png')
-  const image = existsSync(file) ? nativeImage.createFromPath(file) : nativeImage.createEmpty()
+  const dir = app.isPackaged ? process.resourcesPath : join(__dirname, '..', '..', 'build')
+  const file = [join(dir, 'icon-tray.png'), join(dir, 'icon.png')].find((p) => existsSync(p))
+  const image = file ? nativeImage.createFromPath(file) : nativeImage.createEmpty()
   if (image.isEmpty()) {
-    process.stderr.write(`[dsc] 托盘图标加载失败（${file} ${existsSync(file) ? '解码失败' : '文件不存在'}），托盘将没有图标\n`)
+    const why = file ? (existsSync(file) ? '解码失败' : '文件不存在') : `目录下没有图标文件（${dir}）`
+    process.stderr.write(`[dsc] 托盘图标加载失败（${file ?? dir} ${why}），托盘将没有图标\n`)
     return image
   }
   return image.getSize().width > 32 ? image.resize({ width: 16, height: 16 }) : image

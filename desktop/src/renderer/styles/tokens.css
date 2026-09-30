@@ -242,6 +242,14 @@
   /* 会话列宽。ch 量的是数字「0」的宽度，中文一个字约等于两个 ch，
    * 所以照抄英文的 68ch 会让中文每行只剩 30 字；76ch ≈ 38 个汉字。 */
   --dsc-thread-max: 76ch;
+  /* 对话区右缘的两条轨道（见 styles.css 末尾「对话区状态与刻度优化」那一区）：
+   * --dsc-scrollbar-w 是竖向滚动条占的宽度，必须与 styles/base.css 里
+   * `::-webkit-scrollbar { width: 8px }` 保持一致；--dsc-jump-lane 是留给
+   * 回合刻度条的专属轨道宽度（正文不再伸进这条带子）。
+   * 尺寸是这么定的：轨道 32px = 刻度 16px + 与正文 4px + 与滚动条 12px，
+   * 刻度条自己的 right 由 --dsc-scrollbar-w + 12px 算，滚动条画宽时自动让位。 */
+  --dsc-scrollbar-w: 8px;
+  --dsc-jump-lane: 32px;
 
   /* ── 阴影：一律从上方打光，每一层都向下坠、水平内收，
      所以阴影聚在面板下方而不是四面漏光。── */

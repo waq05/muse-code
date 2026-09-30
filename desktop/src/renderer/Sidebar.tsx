@@ -4,7 +4,8 @@
  * 工作区交互对照 dsh 桌面端左栏：
  *   - 点工作区名 = 切到那个工作目录（宿主随之重启）；点左侧箭头 = 展开/折叠；
  *   - 行可拖动排序（顺序写 `~/.dsc/settings.json`），排过一次后不再自动把活动组置顶；
- *   - hover 出现操作按钮：工作区行是 `···` 菜单 + 归档全部；会话行是 `···` 菜单 + 归档 + 置顶；
+ *   - hover 出现操作按钮，挂成贴在会话数量徽标左侧的浮层（不进文档流，徽标不跳位）：
+ *     工作区行是「在此新建会话」+ `···` 菜单，会话行是 `···` 菜单 + 归档 + 置顶；
  *   - 会话行拿到焦点后可用 Ctrl+Alt+R 改名、Ctrl+Alt+F 分叉、Ctrl+Shift+A 归档。
  * 快捷键刻意绑在行元素上而不是全局，避免和输入框抢键。
  *
@@ -29,11 +30,11 @@ import {
   IconClock,
   IconClose,
   IconCoins,
+  IconEdit,
   IconFlatList,
   IconFolder,
   IconFolderOpen,
   IconGear,
-  IconGrip,
   IconMore,
   IconPin,
   IconPlus,
@@ -113,6 +114,12 @@ export function Sidebar(props: {
   const [dragCwd, setDragCwd] = useState<string | null>(null)
   /** 拖动时的落点：插到这一组工作区之前（after=false）还是之后（after=true）。 */
   const [dropAt, setDropAt] = useState<{ cwd: string; after: boolean } | null>(null)
+  /**
+   * 待新建会话的目标工作区。切换工作目录要重启宿主（新会话的 cwd 由宿主启动时的
+   * 目录决定），而 App 的 onSwitchCwd 不返回 Promise，所以只能先登记目标目录，
+   * 等 cwd 真的切过去再开新会话（见下面那个 effect）。
+   */
+  const [pendingNew, setPendingNew] = useState<string | null>(null)
   /** 刚拖完就不要再触发一次「点击切换工作区」。 */
   const justDragged = useRef(false)
 
@@ -308,6 +315,39 @@ export function Sidebar(props: {
     if (isActiveGroup(cwd)) toggle(cwd)
     else props.onSwitchCwd(cwd)
   }
+
+  /**
+   * 在指定工作区里新建会话（文件夹行那颗「+」）。
+   *
+   * 为什么分两步：新会话的 cwd 是宿主进程启动时的目录（core/session.ts 里
+   * `Session.create(cwd)`），要换工作区就得先重启宿主切目录；而 App 的
+   * onSwitchCwd 不返回 Promise，所以这里登记目标目录后由下面的 effect 接力，
+   * 顺序反了会把会话建在旧目录下。
+   */
+  const newSessionIn = (cwd: string): void => {
+    if (isActiveGroup(cwd)) {
+      props.onNew()
+      return
+    }
+    setPendingNew(cwd)
+    props.onSwitchCwd(cwd)
+  }
+
+  // 目标目录切过来了就开新会话；切不过去（目录被删、宿主起不来）就 8 秒后放弃登记，
+  // 免得这个待办一直挂着，用户以后手动点到这个目录时突然冒出一个新会话。
+  // 比对大小写不敏感：Windows 路径本身就分不清大小写，会话里存的目录名与
+  // 主进程 resolve() 出来的未必逐字相同。
+  useEffect(() => {
+    if (pendingNew === null) return
+    if (props.cwd.toLowerCase() !== pendingNew.toLowerCase()) {
+      const timer = setTimeout(() => setPendingNew(null), 8000)
+      return () => clearTimeout(timer)
+    }
+    setPendingNew(null)
+    props.onNew()
+    // onNew 是 App 每次渲染新建的箭头函数，进依赖会让这个 effect 每渲染跑一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingNew, props.cwd])
 
   /** 把 source 挪到 target 之前或之后，其余保持当前视觉顺序，然后存起来。 */
   const reorder = (source: string, target: string, after: boolean): void => {
@@ -557,10 +597,10 @@ export function Sidebar(props: {
                 className="menu-item"
                 onClick={() => startRename(sKey, 'session', session.title ?? '')}
               >
-                重命名 <span className="menu-key">Ctrl+Alt+R</span>
+                <IconEdit size={14} /> 重命名 <span className="menu-key">Ctrl+Alt+R</span>
               </button>
               <button className="menu-item" onClick={() => void openFork(session.id)}>
-                分叉会话 <span className="menu-key">Ctrl+Alt+F</span>
+                <IconSwap size={14} /> 分叉会话 <span className="menu-key">Ctrl+Alt+F</span>
               </button>
               <div className="menu-sep" />
               {isArchived ? (
@@ -884,10 +924,27 @@ export function Sidebar(props: {
                 ) : (
                   <span className="dir">{displayName(cwd, aliases)}</span>
                 )}
-                <span className="count">{sessions.length}</span>
-                <span className="row-actions">
-                  {sessions.length > 0 &&
-                    (archived === 'only' ? (
+                {/* 尾舱对齐 dsh 的行尾交互：平时只显示会话数量，悬停时数量隐藏、
+                    按钮组在同一个槽位出现（in-flow，见 styles.css 的 .row-tail），
+                    行右缘稳定，没有「数量被挤走」的位移感。 */}
+                <span className="row-tail">
+                  <span className="count">{sessions.length}</span>
+                  <span className="row-actions">
+                    {/* 工作区行按用户要求不再摆「归档全部」和拖动把手：批量归档仍在
+                        `···` 菜单里（下方 row-menu），排序改成直接拖行本身（行还是
+                        draggable）。这里只留「在此新建会话」和菜单。 */}
+                    <button
+                      className="icon-btn"
+                      title={`在 ${displayName(cwd, aliases)} 新建会话`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        newSessionIn(cwd)
+                      }}
+                    >
+                      <IconPlus size={13} />
+                    </button>
+                    {/* 只剩归档区这一档时，「全部恢复」是这里唯一的批量动作，保留 */}
+                    {archived === 'only' && sessions.length > 0 && (
                       <button
                         className="icon-btn"
                         data-tip="把这个工作区的会话全部恢复"
@@ -898,37 +955,18 @@ export function Sidebar(props: {
                       >
                         <IconRefresh size={13} />
                       </button>
-                    ) : (
-                      <button
-                        className="icon-btn"
-                        data-tip="归档这个工作区的全部会话"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          archiveWithConfirm(
-                            sessions.map((session) => session.id),
-                            `归档这 ${sessions.length} 个会话？`,
-                            ARCHIVE_DETAIL_MANY,
-                          )
-                        }}
-                      >
-                        <IconArchive size={13} />
-                      </button>
-                    ))}
-                  <button
-                    className={`icon-btn${menu === key ? ' on' : ''}`}
-                    data-tip="更多操作"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setMenu(menu === key ? null : key)
-                    }}
-                  >
-                    <IconMore size={14} />
-                  </button>
-                  {sortable && (
-                    <span className="grip" data-tip="拖动排序">
-                      <IconGrip size={13} />
-                    </span>
-                  )}
+                    )}
+                    <button
+                      className={`icon-btn${menu === key ? ' on' : ''}`}
+                      data-tip="更多操作"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setMenu(menu === key ? null : key)
+                      }}
+                    >
+                      <IconMore size={14} />
+                    </button>
+                  </span>
                 </span>
                 {menu === key && (
                   <>
@@ -938,11 +976,11 @@ export function Sidebar(props: {
                         <IconFolderOpen size={14} /> 在资源管理器中打开
                       </button>
                       <button className="menu-item" onClick={() => startRename(key, 'workspace', displayName(cwd, aliases))}>
-                        重命名显示名
+                        <IconEdit size={14} /> 重命名显示名
                       </button>
                       {aliases[cwd] !== undefined && (
                         <button className="menu-item" onClick={() => clearAlias(cwd)}>
-                          恢复真实目录名
+                          <IconClose size={14} /> 恢复真实目录名
                         </button>
                       )}
                       {sessions.length > 0 && (

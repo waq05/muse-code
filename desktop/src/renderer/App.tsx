@@ -349,12 +349,20 @@ export function App(): JSX.Element {
   const resumable = snapshot.sessions.filter((session) => session.archivedAt === undefined)
 
   const pickSession = (id: string): void => {
+    void openSession(id)
+  }
+
+  /**
+   * 切到某个会话（路径）或开一个新会话（不传参数）。返回 Promise 是给「编辑重发」用的：
+   * 它必须等宿主真的把当前会话换过去，才能把改好的正文作为新会话的第一条消息发出去。
+   */
+  const openSession = async (id?: string): Promise<void> => {
     setPicker(false)
     setTab('chat')
     setView('chat')
     // 换自己的会话就退出队友视图，别让标题还写着别人的名字
     setPeek(null)
-    void proxy.openSession(id)
+    await proxy.openSession(id)
   }
 
   /** 顶栏下拉：用系统能力打开当前工作区；失败原因走 Toast。 */
@@ -501,6 +509,9 @@ export function App(): JSX.Element {
                   entries={snapshot.entries as TranscriptEntry[]}
                   turnState={snapshot.status.turnState}
                   sessionId={snapshot.status.sessionId}
+                  sessionPath={active?.id ?? null}
+                  proxy={proxy}
+                  onOpenSession={openSession}
                 />
               )}
 

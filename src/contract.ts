@@ -141,16 +141,23 @@ export interface ToolCallView {
 /**
  * 会话流里的一条可渲染条目。adapter 把 session/event 折叠成这个序列，
  * UI 只读消费；`id` 单调递增、仅在本会话生命周期内唯一。
+ *
+ * 每个条目都可以带 `ts`：毫秒 epoch，含义是「这条条目最后一次被写入的时刻」
+ * （用户条目就是发消息那一刻，工具卡是最后一次更新那一刻）。界面按它显示
+ * 「这条消息几点发的」「这一轮花了多久」。
+ *
+ * 为什么是可选的：2026-09 之前的会话日志里没有这个字段，重放老会话时拿不到时间。
+ * 那时候界面降级为不显示时间与用时——绝不拿「现在」冒充历史时刻，也不显示 NaN。
  */
 export type TranscriptEntry =
   /** images 是 data URL 清单（用户贴进来的图）；界面渲染成缩略图。 */
-  | { kind: 'user'; id: number; text: string; images?: string[] }
-  | { kind: 'thinking'; id: number; text: string }
-  | { kind: 'text'; id: number; text: string }
-  | { kind: 'tool'; id: number; call: ToolCallView }
+  | { kind: 'user'; id: number; text: string; images?: string[]; ts?: number }
+  | { kind: 'thinking'; id: number; text: string; ts?: number }
+  | { kind: 'text'; id: number; text: string; ts?: number }
+  | { kind: 'tool'; id: number; call: ToolCallView; ts?: number }
   /** 计划卡：exit_plan_mode 交上来的计划，带用户批没批。 */
-  | { kind: 'plan'; id: number; plan: PlanView }
-  | { kind: 'system'; id: number; text: string }
+  | { kind: 'plan'; id: number; plan: PlanView; ts?: number }
+  | { kind: 'system'; id: number; text: string; ts?: number }
 
 /** 会话累计 token 用量。 */
 export interface TokenUsageView {

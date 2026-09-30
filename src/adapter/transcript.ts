@@ -22,6 +22,8 @@ type ToolEntry = Extract<TranscriptEntry, { kind: 'tool' }>
 interface LiveSegment {
   kind: 'thinking' | 'text'
   text: string
+  /** 这一段最后一次追加内容的时刻（界面按它算时间；重放老日志时没有）。 */
+  ts?: number
 }
 
 const RESULT_TEXT_LIMIT = 1500
@@ -41,6 +43,12 @@ export class Transcript {
   working = false
   /** 事件驱动的 turn 状态（turn/start→true，turn/end→false；避免依赖 agent 瞬时值）。 */
   inTurn = false
+  /**
+   * 当前这次折叠的事件时刻，加入条目时统一盖上去（见 {@link stamp}）。
+   * null = 正在重放老会话，日志里没记时间：条目就不带 ts，
+   * 界面据此降级（不显示时间与用时），而不是拿现在的钟点冒充历史时刻。
+   */
+  private eventTs: number | null = Date.now()
 
   /** 定稿条目的只读视图。 */
   get entries(): readonly TranscriptEntry[] {
@@ -54,13 +62,15 @@ export class Transcript {
         kind: segment.kind,
         id: -(position + 1),
         text: segment.text,
+        ...(segment.ts === undefined ? {} : { ts: segment.ts }),
       }),
     )
   }
 
   /** 追加一条系统提示（错误/状态说明）。 */
   system(text: string): void {
-    this.list.push({ kind: 'system', id: this.seq++, text })
+    // 这条不走 reduce，时间戳在这里自己取
+    this.list.push({ kind: 'system', id: this.seq++, text, ts: Date.now() })
   }
 
   /**
@@ -71,10 +81,11 @@ export class Transcript {
     const at = this.list.findIndex((entry) => entry.kind === 'plan' && entry.plan.file === view.file)
     if (at >= 0) {
       const previous = this.list[at]
-      if (previous?.kind === 'plan') this.list[at] = { ...previous, plan: view }
+      // 原位换成新结论时也刷新时间：这张卡的时刻是「最后一次更新」
+      if (previous?.kind === 'plan') this.list[at] = { ...previous, plan: view, ts: Date.now() }
       return
     }
-    this.list.push({ kind: 'plan', id: this.seq++, plan: view })
+    this.list.push({ kind: 'plan', id: this.seq++, plan: view, ts: Date.now() })
   }
 
   /** 清空（开新会话/恢复会话时）。 */
@@ -93,48 +104,64 @@ export class Transcript {
    * usage 不重放（历史 token 已计入模型侧缓存，快照从 0 起算当前会话增量）。
    * @param toolErrors 日志里记下的工具异常标记（callId → `rejected` / `tool-error`）。
    *                   OpenAI 协议消息不带这个信息，缺省时工具一律折成「完成」。
+   *
+   * 时间戳跟着消息走（`ChatMessage.ts`，由会话日志重放时填回）：有就盖在条目上，
+   * 没有（2026-09 之前的老日志）就传 null，条目干脆不带 ts，界面降级不显示时间。
    */
   replayHistory(messages: readonly ChatMessage[], toolErrors?: ReadonlyMap<string, string>): boolean {
     let changed = false
     for (const message of messages) {
+      const ts = message.ts ?? null
       switch (message.role) {
         case 'user': {
           const images = contentImages(message.content)
           changed =
-            this.reduce({
-              type: 'user',
-              text: contentText(message.content),
-              ...(images.length > 0 ? { images } : {}),
-            }) || changed
+            this.reduce(
+              {
+                type: 'user',
+                text: contentText(message.content),
+                ...(images.length > 0 ? { images } : {}),
+              },
+              ts,
+            ) || changed
           break
         }
         case 'assistant':
           changed =
-            this.reduce({
-              type: 'message',
-              text: contentText(message.content),
-              reasoning: message.reasoning_content ?? '',
-            }) || changed
+            this.reduce(
+              {
+                type: 'message',
+                text: contentText(message.content),
+                reasoning: message.reasoning_content ?? '',
+              },
+              ts,
+            ) || changed
           for (const call of message.tool_calls ?? []) {
             changed =
-              this.reduce({
-                type: 'tool/call',
-                callId: call.id,
-                name: call.function.name,
-                args: call.function.arguments,
-              }) || changed
+              this.reduce(
+                {
+                  type: 'tool/call',
+                  callId: call.id,
+                  name: call.function.name,
+                  args: call.function.arguments,
+                },
+                ts,
+              ) || changed
           }
           break
         case 'tool': {
           const callId = message.tool_call_id ?? ''
           const error = toolErrors?.get(callId)
           changed =
-            this.reduce({
-              type: 'tool/result',
-              callId,
-              text: contentText(message.content),
-              ...(error !== undefined ? { error } : {}),
-            }) || changed
+            this.reduce(
+              {
+                type: 'tool/result',
+                callId,
+                text: contentText(message.content),
+                ...(error !== undefined ? { error } : {}),
+              },
+              ts,
+            ) || changed
           break
         }
       }
@@ -144,11 +171,19 @@ export class Transcript {
     return changed
   }
 
+  /** 给新条目盖时间戳；重放老日志（eventTs 为 null）时不盖。 */
+  private stamp(entry: TranscriptEntry): TranscriptEntry {
+    return this.eventTs === null ? entry : { ...entry, ts: this.eventTs }
+  }
+
   /**
    * 折叠一条 core 事件。
+   * @param ts 这条事件的时刻；省略取当前时间（运行中的实时事件都这样）。
+   *           重放老会话时显式传 null：条目不带 ts，界面据此降级。
    * @returns 是否产生了可见变化（调用方据此决定是否通知 UI）。
    */
-  reduce(event: CoreEvent): boolean {
+  reduce(event: CoreEvent, ts: number | null = Date.now()): boolean {
+    this.eventTs = ts
     switch (event.type) {
       case 'user': {
         const last = this.list[this.list.length - 1]
@@ -159,12 +194,14 @@ export class Transcript {
           last.text === event.text &&
           (last.images?.length ?? 0) === imageCount
         if (sameAsLast) return false
-        this.list.push({
-          kind: 'user',
-          id: this.seq++,
-          text: event.text,
-          ...(imageCount > 0 ? { images: event.images } : {}),
-        })
+        this.list.push(
+          this.stamp({
+            kind: 'user',
+            id: this.seq++,
+            text: event.text,
+            ...(imageCount > 0 ? { images: event.images } : {}),
+          }),
+        )
         return true
       }
       case 'message': {
@@ -201,7 +238,7 @@ export class Transcript {
           } satisfies ToolCallView,
         }
         this.toolIndex.set(event.callId, this.list.length)
-        this.list.push(entry)
+        this.list.push(this.stamp(entry))
         return true
       }
       case 'tool/result': {
@@ -209,14 +246,16 @@ export class Transcript {
         if (index === undefined) return false
         const previous = this.list[index] as ToolEntry
         const failed = event.error !== undefined && event.error !== 'rejected'
-        this.list[index] = {
+        // 时间戳跟着结果刷新：这张卡「最后一次写入」是拿到结果那一刻，
+        // 界面按最后一条条目的 ts 算这一轮的结束时刻，刷新了才准
+        this.list[index] = this.stamp({
           ...previous,
           call: {
             ...previous.call,
             status: event.error === 'rejected' ? 'rejected' : failed ? 'failed' : 'done',
             resultText: truncate(event.text),
           },
-        }
+        })
         return true
       }
       case 'usage':
@@ -247,29 +286,35 @@ export class Transcript {
 
   /** 追加到同类型尾段，否则开新段。 */
   private appendSegment(kind: LiveSegment['kind'], text: string): void {
+    const ts = this.eventTs ?? Date.now()
     const last = this.segments[this.segments.length - 1]
-    if (last !== undefined && last.kind === kind) last.text += text
-    else this.segments.push({ kind, text })
+    if (last !== undefined && last.kind === kind) {
+      last.text += text
+      last.ts = ts
+    } else {
+      this.segments.push({ kind, text, ts })
+    }
   }
 
   /** 定稿文本：合并进相邻的最后一个 text 条目。 */
   private pushAssistantText(text: string): void {
     const last = this.list[this.list.length - 1]
     if (last !== undefined && last.kind === 'text') {
-      this.list[this.list.length - 1] = { ...last, text: `${last.text}\n${text}` }
+      // 合并时刷新时间：这条条目最后一次写入就是现在，界面按它算这一轮何时结束
+      this.list[this.list.length - 1] = this.stamp({ ...last, text: `${last.text}\n${text}` })
       return
     }
-    this.list.push({ kind: 'text', id: this.seq++, text })
+    this.list.push(this.stamp({ kind: 'text', id: this.seq++, text }))
   }
 
   /** 定稿思考：合并进相邻的最后一个 thinking 条目（折叠展示）。 */
   private pushThinking(text: string): void {
     const last = this.list[this.list.length - 1]
     if (last !== undefined && last.kind === 'thinking') {
-      this.list[this.list.length - 1] = { ...last, text: `${last.text}\n${text}` }
+      this.list[this.list.length - 1] = this.stamp({ ...last, text: `${last.text}\n${text}` })
       return
     }
-    this.list.push({ kind: 'thinking', id: this.seq++, text })
+    this.list.push(this.stamp({ kind: 'thinking', id: this.seq++, text }))
   }
 }
 

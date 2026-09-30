@@ -72,6 +72,11 @@ export function IconChevronRight(props: IconProps): JSX.Element {
   return base(<path d="m9.5 6 6 6-6 6" />, props)
 }
 
+/** 收起（∨ 的镜像）：工具卡展开区快捷栏的「收起」按钮用。 */
+export function IconChevronUp(props: IconProps): JSX.Element {
+  return base(<path d="m6 14.5 6-6 6 6" />, props)
+}
+
 export function IconArrowUp(props: IconProps): JSX.Element {
   return base(
     <>
@@ -251,6 +256,20 @@ export function IconEdit(props: IconProps): JSX.Element {
     <>
       <path d="M4.5 19.5h4l10-10a2.1 2.1 0 0 0-3-3l-10 10Z" />
       <path d="M13.5 6.5l3 3" />
+    </>,
+    props,
+  )
+}
+
+/** 分叉（一条主干分出两条支线，对照 git 的分支图形）。 */
+export function IconBranch(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="7" cy="5.5" r="2.1" />
+      <circle cx="7" cy="18.5" r="2.1" />
+      <circle cx="17" cy="9.5" r="2.1" />
+      <path d="M7 7.6v8.8" />
+      <path d="M7 12.2h3.6a4.3 4.3 0 0 0 4.3-4.3V9.5" />
     </>,
     props,
   )
