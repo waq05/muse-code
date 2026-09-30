@@ -1,7 +1,11 @@
 /**
  * 助手回合进行中的状态行（对照 dsh 截图的那两行）：
  *   第一行：旋转圈 + 阶段说明（正在分析请求 / 正在执行工具 / 等待你的确认）；
+ *   两行之间一条浅色分割线（.turn-status-rule，宽度跟文本区对齐）；
  *   第二行：星标 + 当前活动名（正在调用 read_file）+ 已用时 + 尾部动画省略号。
+ *
+ * 为什么中间要加这条线：阶段行是「这一轮走到哪一步」，活动行是「此刻在调什么、花了多久」，
+ * 两行字号、颜色都接近，贴在一起读起来像一句话被折成两截。一条弱色线把两种信息分开。
  *
  * 计时口径：这一轮从用户消息发出算起（条目上的 ts，见 turn-timing.ts）。
  * 老会话拿不到 ts 时退回「本组件第一次看到这一轮的时刻」——计时器因此永远有值，
@@ -47,6 +51,8 @@ export function TurnStatusLine(props: {
           {props.stage}
         </span>
       </div>
+      {/* 两行之间的浅色分割线：只装饰，读屏念它没有意义，aria-hidden */}
+      <div className="turn-status-rule" aria-hidden="true" />
       <div className="turn-status-row">
         <IconSpark size={12} className="turn-status-icon" />
         <span className="turn-status-activity">

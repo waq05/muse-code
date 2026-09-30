@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import type { ModelChoiceView, PluginInfoView, RuntimeSnapshot, TeammateView, TranscriptEntry, UiPrefsView } from '@dsc/runtime/contract.js'
-import { applyAppearance, loadCachedAppearance, saveCachedAppearance } from './appearance.js'
+import { applyAppearance, loadCachedAppearance, normalizeFontScale, saveCachedAppearance } from './appearance.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { dsc, createRuntimeProxy, type RuntimeProxy } from './bridge.js'
 import { ApprovalCard } from './ApprovalCard.js'
@@ -96,7 +96,11 @@ export function App(): JSX.Element {
     })
     void dsc.getCwd().then(setCwd)
     void dsc.recentCwds().then(setRecentCwds)
-    void proxy.getUiPrefs().then(setUiPrefs)
+    // 宿主存档里的字号可能是旧版的三档字符串（'sm' / 'md' / 'lg'），读回来先归一成倍率，
+    // 这样滑杆、百分比、落盘的值始终是同一个数字。
+    void proxy.getUiPrefs().then((prefs) =>
+      setUiPrefs({ ...prefs, fontSize: normalizeFontScale(prefs.fontSize) }),
+    )
     void proxy.refreshSessions()
     void proxy.listModels().then(setModels)
     return () => {
@@ -296,7 +300,10 @@ export function App(): JSX.Element {
         return
       }
       if (result.notice !== undefined) toastOk(result.notice)
-      void proxy.getUiPrefs().then(setUiPrefs)
+      // 回读的值可能被宿主改写（读到旧档就是三档字符串），跟首帧一样归一
+      void proxy.getUiPrefs().then((prefs) =>
+        setUiPrefs({ ...prefs, fontSize: normalizeFontScale(prefs.fontSize) }),
+      )
     })
   }
 

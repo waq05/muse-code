@@ -161,17 +161,6 @@
   letter-spacing: 0.02em;
 }
 
-/* 顶部 DESKTOP 徽标：小号大字距，走徽标原语的几何。 */
-.sidebar-header .badge {
-  padding: 2px 5px;
-  border: 1px solid var(--dsc-stroke-2);
-  border-radius: var(--dsc-r-badge);
-  color: var(--dsc-text-quaternary);
-  font-size: var(--dsc-fs-micro);
-  letter-spacing: 0.09em;
-  user-select: none;
-}
-
 /* 收起侧栏的按钮顶到行尾，和右侧窗口控件隔开。头部整行是拖窗口区，按钮要摘出去。 */
 .sidebar-header .rail-toggle {
   margin-left: auto;
@@ -5773,16 +5762,22 @@ body.resizing iframe {
 
 /* ══════════ 每轮分叉与编辑重发 ══════════ */
 
-/* 用户气泡上的悬停操作：编辑（铅笔）与分叉（分支）。
+/* 用户气泡下方的悬停操作条：编辑（铅笔）。
  *
- * 形状与助手消息底部那条 .entry-meta 同一套规格（两颗 12px 图标、行内按钮、
- * 3px 5px 内距、--dsc-r-control 圆角），只是它贴在气泡内部右下角而不是另起一行：
- * 气泡本身是右对齐的软填充块，另起一行会把每一轮的高度撑高一截。
+ * 位置：气泡**外面**的正下方（.user-turn 里、.entry-user 之后）。为什么不放气泡里面：
+ * 气泡是右对齐的软填充块，按钮压在右下角就盖住正文最后一行；挪到气泡下方既不遮字，
+ * 也不会把气泡撑高一截——这一条一直在（只改不透明度），悬停不引起任何位移。
+ * 分叉按钮不在这里，它挂在每轮末尾的时间行上（.round-foot .user-act，见文件末尾那一段）。
+ *
+ * 形状与助手消息底部那条 .entry-meta 同一套规格（12px 图标、行内按钮、2px 4px 内距、
+ * --dsc-r-control 圆角）。
  *
  * 显隐沿用同一个节奏：默认 opacity 0，鼠标悬停或键盘 Tab 进来（:focus-within）才现。
  * 只留 opacity 不留 display —— 按钮始终在无障碍树里，Tab 顺序与读屏都不会因为这层
- * 视觉隐藏而断掉（display:none 会让按钮不可聚焦，那就成了鼠标专用功能）。 */
-.entry-user .user-actions {
+ * 视觉隐藏而断掉（display:none 会让按钮不可聚焦，那就成了鼠标专用功能）。
+ * 悬停触发挂在 .user-turn 上而不是气泡 .entry-user 上：按钮已经在气泡外面，
+ * 鼠标从气泡往下移到按钮要跨过两个盒子的边界，挂在气泡上的话半路就把按钮收走了。 */
+.user-turn .user-actions {
   display: flex;
   gap: var(--dsc-sp-0);
   justify-content: flex-end;
@@ -5791,12 +5786,12 @@ body.resizing iframe {
   transition: opacity var(--dsc-dur) var(--dsc-ease);
 }
 
-.entry-user:hover .user-actions,
-.entry-user:focus-within .user-actions {
+.user-turn:hover .user-actions,
+.user-turn:focus-within .user-actions {
   opacity: 1;
 }
 
-.entry-user .user-act {
+.user-turn .user-act {
   align-items: center;
   border-radius: var(--dsc-r-control);
   color: var(--dsc-text-tertiary);
@@ -5807,28 +5802,28 @@ body.resizing iframe {
     color var(--dsc-dur) var(--dsc-ease);
 }
 
-.entry-user .user-act:hover {
+.user-turn .user-act:hover {
   background: var(--dsc-control-hover-bg);
   color: var(--dsc-text-primary);
 }
 
-.entry-user .user-act:active {
+.user-turn .user-act:active {
   background: var(--dsc-control-active-bg);
 }
 
-.entry-user .user-act:focus-visible {
+.user-turn .user-act:focus-visible {
   box-shadow: inset 0 0 0 1px var(--dsc-accent);
   outline: none;
 }
 
-/* 一轮正在跑时不给编辑/分叉（换会话会把这一轮打断），置灰但仍留在 Tab 顺序里，
+/* 一轮正在跑时不给编辑（换会话会把这一轮打断），置灰但仍留在 Tab 顺序里，
    title 里会说明原因，比直接抽掉按钮更好解释。 */
-.entry-user .user-act:disabled {
+.user-turn .user-act:disabled {
   cursor: default;
   opacity: 0.35;
 }
 
-.entry-user .user-act:disabled:hover {
+.user-turn .user-act:disabled:hover {
   background: none;
   color: var(--dsc-text-tertiary);
 }
@@ -5889,9 +5884,193 @@ body.resizing iframe {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .entry-user .user-actions,
-  .entry-user .user-act {
+  .user-turn .user-actions,
+  .user-turn .user-act,
+  .round-foot .user-act {
     transition: none;
   }
+}
+
+/* ══════════ 字号滑杆 ══════════ */
+/* 设置 → 外观 → 字号：一条滑杆连续调 85%–135%，右边跟一个当前百分比。
+   下面只做新增，颜色/圆角/字号全部走 tokens.css 里的现有令牌。 */
+
+.font-scale {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+/* 轨道与滑块自己画：原生 range 在 Windows 上走系统配色，
+   深色主题下会亮成一条白杠，跟面板里其它控件对不上。 */
+.font-scale-range {
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  flex: 1;
+  height: 20px;
+  margin: 0;
+  min-width: 0;
+}
+
+.font-scale-range::-webkit-slider-runnable-track {
+  background: var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-pill);
+  height: 4px;
+}
+
+.font-scale-range::-webkit-slider-thumb {
+  appearance: none;
+  background: var(--dsc-accent);
+  border: none;
+  border-radius: var(--dsc-r-pill);
+  height: 14px;
+  /* 滑块压在轨道正中：(4px 轨道 - 14px 滑块) / 2 */
+  margin-top: -5px;
+  width: 14px;
+}
+
+.font-scale-range:focus-visible {
+  outline: none;
+}
+
+/* 键盘调字号时给滑块一圈焦点环，与输入框的焦点环同款 */
+.font-scale-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 22%, transparent);
+}
+
+.font-scale-value {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-body);
+  font-variant-numeric: tabular-nums;
+  /* 定宽：百分比在 85% ↔ 135% 之间变位数时，说明行不会跟着左右晃 */
+  text-align: right;
+  width: 44px;
+}
+
+/* ══════════ 侧栏与图标按钮优化 ══════════ */
+/* 这一段只做两件事，别处的规则一行没改：
+     1. 图标按钮整体大一圈：hit area 静息 24px → 26px；
+     2. 侧栏行 hover 才出现的那排按钮再重点放大：24px → 28px，图标 13/14 → 14/15。
+   行高（--dsc-row-h）不动：28px 的按钮在「标准」密度下把行撑到 28px，整列
+   会话行等高一起长，不会出现某一行特别高；「宽松」密度下行高本来就 29.9px，
+   按钮装得下，列表一点不变。 */
+
+/* ── 图标按钮：静息 24px → 26px ── */
+.icon-btn {
+  height: 26px;
+  width: 26px;
+}
+
+/* ── 侧栏行尾的按钮组：24px → 28px ──
+   工作区行走 .row-tail 那个槽位（数量徽标让位后接管），会话行是行内直接排。
+   两个槽位一起放大，同一列里两种行的高度才一致。 */
+.sidebar .group-row .row-tail .row-actions .icon-btn,
+.sidebar .sess-item > .row-actions .icon-btn {
+  height: 28px;
+  width: 28px;
+}
+
+/* 按钮一大，原来 1px 的缝就贴住了：给到 3px，三颗按钮仍然挤在行尾。 */
+.sidebar .group-row .row-tail .row-actions,
+.sidebar .sess-item > .row-actions {
+  gap: 3px;
+}
+
+/* ── 菜单行 ──
+   图标提到 15px 后 4px 的上下内距显挤，各补 1px；勾选列跟着图标放宽 1px，
+   长菜单项不会被这一下顶出横幅。 */
+.row-menu .menu-item {
+  padding: 5px 8px;
+}
+
+.menu-check {
+  width: 15px;
+}
+
+/* ══════════ 对话区按钮位置与边界优化 ══════════ */
+/* 这一段只动对话区，别处的规则一行没改：
+     1. 用户消息那一块（气泡 + 气泡正下方的编辑按钮）的外层容器 .user-turn；
+     2. 每轮页脚里的分叉按钮（.round-foot .user-act）；
+     3. 进行中的状态行两行之间的浅色分割线（.turn-status-rule）。
+   紧挨着上面那一段「每轮分叉与编辑重发」里的 .user-actions 选择器这次一并改了：
+   操作条从气泡里面搬到了气泡外面。 */
+
+/* ── 用户消息那一块：气泡在上面，编辑按钮贴着气泡底边在下面 ──
+   它顶替原来「气泡直接当 .chat-inner 的 flex 项」那个位置：.chat-inner 是纵向 flex，
+   横向默认拉伸，所以这一层仍然满宽，气泡的右对齐（align-items: flex-end）与轮次之间的
+   间距（.chat-inner 的 gap）跟改之前一模一样。
+   气泡自己的 max-width: 78% 现在按这一层的宽算，而这一层满宽，78% 还是原来那个数。 */
+.user-turn {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* 操作条：右对齐在气泡正下方，不越出气泡的右缘。
+   margin-top 与 padding-right 各留 2px：2px 是贴着气泡底边的那条缝，
+   padding-right 让铅笔的右缘跟气泡圆角的右缘取齐，而不是顶到正文列的边界上。
+   高度固定（一颗 12px 图标 + 上下各 2px 内距），所以位置一直在，悬停不顶动下面的内容。 */
+.user-turn .user-actions {
+  margin-top: var(--dsc-sp-0);
+  padding-right: var(--dsc-sp-0);
+}
+
+/* 截图钩子（?reveal=1）：真实 :hover 抓不进静态图，让编辑按钮在自检里常驻 */
+.shot-reveal .user-turn .user-actions {
+  opacity: 1;
+}
+
+/* ── 每轮页脚里的分叉按钮（分支图标）──
+   落在 HH:mm 与用时的右边。外观与气泡下那颗编辑按钮同一套规格，
+   两处各写一份是因为它们分别落在气泡外与页脚里，没有共同的祖先可以挂；
+   共用一条选择器就得改别处的规则，改动面反而更大。
+   图标 12px 比页脚的字（11px）大 1px，纵向居中交给 .round-foot 的 align-items。 */
+.round-foot .user-act {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+  padding: 1px 4px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.round-foot .user-act:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.round-foot .user-act:active {
+  background: var(--dsc-control-active-bg);
+}
+
+.round-foot .user-act:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* 一轮正在跑、或这是第 1 条消息（它之前没有内容可分叉）：置灰但仍留在 Tab 顺序里，
+   title 里写着为什么点不了，比直接抽掉按钮更好解释。 */
+.round-foot .user-act:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.round-foot .user-act:disabled:hover {
+  background: none;
+  color: var(--dsc-text-quaternary);
+}
+
+/* ── 进行中的状态行：两行之间一条浅色分割线 ──
+   宽度不用给：.turn-status 是 align-self: flex-start 的收缩块，这条线作为它的子项
+   横向拉伸到「两行里最宽那一行」的宽度，也就是文本区本身的宽，左右都不越出文字。
+   颜色用 --dsc-stroke-3（tokens.css 里那只「默认分隔线」，与 .ctx-rule 同档），
+   比两行文字都轻一档；上下间距交给 .turn-status 的 3px gap，这里不再加 margin。 */
+.turn-status-rule {
+  border-top: 1px solid var(--dsc-stroke-3);
 }
 

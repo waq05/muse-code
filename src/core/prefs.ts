@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { ApprovalPolicy, ArchivedFilter, EffortLevel, MarketSource, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiFontSize, UiPrefsView } from '../contract.js'
+import type { ApprovalPolicy, ArchivedFilter, EffortLevel, MarketSource, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiPrefsView } from '../contract.js'
 
 export const DSC_SETTINGS_JSON = join(homedir(), '.dsc', 'settings.json')
 
@@ -40,11 +40,37 @@ const SESSION_SORTS: readonly SessionSortKey[] = ['manual', 'recent', 'created']
 const SESSION_GROUPS: readonly SessionGroupKey[] = ['workspace', 'tree', 'flat']
 const ARCHIVED_FILTERS: readonly ArchivedFilter[] = ['hide', 'show', 'only']
 const THEME_MODES: readonly ThemeMode[] = ['dark', 'light', 'system']
-const FONT_SIZES: readonly UiFontSize[] = ['sm', 'md', 'lg']
 const DENSITIES: readonly UiDensity[] = ['compact', 'standard', 'roomy']
+
+/**
+ * 旧存档里的三档字号：0.6 之前 `ui.fontSize` 存的是字符串，读到时按这张表
+ * 换成倍率，之后的存档只存数字。
+ */
+const LEGACY_FONT_SCALES: Record<string, number> = { sm: 0.92, md: 1, lg: 1.12 }
+
+/** 字号倍率的可调范围，与桌面端滑杆一致（desktop/src/renderer/appearance.ts）。 */
+const FONT_SCALE_MIN = 0.85
+const FONT_SCALE_MAX = 1.35
+/** 读不出字号时的基准倍率：正文 13px 原样。 */
+const FONT_SCALE_DEFAULT = 1
 
 /** 工作区别名的长度上限（侧栏一行放不下太长名字）。 */
 const ALIAS_LIMIT = 40
+
+/**
+ * 把存档里的字号读成倍率。
+ *
+ * 数字直接夹到 0.85–1.35；旧的 `'sm' | 'md' | 'lg'` 迁移成 0.92 / 1 / 1.12；
+ * 手改坏的值（`"大"`、NaN、null）一律回落 1，绝不让存档把启动拦下来。
+ *
+ * @param value settings.json 里 `ui.fontSize` 的原始值
+ * @returns 可直接写进 `--dsc-font-scale` 的倍率
+ */
+function readFontScale(value: unknown): number {
+  const legacy = typeof value === 'string' ? LEGACY_FONT_SCALES[value] : undefined
+  const scale = legacy ?? (typeof value === 'number' && Number.isFinite(value) ? value : FONT_SCALE_DEFAULT)
+  return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, scale))
+}
 
 /** 读偏好（文件缺失或损坏按默认处理，绝不因为偏好坏掉起不来）。 */
 export function readPrefs(): DscPrefs {
@@ -60,7 +86,7 @@ export function readPrefs(): DscPrefs {
       workspaceOrder: [],
       workspaceAliases: {},
       themeMode: 'dark',
-      fontSize: 'md',
+      fontSize: FONT_SCALE_DEFAULT,
       density: 'standard',
     },
   }
@@ -95,8 +121,8 @@ export function readPrefs(): DscPrefs {
       if (typeof ui.themeMode === 'string' && THEME_MODES.includes(ui.themeMode as ThemeMode)) {
         prefs.ui.themeMode = ui.themeMode as ThemeMode
       }
-      if (typeof ui.fontSize === 'string' && FONT_SIZES.includes(ui.fontSize as UiFontSize)) {
-        prefs.ui.fontSize = ui.fontSize as UiFontSize
+      if (typeof ui.fontSize === 'string' || typeof ui.fontSize === 'number') {
+        prefs.ui.fontSize = readFontScale(ui.fontSize)
       }
       if (typeof ui.density === 'string' && DENSITIES.includes(ui.density as UiDensity)) {
         prefs.ui.density = ui.density as UiDensity

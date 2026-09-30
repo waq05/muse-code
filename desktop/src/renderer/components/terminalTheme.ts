@@ -17,7 +17,7 @@
  */
 import type { ITheme } from '@xterm/xterm'
 
-/** 终端字号基准档（改动前写死的 12.5px）；字号「小/大」时按 --dsc-font-scale 缩放。 */
+/** 终端字号基准（改动前写死的 12.5px）；设置里的字号百分比按 --dsc-font-scale 连续缩放它。 */
 const TERM_FONT_BASE = 12.5
 
 /** 兜底色：改动前写死的那几个值，只在令牌读不到或转不出 srgb 时使用。 */
@@ -242,8 +242,9 @@ export function readTerminalTheme(): ITheme {
 /**
  * 终端字号 = 基准 12.5px × `--dsc-font-scale`。
  *
- * 这个令牌是纯数字变量，不需要探针求值；`appearance.ts` 把字号三档写成 0.92/1/1.12，
- * 于是三档落到 11.5 / 12.5 / 14。
+ * 这个令牌是纯数字变量，不需要探针求值；`appearance.ts` 把字号设置写成
+ * 0.85–1.35 的连续倍率（默认 1），于是终端字号跟着 10.63–16.88px 连续走，
+ * 这里不做分档也不夹取，读到什么就乘什么。
  *
  * @returns 可以直接赋给 `terminal.options.fontSize` 的像素值
  */

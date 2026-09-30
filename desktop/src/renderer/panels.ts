@@ -19,6 +19,22 @@ export const SIDEBAR_MAX = 420
 export const THREAD_MIN = 480
 /** 中间列两侧要留给拖拽条和 safe 区的宽度：24px 内缩 + 10px 热区，两边各一份，再留点余量。 */
 export const THREAD_EDGE_BUDGET = 80
+/**
+ * 右缘那两条轨道占掉的宽度：回合刻度条的专属轨道（`--dsc-jump-lane`，里面是
+ * 刻度 16px + 与正文 4px 间隙 + 与滚动条 12px 间隙）加上竖向滚动条（`--dsc-scrollbar-w`）。
+ *
+ * 正文拖到最宽时，光是 `THREAD_EDGE_BUDGET` 只按「热区 + 内缩」留白，
+ * 这两条轨道就得靠 `.chat` 的右内距替正文让位——一旦谁动了那个内距，正文立刻伸到刻度底下。
+ * 所以把这条轨道也算进拖宽的上限里：上限自己守住刻度，不再依赖别处的内距。
+ *
+ * 数字从样式表现读（见 readRootPx），不在这里抄一份：tokens.css 里改了刻度轨道宽，
+ * 这里跟着变，不会出现两处数字各说各话。
+ *
+ * @returns 右缘轨道总宽（px）
+ */
+export function readRightRailPx(): number {
+  return readRootPx('--dsc-jump-lane', 32) + readRootPx('--dsc-scrollbar-w', 8)
+}
 /** 读档时的宽度天花板。真正的上限是当时的窗口宽，拖的时候现场算；这里只挡住存坏的脏值。 */
 export const STORED_MAX = 3200
 

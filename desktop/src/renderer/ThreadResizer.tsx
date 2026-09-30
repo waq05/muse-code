@@ -8,7 +8,7 @@
  * @module desktop/renderer/ThreadResizer
  */
 import { useCallback, type JSX, type RefObject } from 'react'
-import { THREAD_EDGE_BUDGET, THREAD_MIN, setRootVar, useWidthDrag } from './panels.js'
+import { THREAD_EDGE_BUDGET, THREAD_MIN, readRightRailPx, setRootVar, useWidthDrag } from './panels.js'
 
 export function ThreadResizer(props: {
   /** 承载正文的那一层（`.thread-zone`），拖拽条定位在它里面。 */
@@ -24,11 +24,15 @@ export function ThreadResizer(props: {
    * 把想要的宽度夹成当前能生效的宽度。
    * 没存档时取「真实渲染出来的宽」，不重算 76ch：字号、密度两档都会改 76ch 的实际像素，
    * 只有渲染结果作数。
+   *
+   * 上限除了两侧的热区预算，还要让出右缘的刻度轨道与滚动条（readRightRailPx）：
+   * 拖到最宽时正文的右缘要停在刻度条左边，而不是伸到刻度底下。
+   * 左边界不动——左边没有第三条轨道，原来的预算够用。
    */
   const resolve = (px: number | null): number => {
     const zone = props.zoneRef.current
     if (zone === null) return THREAD_MIN
-    const max = Math.max(THREAD_MIN, zone.clientWidth - THREAD_EDGE_BUDGET)
+    const max = Math.max(THREAD_MIN, zone.clientWidth - THREAD_EDGE_BUDGET - readRightRailPx())
     if (px === null) {
       const column = zone.querySelector<HTMLElement>('.chat-inner')
       return Math.min(Math.max(column?.offsetWidth ?? THREAD_MIN, THREAD_MIN), max)

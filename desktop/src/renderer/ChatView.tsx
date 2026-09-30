@@ -11,7 +11,11 @@
  * 不产生盒子、不改变 flex 布局）：一是让右缘刻度条能做真正的命中测试
  * （命中哪个条目就知道是第几轮，见 JumpStrip.tsx），二是每轮的页脚有地方挂。
  *
- * 用户消息悬停浮出「编辑 / 分叉」两颗按钮（对照 codex 的 Esc Esc 与 hermes 的气泡编辑）：
+ * 用户消息的两个操作分处两地（都是悬停出现）：
+ * - 「编辑」挂在气泡正下方的气泡外（`.user-turn` 里、`.entry-user` 之外）：铅笔压在气泡
+ *   背景里会盖住正文最后一行，挪到气泡下面既不遮字，也还在拇指够得到的位置；
+ * - 「分叉」挂在每轮末尾的时间行（TurnFooter）里、HH:mm 与用时的右边：分叉是按
+ *   「以这条消息为界」切一刀，跟这一轮的时间是同一件事的两面，同处一行才读得通。
  * 两条都落到同一个宿主能力上——`forkSession(路径, 用户消息下标)` 把这条之前的全部内容
  * 复制成一份新会话，原会话一个字节都不动。区别只在分叉之后做什么：
  * 分叉就是切过去；编辑额外把改好的正文作为新会话的下一条用户消息发出去（重发一轮）。
@@ -34,7 +38,7 @@ import { TurnStatusLine } from './TurnStatusLine.js'
 import { isSessionMarker } from './session-marker.js'
 import { liveActivity, roundInfos, turnStartedAt, type RoundInfo } from './turn-timing.js'
 import { toastErr, toastOk } from './components/toast.js'
-import { IconBranch, IconCopy, IconEdit, IconThumbDown, IconThumbUp } from './icons.js'
+import { IconCopy, IconEdit, IconThumbDown, IconThumbUp } from './icons.js'
 import { estimateTextTokens, formatTokens } from './token-estimate.js'
 
 /** 一条回复的本机评价：只有赞 / 踩两态，再点一次取消。 */
@@ -282,112 +286,99 @@ export function ChatView(props: {
             const feedbackKey = `${props.sessionId ?? ''}:${entry.id}`
             const voteState = feedback[feedbackKey]
             const round = roundAt.get(index)
-            // 每轮只在「这一轮的最后一条条目」下面挂页脚；最后一轮还在跑时不挂，
-            // 那一刻尾巴上是状态行（同一份时间说两遍反而乱）。
-            const foot =
-              round !== undefined &&
-              round.endIndex === index &&
-              round.answered &&
-              !(live && round.index === lastRoundIndex)
+            // 每轮只在「这一轮的最后一条条目」下面挂页脚。这一轮还在跑（最后一轮）时照片面挂：
+            // 时间与用时先不画（状态行正在报同一份时间），但页脚里的分叉按钮留着——置灰，
+            // 用户一眼看得到「这一轮结束时在哪分叉」。还没回复的轮次（answered 为假）不挂。
+            const running = live && round !== undefined && round.index === lastRoundIndex
+            const foot = round !== undefined && round.endIndex === index && round.answered
             let node: ReactNode
             switch (entry.kind) {
               case 'user': {
-                const ordinal = userOrdinalAt.get(index) ?? 0
                 const open = editing !== null && editing.index === index
                 node = (
-                  <div className={`entry-user${open ? ' editing' : ''}`}>
-                    {entry.images !== undefined && entry.images.length > 0 && (
-                      <div className="entry-user-images">
-                        {entry.images.map((url, imageIndex) => (
-                          <a key={imageIndex} href={url} target="_blank" rel="noreferrer" data-tip="点开看原图">
-                            <img src={url} alt={`第 ${String(imageIndex + 1)} 张贴图`} />
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                    {open && editing !== null ? (
-                      <div className="user-edit">
-                        <textarea
-                          className="user-edit-box"
-                          value={editing.text}
-                          autoFocus
-                          rows={Math.min(10, Math.max(2, editing.text.split('\n').length))}
-                          aria-label="编辑这条消息"
-                          onChange={(event) => setEditing({ index, text: event.target.value })}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Escape') {
-                              event.preventDefault()
-                              setEditing(null)
-                              return
-                            }
-                            // Enter 发送、Shift+Enter 换行（宿主里发消息也是这个习惯）
-                            if (event.key === 'Enter' && !event.shiftKey) {
-                              event.preventDefault()
-                              void submitEdit()
-                            }
-                          }}
-                        />
-                        <p className="user-edit-note">
-                          重发会以此刻为界分叉出新会话（含这条之前的全部内容），原会话保留。
-                          <br />
-                          Enter 发送 · Shift+Enter 换行 · Esc 取消
-                        </p>
-                        <div className="user-edit-actions">
-                          <button
-                            type="button"
-                            className="dsc-btn"
-                            data-variant="ghost"
-                            data-size="xs"
-                            onClick={() => setEditing(null)}
-                          >
-                            取消
-                          </button>
-                          <button
-                            type="button"
-                            className="dsc-btn"
-                            data-variant="primary"
-                            data-size="xs"
-                            disabled={sending || editing.text.trim() === ''}
-                            onClick={() => void submitEdit()}
-                          >
-                            {sending ? '正在重发…' : '重发'}
-                          </button>
+                  // .user-turn 是这条用户消息的整块：气泡 + 气泡正下方的操作条。
+                  // 为什么要多这一层容器：编辑按钮得落在气泡盒子外面（气泡自己有底色和内距，
+                  // 按钮放在里面又压住正文最后一行），而它仍然要跟气泡一起右对齐、贴着气泡底边。
+                  <div className="user-turn">
+                    <div className={`entry-user${open ? ' editing' : ''}`}>
+                      {entry.images !== undefined && entry.images.length > 0 && (
+                        <div className="entry-user-images">
+                          {entry.images.map((url, imageIndex) => (
+                            <a key={imageIndex} href={url} target="_blank" rel="noreferrer" data-tip="点开看原图">
+                              <img src={url} alt={`第 ${String(imageIndex + 1)} 张贴图`} />
+                            </a>
+                          ))}
                         </div>
-                      </div>
-                    ) : (
-                      <>
-                        {entry.text}
-                        {/* 悬停/键盘聚焦才出现的两颗按钮（与助手消息底部那条操作条同一套令牌）。
-                            只读视图（队友运行记录）里 canAct 为假，这条整块不渲染。 */}
-                        {canAct && (
-                          <div className="user-actions">
+                      )}
+                      {open && editing !== null ? (
+                        <div className="user-edit">
+                          <textarea
+                            className="user-edit-box"
+                            value={editing.text}
+                            autoFocus
+                            rows={Math.min(10, Math.max(2, editing.text.split('\n').length))}
+                            aria-label="编辑这条消息"
+                            onChange={(event) => setEditing({ index, text: event.target.value })}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Escape') {
+                                event.preventDefault()
+                                setEditing(null)
+                                return
+                              }
+                              // Enter 发送、Shift+Enter 换行（宿主里发消息也是这个习惯）
+                              if (event.key === 'Enter' && !event.shiftKey) {
+                                event.preventDefault()
+                                void submitEdit()
+                              }
+                            }}
+                          />
+                          <p className="user-edit-note">
+                            重发会以此刻为界分叉出新会话（含这条之前的全部内容），原会话保留。
+                            <br />
+                            Enter 发送 · Shift+Enter 换行 · Esc 取消
+                          </p>
+                          <div className="user-edit-actions">
                             <button
                               type="button"
-                              className="user-act"
-                              title="编辑这条消息并重发（会分叉出新会话，原会话保留）"
-                              aria-label="编辑并重发这条消息"
-                              disabled={live}
-                              onClick={() => setEditing({ index, text: entry.text })}
+                              className="dsc-btn"
+                              data-variant="ghost"
+                              data-size="xs"
+                              onClick={() => setEditing(null)}
                             >
-                              <IconEdit size={12} />
+                              取消
                             </button>
                             <button
                               type="button"
-                              className="user-act"
-                              title={
-                                ordinal === 0
-                                  ? '这条消息之前没有内容，分叉不出新会话'
-                                  : `分叉到第 ${String(ordinal + 1)} 条消息之前（原会话不变）`
-                              }
-                              aria-label="以这条消息为界分叉出新会话"
-                              disabled={live || ordinal === 0}
-                              onClick={() => void forkAt(index)}
+                              className="dsc-btn"
+                              data-variant="primary"
+                              data-size="xs"
+                              disabled={sending || editing.text.trim() === ''}
+                              onClick={() => void submitEdit()}
                             >
-                              <IconBranch size={12} />
+                              {sending ? '正在重发…' : '重发'}
                             </button>
                           </div>
-                        )}
-                      </>
+                        </div>
+                      ) : (
+                        entry.text
+                      )}
+                    </div>
+                    {/* 编辑按钮：只在悬停/键盘聚焦这条消息时浮出（与助手消息底部那条操作条同一套令牌），
+                        位置在气泡正下方、气泡之外。只读视图（队友运行记录）里 canAct 为假，这颗不渲染。
+                        分叉按钮不在这里——它跟着这一轮的时间行走，见下面 TurnFooter。 */}
+                    {!open && canAct && (
+                      <div className="user-actions">
+                        <button
+                          type="button"
+                          className="user-act"
+                          title="编辑这条消息并重发（会分叉出新会话，原会话保留）"
+                          aria-label="编辑并重发这条消息"
+                          disabled={live}
+                          onClick={() => setEditing({ index, text: entry.text })}
+                        >
+                          <IconEdit size={12} />
+                        </button>
+                      </div>
                     )}
                   </div>
                 )
@@ -482,7 +473,21 @@ export function ChatView(props: {
               // data-round 给刻度条命中测试用（第几轮）；display:contents 见 styles.css
               <div key={entry.id} className="entry-row" data-round={round?.index}>
                 {node}
-                {foot && round !== undefined && <TurnFooter round={round} />}
+                {foot && round !== undefined && (
+                  <TurnFooter
+                    round={round}
+                    running={running}
+                    // 只读视图（队友运行记录）不传 proxy/sessionPath，canAct 为假，这里整颗按钮不画
+                    onFork={canAct ? forkAt : undefined}
+                    // 一轮正在跑时不给分叉（换会话会把这一轮打断），第 1 条之前没有内容也分不出来
+                    forkDisabled={live || round.index === 0}
+                    forkTitle={
+                      round.index === 0
+                        ? '这条消息之前没有内容，分叉不出新会话'
+                        : '以这条消息为界分叉出新会话'
+                    }
+                  />
+                )}
               </div>
             )
           })}

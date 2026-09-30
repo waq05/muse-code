@@ -30,6 +30,7 @@ import {
   IconClock,
   IconClose,
   IconCoins,
+  IconCopy,
   IconEdit,
   IconFlatList,
   IconFolder,
@@ -279,25 +280,25 @@ export function Sidebar(props: {
     {
       label: '分组方式',
       items: [
-        { id: 'workspace', text: '按工作区', icon: <IconFolder size={14} />, active: group === 'workspace' },
-        { id: 'tree', text: '按工作区树', icon: <IconTree size={14} />, active: group === 'tree' },
-        { id: 'flat', text: '单列表', icon: <IconFlatList size={14} />, active: group === 'flat' },
+        { id: 'workspace', text: '按工作区', icon: <IconFolder size={15} />, active: group === 'workspace' },
+        { id: 'tree', text: '按工作区树', icon: <IconTree size={15} />, active: group === 'tree' },
+        { id: 'flat', text: '单列表', icon: <IconFlatList size={15} />, active: group === 'flat' },
       ],
     },
     {
       label: '排序方式',
       items: [
-        { id: 'manual', text: '手动排序', icon: <IconSwap size={14} />, active: sort === 'manual' },
-        { id: 'recent', text: '最近更新', icon: <IconClock size={14} />, active: sort === 'recent' },
-        { id: 'created', text: '创建时间', icon: <IconCalendar size={14} />, active: sort === 'created' },
+        { id: 'manual', text: '手动排序', icon: <IconSwap size={15} />, active: sort === 'manual' },
+        { id: 'recent', text: '最近更新', icon: <IconClock size={15} />, active: sort === 'recent' },
+        { id: 'created', text: '创建时间', icon: <IconCalendar size={15} />, active: sort === 'created' },
       ],
     },
     {
       label: '筛选会话',
       items: [
-        { id: 'hide', text: '隐藏已归档', icon: <IconArchiveOff size={14} />, active: archived === 'hide' },
-        { id: 'show', text: '全部对话（显示已归档）', icon: <IconQueue size={14} />, active: archived === 'show' },
-        { id: 'only', text: '仅显示已归档', icon: <IconArchive size={14} />, active: archived === 'only' },
+        { id: 'hide', text: '隐藏已归档', icon: <IconArchiveOff size={15} />, active: archived === 'hide' },
+        { id: 'show', text: '全部对话（显示已归档）', icon: <IconQueue size={15} />, active: archived === 'show' },
+        { id: 'only', text: '仅显示已归档', icon: <IconArchive size={15} />, active: archived === 'only' },
       ],
     },
   ]
@@ -431,6 +432,45 @@ export function Sidebar(props: {
     })
   }
 
+  /**
+   * 复制一段文本到系统剪贴板。
+   *
+   * 首选 navigator.clipboard（Electron 里的页面算可信来源，和顶栏「复制工作区路径」
+   * 走同一条路）；它不存在时退回 textarea + execCommand，免得这一项点了没反应。
+   */
+  const copyText = async (text: string, okText: string): Promise<void> => {
+    const clipboard = navigator.clipboard as Clipboard | undefined
+    try {
+      if (clipboard !== undefined) {
+        await clipboard.writeText(text)
+      } else {
+        const box = document.createElement('textarea')
+        box.value = text
+        box.style.position = 'fixed'
+        box.style.opacity = '0'
+        document.body.append(box)
+        box.select()
+        const ok = document.execCommand('copy')
+        box.remove()
+        if (!ok) throw new Error('execCommand 复制返回 false')
+      }
+      toastOk(okText)
+    } catch {
+      toastErr('复制失败，请手动选中')
+    }
+  }
+
+  /**
+   * 复制会话 ID：写进剪贴板的是会话 uuid，不是标题、也不是 jsonl 的完整路径。
+   *
+   * 注意 SessionSummary.id 存的是 jsonl 的绝对路径（见 contract.ts:305），
+   * uuid 只是它的文件名，所以这里先剥一层。
+   */
+  const copySessionId = (path: string): void => {
+    setMenu(null)
+    void copyText(uuidOf(path), '已复制会话 ID')
+  }
+
   const totalTokens = props.usage !== null ? props.usage.inputTokens + props.usage.outputTokens : 0
 
   /** 行级快捷键：只在焦点落在这行本身（不是里面的输入框）时生效。 */
@@ -505,6 +545,11 @@ export function Sidebar(props: {
           }
           rowKeys(event, sKey, 'session')
         }}
+        onContextMenu={(event) => {
+          // 右键 = 直接打开这一行的 `···` 菜单（归档行也一样：里面的复制 ID 与恢复都还能用）
+          event.preventDefault()
+          setMenu(sKey)
+        }}
       >
         {session.pinnedAt !== undefined && (
           <span className="pin-mark" data-tip="已置顶">
@@ -540,7 +585,7 @@ export function Sidebar(props: {
               void run(props.proxy.setSessionPinned(session.id, session.pinnedAt === undefined))
             }}
           >
-            <IconPin size={13} />
+            <IconPin size={14} />
           </button>
           {isArchived ? (
             <button
@@ -551,7 +596,7 @@ export function Sidebar(props: {
                 void run(props.proxy.restoreSessions([session.id]))
               }}
             >
-              <IconRefresh size={13} />
+              <IconRefresh size={14} />
             </button>
           ) : (
             <button
@@ -566,7 +611,7 @@ export function Sidebar(props: {
                 )
               }}
             >
-              <IconArchive size={13} />
+              <IconArchive size={14} />
             </button>
           )}
           <button
@@ -577,7 +622,7 @@ export function Sidebar(props: {
               setMenu(menu === sKey ? null : sKey)
             }}
           >
-            <IconMore size={14} />
+            <IconMore size={15} />
           </button>
         </span>
         {menu === sKey && (
@@ -591,16 +636,19 @@ export function Sidebar(props: {
                   void run(props.proxy.setSessionPinned(session.id, session.pinnedAt === undefined))
                 }}
               >
-                <IconPin size={14} /> {session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
+                <IconPin size={15} /> {session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
               </button>
               <button
                 className="menu-item"
                 onClick={() => startRename(sKey, 'session', session.title ?? '')}
               >
-                <IconEdit size={14} /> 重命名 <span className="menu-key">Ctrl+Alt+R</span>
+                <IconEdit size={15} /> 重命名 <span className="menu-key">Ctrl+Alt+R</span>
               </button>
               <button className="menu-item" onClick={() => void openFork(session.id)}>
-                <IconSwap size={14} /> 分叉会话 <span className="menu-key">Ctrl+Alt+F</span>
+                <IconSwap size={15} /> 分叉会话 <span className="menu-key">Ctrl+Alt+F</span>
+              </button>
+              <button className="menu-item" onClick={() => copySessionId(session.id)}>
+                <IconCopy size={15} /> 复制会话 ID
               </button>
               <div className="menu-sep" />
               {isArchived ? (
@@ -611,7 +659,7 @@ export function Sidebar(props: {
                     void run(props.proxy.restoreSessions([session.id]))
                   }}
                 >
-                  <IconRefresh size={14} /> 恢复会话
+                  <IconRefresh size={15} /> 恢复会话
                 </button>
               ) : (
                 <button
@@ -625,7 +673,7 @@ export function Sidebar(props: {
                     )
                   }}
                 >
-                  <IconArchive size={14} /> 归档会话 <span className="menu-key">Ctrl+Shift+A</span>
+                  <IconArchive size={15} /> 归档会话 <span className="menu-key">Ctrl+Shift+A</span>
                 </button>
               )}
             </div>
@@ -684,7 +732,6 @@ export function Sidebar(props: {
       <div className="sidebar-header">
         <img src={iconUrl} alt="Muse Code" draggable={false} />
         <span className="brand">Muse Code</span>
-        <span className="badge">DESKTOP</span>
         <button className="icon-btn rail-toggle" data-tip="收起侧边栏，快捷键 Ctrl+B" onClick={props.onToggleRail}>
           <IconSidebar size={15} />
         </button>
@@ -733,7 +780,7 @@ export function Sidebar(props: {
                   setQuery('')
                 }}
               >
-                <IconSearch size={14} />
+                <IconSearch size={15} />
               </button>
               <button
                 className={`icon-btn${viewMenu !== null ? ' on' : ''}`}
@@ -751,10 +798,10 @@ export function Sidebar(props: {
                   setViewMenu({ top: rect.bottom + 6, right: window.innerWidth - edge })
                 }}
               >
-                <IconSort size={14} />
+                <IconSort size={15} />
               </button>
               <button className="icon-btn" data-tip="浏览其他目录" onClick={props.onChooseDir}>
-                <IconFolderOpen size={14} />
+                <IconFolderOpen size={15} />
               </button>
             </span>
           )}
@@ -762,7 +809,7 @@ export function Sidebar(props: {
 
         {tab === 'sessions' && searching && (
           <div className="side-search">
-            <IconSearch size={13} />
+            <IconSearch size={14} />
             <input
               autoFocus
               placeholder="按会话名或目录名过滤"
@@ -776,7 +823,7 @@ export function Sidebar(props: {
               }}
             />
             <button className="icon-btn" data-tip="清除搜索" onClick={() => setSearching(false)}>
-              <IconClose size={13} />
+              <IconClose size={14} />
             </button>
           </div>
         )}
@@ -905,7 +952,7 @@ export function Sidebar(props: {
                     toggle(cwd)
                   }}
                 >
-                  {expanded ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}
+                  {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
                 </button>
                 <span className="folder-icon">{expanded ? <IconFolderOpen size={15} /> : <IconFolder size={15} />}</span>
                 {editing?.key === key ? (
@@ -941,7 +988,7 @@ export function Sidebar(props: {
                         newSessionIn(cwd)
                       }}
                     >
-                      <IconPlus size={13} />
+                      <IconPlus size={14} />
                     </button>
                     {/* 只剩归档区这一档时，「全部恢复」是这里唯一的批量动作，保留 */}
                     {archived === 'only' && sessions.length > 0 && (
@@ -953,7 +1000,7 @@ export function Sidebar(props: {
                           void run(props.proxy.restoreSessions(sessions.map((session) => session.id)))
                         }}
                       >
-                        <IconRefresh size={13} />
+                        <IconRefresh size={14} />
                       </button>
                     )}
                     <button
@@ -964,7 +1011,7 @@ export function Sidebar(props: {
                         setMenu(menu === key ? null : key)
                       }}
                     >
-                      <IconMore size={14} />
+                      <IconMore size={15} />
                     </button>
                   </span>
                 </span>
@@ -973,14 +1020,14 @@ export function Sidebar(props: {
                     <div className="menu-backdrop" onClick={() => setMenu(null)} />
                     <div className="row-menu" onClick={(event) => event.stopPropagation()}>
                       <button className="menu-item" onClick={() => reveal(cwd)}>
-                        <IconFolderOpen size={14} /> 在资源管理器中打开
+                        <IconFolderOpen size={15} /> 在资源管理器中打开
                       </button>
                       <button className="menu-item" onClick={() => startRename(key, 'workspace', displayName(cwd, aliases))}>
-                        <IconEdit size={14} /> 重命名显示名
+                        <IconEdit size={15} /> 重命名显示名
                       </button>
                       {aliases[cwd] !== undefined && (
                         <button className="menu-item" onClick={() => clearAlias(cwd)}>
-                          <IconClose size={14} /> 恢复真实目录名
+                          <IconClose size={15} /> 恢复真实目录名
                         </button>
                       )}
                       {sessions.length > 0 && (
@@ -994,7 +1041,7 @@ export function Sidebar(props: {
                                 void run(props.proxy.restoreSessions(sessions.map((session) => session.id)))
                               }}
                             >
-                              <IconRefresh size={14} /> 恢复这 {sessions.length} 个会话
+                              <IconRefresh size={15} /> 恢复这 {sessions.length} 个会话
                             </button>
                           ) : (
                             <button
@@ -1008,7 +1055,7 @@ export function Sidebar(props: {
                                 )
                               }}
                             >
-                              <IconArchive size={14} /> 归档这 {sessions.length} 个会话
+                              <IconArchive size={15} /> 归档这 {sessions.length} 个会话
                             </button>
                           )}
                         </>
@@ -1076,7 +1123,7 @@ export function Sidebar(props: {
                   >
                     {item.icon}
                     <span className="menu-text">{item.text}</span>
-                    <span className="menu-check">{item.active ? <IconCheck size={13} /> : null}</span>
+                    <span className="menu-check">{item.active ? <IconCheck size={14} /> : null}</span>
                   </button>
                 ))}
               </div>
@@ -1137,6 +1184,11 @@ export function Sidebar(props: {
 /** 工作区显示名：用户起的别名优先，否则末级目录名。 */
 function displayName(cwd: string, aliases: Record<string, string>): string {
   return aliases[cwd] ?? lastSegment(cwd)
+}
+
+/** 会话 uuid：会话文件（`…\.dsc\sessions\<目录>\<uuid>.jsonl`）的文件名去掉扩展名。 */
+function uuidOf(path: string): string {
+  return lastSegment(path).replace(/\.jsonl$/, '')
 }
 
 function lastSegment(path: string): string {

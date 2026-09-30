@@ -41,6 +41,7 @@ import type {
 } from '@dsc/runtime/contract.js'
 import { dsc, type RuntimeProxy } from './bridge.js'
 import { ArchivedView } from './ArchivedView.js'
+import { FONT_SCALE_MAX, FONT_SCALE_MIN, applyFontScale, normalizeFontScale } from './appearance.js'
 import { confirmAction } from './components/confirm.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { SkillsView } from './SkillsView.js'
@@ -411,16 +412,13 @@ function AppearanceRows(props: {
       <div className="setting-row">
         <div className="setting-label">字号</div>
         <div className="setting-control">
-          <Segments
-            value={props.uiPrefs.fontSize}
-            options={[
-              { value: 'sm', label: '小' },
-              { value: 'md', label: '标准' },
-              { value: 'lg', label: '大' },
-            ]}
-            onPick={(value) => props.onUiPrefs({ fontSize: value })}
+          <FontScaleRow
+            value={normalizeFontScale(props.uiPrefs.fontSize)}
+            onPick={(scale) => props.onUiPrefs({ fontSize: scale })}
           />
-          <div className="setting-help">标准档正文 13px，小档 92%、大档 112%，代码块跟着一起缩放。</div>
+          <div className="setting-help">
+            拖动调整全局字号，正文 13px 基准按百分比缩放，代码块和终端跟着一起变。
+          </div>
         </div>
       </div>
       <div className="setting-row">
@@ -438,6 +436,57 @@ function AppearanceRows(props: {
           <div className="setting-help">调整行高与纵向间距，紧凑档 90%，宽松档 115%，一屏可见的会话数随之变化。</div>
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * 字号滑杆：85%–135%，右边实时显示当前百分比。
+ *
+ * 拖动过程中只改本地草稿 + `<html>` 上的 `--dsc-font-scale`（整页字号即时跟手），
+ * 松手、松开按键或失焦才写宿主：一次拖动会发出几十次 change，
+ * 每次落盘会连弹几十个「已保存外观设置」。
+ * 拖到一半关掉设置面板时，把还停在预览态的字号撤回上一次落盘的值。
+ */
+function FontScaleRow(props: { value: number; onPick(value: number): void }): JSX.Element {
+  const [draft, setDraft] = useState(props.value)
+  // 上一次落盘的倍率：判断要不要写宿主、退出时撤回到哪个值，都看它
+  const committed = useRef(props.value)
+
+  // 宿主那边的值变了（读档归一的迁移结果、写回去被夹取）就跟着回位
+  useEffect(() => {
+    committed.current = props.value
+    setDraft(props.value)
+  }, [props.value])
+  useEffect(() => () => applyFontScale(committed.current), [])
+
+  const commit = (): void => {
+    if (draft === committed.current) return
+    committed.current = draft
+    props.onPick(draft)
+  }
+
+  return (
+    <div className="font-scale">
+      <input
+        className="font-scale-range"
+        type="range"
+        min={FONT_SCALE_MIN}
+        max={FONT_SCALE_MAX}
+        step={0.01}
+        value={draft}
+        aria-label="全局字号"
+        aria-valuetext={`${Math.round(draft * 100)}%`}
+        onChange={(event) => {
+          const next = Number(event.target.value)
+          setDraft(next)
+          applyFontScale(next)
+        }}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
+      />
+      <span className="font-scale-value">{Math.round(draft * 100)}%</span>
     </div>
   )
 }

@@ -350,8 +350,13 @@ export type ArchivedFilter = 'hide' | 'show' | 'only'
 /** 主题模式：固定深色、固定浅色，或跟着系统的浅色偏好走。 */
 export type ThemeMode = 'dark' | 'light' | 'system'
 
-/** 字号档位。桌面端把它换算成 `--dsc-font-scale` 的倍率。 */
-export type UiFontSize = 'sm' | 'md' | 'lg'
+/**
+ * 全局字号缩放倍数（1 = 正文 13px 基准）。桌面端把它直接写成 `--dsc-font-scale`。
+ *
+ * 0.6 之前的存档里这里是 `'sm' | 'md' | 'lg'` 三档字符串，读档时迁移成
+ * 0.92 / 1 / 1.12（见 core/prefs.ts 的 readPrefs）。
+ */
+export type UiFontSize = number
 
 /** 密度档位：行高与纵向内距的整体缩放（紧凑 / 标准 / 宽松）。 */
 export type UiDensity = 'compact' | 'standard' | 'roomy'
@@ -369,7 +374,7 @@ export interface UiPrefsView {
   workspaceAliases: Record<string, string>
   /** 主题模式。 */
   themeMode: ThemeMode
-  /** 字号档位。 */
+  /** 字号缩放倍数（设置页滑杆可调范围 0.85–1.35）。 */
   fontSize: UiFontSize
   /** 密度档位。 */
   density: UiDensity
