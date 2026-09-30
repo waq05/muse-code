@@ -4,7 +4,8 @@
  *
  * 自动跟随这次改成了条件式的（改版前每来一块新内容就把 scrollTop 钉到底，往上翻历史
  * 翻不动）：用户主动往上滚（滚轮 / 触摸拖动 / 拖滚动条，判定都落在「scrollTop 离开底部」
- * 这一件事上）就暂停跟随，滚回距底 32px（与 JumpStrip.tsx 的 AT_BOTTOM_EPS 同一档）以内、
+ * 这一件事上）就暂停跟随——「离开」按 120px 那一档算（PAUSE_EPS，比贴底档宽，见那里的
+ * 注释）；滚回距底 32px（与 JumpStrip.tsx 的 AT_BOTTOM_EPS 同一档）以内、
  * 或点右下角那颗「回到底部」才恢复。两个场景无条件跟随：换会话（点开一条会话要看的是它的
  * 末尾）与自己刚发出一条用户消息（要立刻看到它和它的回复）。内容自己变高不算「用户滚离」——
  * 那不发 scroll 事件，程序性的高度变化因此不会被误判。
@@ -64,6 +65,19 @@ import { formatDuration, liveActivity, roundDuration, roundInfos, turnStartedAt,
 import { toastErr, toastOk } from './components/toast.js'
 import { IconChevronDown, IconEdit } from './icons.js'
 import { estimateTextTokens } from './token-estimate.js'
+
+/**
+ * 「用户真的离开底部了」的门槛（px）：比贴底判定 AT_BOTTOM_EPS（32px）宽一档。
+ *
+ * 为什么是 120：一格滚轮约走 100px。用户贴在底部时轻推一格，scrollTop 立刻退到底以上
+ * 约 100px，按 32px 判的话「回到底部」按钮马上弹出来——可他只是想把最后几行往上挪一点
+ * 看清楚，人没打算走。门槛放到 120px 以后，单格上滑（约 100px）落在 120px 以内，算
+ * 「还在原地」；两格以上（约 200px）才认「这是要去看历史了」。
+ *
+ * 暂停用这一档、恢复仍用 AT_BOTTOM_EPS（32px），两档之间（32~120px）是滞回区间：
+ * 用户停在这一带时既不恢复也不暂停，省得在阈值附近来回抖着把按钮弹进弹出。
+ */
+const PAUSE_EPS = 120
 
 /** 一条回复的本机评价：只有赞 / 踩两态，再点一次取消。 */
 type Feedback = 'up' | 'down'
@@ -195,8 +209,8 @@ export function ChatView(props: {
    * 为什么要有这一位：改版前每来一块新内容就把 scrollTop 钉到底，用户想往上翻历史，
    * 刚滚上去就被下一块拽回来，长回答里根本翻不动。现在的规矩是——
    * 用户主动往上翻（滚轮向上 / 触摸拖动 / 拖滚动条，落到 scrollTop 离开底部这一件事上）
-   * 就暂停跟随，滚回距底 AT_BOTTOM_EPS（32px，与 JumpStrip 贴底判定同一档）以内、
-   * 或点「回到底部」就恢复。
+   * 就暂停跟随——「离开」按 PAUSE_EPS（120px）判，滚回距底 AT_BOTTOM_EPS（32px，与
+   * JumpStrip 贴底判定同一档）以内、或点「回到底部」就恢复。两档之差是滞回区间（见 PAUSE_EPS）。
    *
    * 用 ref 存而不是 state：这个判断挂在滚动事件与每次渲染上，走 state 会为了一个
    * 只在切换瞬间才变的值多渲染一轮；配套的 state 只用来画那颗「回到底部」按钮。
@@ -274,21 +288,48 @@ export function ChatView(props: {
    * 投递的，而流式内容可能先到一步（它一到就会贴底），只等 scroll 事件会有一次回弹。
    * 触摸按「手指往下拖（clientY 变大）」认往回翻，与滚动方向一致。
    *
+   * 两个门槛分工（见 PAUSE_EPS）：暂停用宽的 120px，恢复用窄的 AT_BOTTOM_EPS（32px），
+   * 中间 32~120px 是滞回区间，停在这一带两边都不动，按钮不会反复弹进弹出。
    * 唯一要排除的是「自己钉的那一下」：落点与 autoTopRef 重合就不算用户滚离。
    */
   useEffect(() => {
     const element = scroller.current
     if (element === null) return
-    const readBottom = (): boolean => {
-      const maxScroll = element.scrollHeight - element.clientHeight
-      return maxScroll <= 0 || maxScroll - element.scrollTop <= AT_BOTTOM_EPS
-    }
+    /**
+     * 现算可滚距离。为什么是函数而不是一个变量：流式内容一直在长，算一次存下来，
+     * 下一帧就不作数了。返回值 <= 0 表示这一屏根本装得下，那就不存在「离开底部」。
+     */
+    const maxScroll = (): number => element.scrollHeight - element.clientHeight
     const onScroll = (): void => {
       if (Math.abs(element.scrollTop - autoTopRef.current) <= 1) return
-      setFollowing(readBottom())
+      const limit = maxScroll()
+      // 装得下：任何路径都不暂停，跟随照旧（也顺带把按钮收掉）
+      if (limit <= 0) {
+        setFollowing(true)
+        return
+      }
+      const away = limit - element.scrollTop
+      // 回到贴底档（32px）以内：恢复跟随。恢复门槛刻意比暂停门槛窄
+      if (away <= AT_BOTTOM_EPS) {
+        setFollowing(true)
+        return
+      }
+      // 越过宽门槛才算「用户真的要走」；落在滞回区间里维持现状，什么都不做
+      if (away > PAUSE_EPS) setFollowing(false)
     }
     const onWheel = (event: WheelEvent): void => {
-      if (event.deltaY < 0) setFollowing(false)
+      if (event.deltaY >= 0) return
+      const limit = maxScroll()
+      // 一屏装得下就没有「离开底部」可言（没有滚动条时滚轮本来也滚不动）
+      if (limit <= 0) return
+      // 预估这一格滚完的落点离底还有多远：当前位置离底是 limit - scrollTop，
+      // 再减掉这一格的行程——deltaY 向上为负，所以「- deltaY」是正的，落点更靠上、离底更远。
+      //
+      // 为什么要预估而不是等 scroll 事件：滚动事件下一帧才投递，流式内容可能先到一步
+      // 把视角又拽回底部；抢在内容前头暂停，能省掉那一下回弹。预估落点要是还没越过宽门槛
+      // （贴底时单格上滑就是这样）就什么都不做，交给随后的 scroll 事件按同一把尺子判。
+      const landingAway = limit - element.scrollTop - event.deltaY
+      if (landingAway > PAUSE_EPS) setFollowing(false)
     }
     let touchY = 0
     const onTouchStart = (event: TouchEvent): void => {
@@ -296,7 +337,11 @@ export function ChatView(props: {
     }
     const onTouchMove = (event: TouchEvent): void => {
       const y = event.touches[0]?.clientY ?? touchY
-      if (y > touchY + 2) setFollowing(false)
+      if (y > touchY + 2) {
+        // 手指往回拖时 scrollTop 已经实时跟着变了，直接拿当前位置判，不用预估
+        const limit = maxScroll()
+        if (limit > 0 && limit - element.scrollTop > PAUSE_EPS) setFollowing(false)
+      }
       touchY = y
     }
     element.addEventListener('scroll', onScroll, { passive: true })

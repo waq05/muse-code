@@ -480,3 +480,11 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | 顺带修「思考过程」竖排字 | `.think-label` 缺 `flex:none`/`white-space:nowrap`，`.think-summary` 的 `flex:1` 吃光余量后标题被压成一列汉字 |
 
 验收：根 + 桌面 typecheck/build 0 错误；sandbox 193/0、file-review 59+9/0、approval-floor 95/0、modes-security 172/0（新增 13 条：管道筛选格式化判 allow、`ForEach-Object`/`Tee-Object` 不判只读）、integration 104/0（新增 5 条：仅查看档真内核裁决）、transcript 用量 13/0（新建脚本，仓库原无 transcript 测试）、compact 53/0、整轮折叠探针 65/65、隔离截图自检 38/38（含紧凑档摘要消失、隔离 settings.json 真被写成 detailed、实时轮页脚「用量 330 tok」为真值不带 `~`）；三个真实 `~/.dsc` 指纹比对全部零改动。诚实边界：命令 tokenizer 不解析子表达式括号，`Get-Item (Remove-Item x)` 这类「头只读、括号里带刀」仍判 allow（既有风险面，收口另立阶段）；「plan 不折叠」只有产物断言没有截图用例（种子造不出 plan 条目）；分叉图标保留 15px 与复制/赞/踩的 17px 并存；页脚动作从 hover 浮出改为常驻（对齐 dsh 收尾轮）；浅色主题与 reduced-motion 只写了样式降级。发布：`muse-code-0.6.3.tgz` + `dist/win-unpacked`。
+
+---
+
+## 阶段 20：跟随暂停灵敏度（0.6.4）
+
+0.6.3 交付后用户先要求去掉「回到底部」按钮，随即改口：按钮保留，真正的问题是**贴底时滚轮轻滑一格就弹按钮**——一格滚轮约 100px，旧判定离底超过 32px 就暂停，天然会误触发；且 `onWheel` 是无条件暂停，内容一屏装得下时滚轮上滑也会弹。处理：先回退未提交的删按钮改动（`git checkout` + 删掉探针里 3 条退场断言），再引入双阈值滞回——`PAUSE_EPS = 120`（大于一格滚轮的行程）暂停、`AT_BOTTOM_EPS = 32`（复用 JumpStrip 的导出）恢复，区间 (32, 120] 内跟随中不动、暂停中不闪；`onWheel` 改成预估落点离底超 120 才抢先暂停（防回弹的原始理由照留），`onWheel`/`onTouchMove` 补 `maxScroll <= 0` 早退。派发任务书里的落点公式 `scrollTop - deltaY` 方向写反了（向上滚 deltaY 为负），子代理按判据本身改成离底距离 `limit - scrollTop - deltaY`，物理正确——**给子代理的数值公式要自己先推一遍方向**。
+
+验收：根 + 桌面 typecheck/build 0 错误；fold-check 65/65；产物探针：按钮 JSX 与 `PAUSE_EPS = 120` 声明及三处使用在位，数值推演（贴底单格 100px 不暂停、两格抢先暂停、离底 60px 滞留、20px 恢复、limit≤0 不暂停）全部符合。发布：`muse-code-0.6.4.tgz` + `dist/win-unpacked`。
