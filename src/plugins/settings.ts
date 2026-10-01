@@ -59,10 +59,10 @@ const TEMPERATURE_OPTIONS = [
 ]
 
 const POLICY_OPTIONS = [
-  { value: 'readonly', label: '只读，写文件与执行命令均需批准' },
-  { value: 'auto-edit', label: '自动放行编辑，执行命令仍需批准' },
+  { value: 'readonly', label: '只读，编辑与命令都要批准' },
+  { value: 'auto-edit', label: '自动编辑，命令仍要批准' },
   { value: 'full-access', label: '完全访问，不再询问' },
-  { value: 'ai-review', label: 'AI 审阅，不确定时询问模型' },
+  { value: 'ai-review', label: 'AI 审阅，不确定时再问' },
 ]
 
 const EFFORT_OPTIONS = [
@@ -182,14 +182,14 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       order: 0,
       fields(): SettingsField[] {
         return [
-          { type: 'select', key: 'policy', label: '权限模式', options: POLICY_OPTIONS, help: '决定工具执行前是否需要人工授权；修改后同时作为下次启动的默认值' },
-          { type: 'select', key: 'effort', label: '思考强度', options: EFFORT_OPTIONS, help: '发给端点的 thinking 开关与档位' },
-          { type: 'select', key: 'temperature', label: '采样温度', options: TEMPERATURE_OPTIONS, help: `写入 ${CONFIG_FILE} 的 temperature` },
+          { type: 'select', key: 'policy', label: '权限模式', options: POLICY_OPTIONS, help: '工具执行前是否需要人工批准；改动同时存为下次启动的默认' },
+          { type: 'select', key: 'effort', label: '思考强度', options: EFFORT_OPTIONS, help: '越高思考越深，耗时与用量也越大' },
+          { type: 'select', key: 'temperature', label: '采样温度', options: TEMPERATURE_OPTIONS, help: '越高越发散，越低越稳定' },
           {
             type: 'switch',
             key: 'closeToTray',
             label: '关窗缩到托盘',
-            help: '点击窗口关闭按钮时仅隐藏窗口，应用继续在后台运行；关闭该开关后点击关闭按钮即退出应用',
+            help: '点关闭按钮只隐藏窗口，应用留在托盘；关闭后点关闭即退出',
           },
           { type: 'info', label: '配置文件', text: CONFIG_FILE, mono: true, copyable: true },
         ]

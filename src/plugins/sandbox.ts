@@ -373,17 +373,14 @@ export const sandboxPlugin: Plugin.Object = {
       return backendDetail
     }
 
-    /** 挂载时那条可见说明：档位、强制等级、可写根、网络，一次讲清。 */
+    /** 挂载时那条可见说明：只讲档位、强制等级与网络，明细（后端、可写根）在 /sandbox 与设置里。 */
     const mountLine = (): string => {
-      const { config, policy, problems } = snapshot()
-      const roots = policy.mode === 'read-only' ? '（无，只读档不许写盘）' : policy.roots.join('、')
-      const head =
-        `沙箱已就绪：档位 ${config.mode}｜强制执行 ${enforcement}｜后端 ${backendDetail}｜` +
-        `可写根 ${String(policy.roots.length)} 个：${roots}｜网络 ${config.networkAccess ? '开' : '关'}`
+      const { config, problems } = snapshot()
+      const head = `沙箱已就绪：档位 ${config.mode}｜强制执行 ${enforcement}｜网络 ${config.networkAccess ? '开' : '关'}`
       const tail = enforcement === 'partial'
         ? (config.backend === 'windows-token'
-          ? '。越界写已被系统层拦截（受限令牌 runner）；读不受限，网络管控看提权 setup 状态（/sandbox）。'
-          : '。策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写；要真隔离请在「设置 → 沙箱」把后端换成 Windows 受限令牌或容器。')
+          ? '。越界写已被系统层拦截；明细见 /sandbox。'
+          : '。策略围栏拦得住工具调用，拦不住命令内部的任意写，要真隔离请在「设置 → 沙箱」换后端。')
         : '。'
       const warn = problems.length === 0 ? '' : ` ⚠ 配置有问题（已按默认值兜底）：${problems.join('；')}`
       return `${head}${tail}${warn}`

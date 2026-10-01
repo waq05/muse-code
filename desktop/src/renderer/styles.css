@@ -1675,11 +1675,8 @@
   min-height: var(--dsc-ctl);
   padding: 0 10px;
   transition: background var(--dsc-dur) var(--dsc-ease);
-}
-
-.btn-ghost:hover {
-  background: var(--dsc-control-hover-bg);
-  color: var(--dsc-text-primary);
+  /* 按钮文字不折行：在 flex 行里被挤压时宁可顶宽也不把「连接手机」拆成两行 */
+  white-space: nowrap;
 }
 
 .btn-ghost:hover {
@@ -1695,6 +1692,7 @@
   min-height: var(--dsc-ctl);
   padding: 0 12px;
   transition: background var(--dsc-dur) var(--dsc-ease);
+  white-space: nowrap;
 }
 
 .btn-primary:hover {
@@ -3640,6 +3638,9 @@ body.resizing iframe {
   color: var(--dsc-text-tertiary);
   font-size: var(--dsc-fs-caption);
   line-height: 1.5;
+  /* 说明里常有 URL、占位符这类长串：允许在任意字符处折行，
+     否则不可断的长串会溢出左栏、画到右边的控件底下。 */
+  overflow-wrap: anywhere;
 }
 
 .setting-info {
@@ -4985,6 +4986,8 @@ body.resizing iframe {
   font-size: var(--dsc-fs-label);
   position: absolute;
   top: 0;
+  /* 最后一列的标签（如「10月」）左边贴着网格右缘：不许折行，宁可伸出容器 */
+  white-space: nowrap;
 }
 
 .hm-body {
@@ -8059,12 +8062,13 @@ body.resizing iframe {
 
 .pair-url {
   margin: 0;
+  /* 地址是弹窗的正文之一（里面带着配对码）：占满整行，不吃 info 行那档 60% 宽 */
+  max-width: 100%;
 }
 
 .pair-url .mono {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .pair-count {

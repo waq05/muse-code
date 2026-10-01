@@ -1053,7 +1053,7 @@ export const remotePlugin: Plugin.Object = {
       if (!owner.tryAcquire(prefs.port)) {
         const info = owner.peek()
         reportProblem(
-          `另一个 Muse Code 进程（pid ${String(info?.pid ?? 0)}）拿着远程控制的主控位，本进程先休眠`,
+          `远程控制由另一个 Muse Code 进程（pid ${String(info?.pid ?? 0)}）接管，本进程待命`,
         )
         armRetry()
         return
@@ -1099,7 +1099,7 @@ export const remotePlugin: Plugin.Object = {
       if (!prefs.enabled) {
         if (server !== null) {
           stopServer()
-          ctx.emit('dsc/notice', '远程控制已关闭：端口不再监听，已连接的设备已断开')
+          ctx.emit('dsc/notice', '远程控制已关闭，已连接的设备已断开')
         }
         // 主控位无条件让出：服务没起来但锁已经抢到过（端口被别的程序占着之类），
         // 关开关时也该把这个位子交出去；release 只删自己那份文件，别人的不碰。
@@ -1123,13 +1123,13 @@ export const remotePlugin: Plugin.Object = {
       const prefs = ctx.settings.prefs().remote
       if (!prefs.enabled) return '已关闭'
       if (server !== null) {
-        return `正在伺服：${server.lan ? '0.0.0.0' : '127.0.0.1'}:${String(server.port)}`
+        return `运行中 · ${server.lan ? '0.0.0.0' : '127.0.0.1'}:${String(server.port)}`
       }
       const info = owner.peek()
       if (info !== null && info.pid !== process.pid) {
-        return `休眠：另一个 Muse Code 进程（pid ${String(info.pid)}）正伺服`
+        return `由另一个 Muse Code 进程（pid ${String(info.pid)}）接管`
       }
-      return yielded ? '已让出主控位：重新开关一次「开启远程控制」可以拿回来' : '休眠：正在等主控位空出来（每 30 秒重试）'
+      return yielded ? '已让出主控位，重新开关「开启远程控制」拿回' : '等待主控位空出（每 30 秒重试）'
     }
 
     /** 时间戳给设置页看的样子；0（没记过）说「未知」。 */
@@ -1145,7 +1145,7 @@ export const remotePlugin: Plugin.Object = {
     const webhookStatusText = (): string => {
       const raw = ctx.settings.prefs().remote.notifyWebhook.trim()
       if (raw === '') return '没配'
-      return raw.includes('{') && webhookHasPlaceholder(raw) ? `${raw}（占位符模式：GET）` : `${raw}（JSON POST 模式）`
+      return raw.includes('{') && webhookHasPlaceholder(raw) ? `${raw}（GET）` : `${raw}（POST JSON）`
     }
 
     const section: SettingsSectionSpec = {
@@ -1161,7 +1161,7 @@ export const remotePlugin: Plugin.Object = {
             type: 'switch',
             key: 'enabled',
             label: '开启远程控制',
-            help: '打开后本机监听一个端口，手机配对后即可接入；关掉立即停止监听并断开已连接的设备',
+            help: '打开后监听端口等待手机接入；关闭立即断开所有连接',
           },
           {
             type: 'number',
@@ -1169,21 +1169,21 @@ export const remotePlugin: Plugin.Object = {
             label: '监听端口',
             min: REMOTE_PORT_MIN,
             max: REMOTE_PORT_MAX,
-            help: '默认 17321；改端口会重启监听，已经配对的设备不用重新配对',
+            help: '改端口会重启监听，已配对的设备不受影响',
           },
           {
             type: 'switch',
             key: 'lan',
             label: '允许局域网访问',
-            help: '打开后监听 0.0.0.0，同一个 Wi-Fi 下的手机才能连进来；关闭只绑 127.0.0.1，仅本机可用',
+            help: '打开后同一 Wi-Fi 下的手机可以连入；关闭仅本机可用',
           },
-          { type: 'info', label: '伺服状态', text: statusText() },
+          { type: 'info', label: '运行状态', text: statusText() },
           { type: 'info', label: '访问地址', text: addressText(), mono: true, copyable: true },
           {
             type: 'switch',
             key: 'push',
             label: '浏览器推送（Web Push）',
-            help: '手机把这个页面「添加到主屏幕」之后才能收到系统通知（iOS 必须加主屏幕）；关着时不生成 VAPID 密钥、不接受订阅、也不发推送',
+            help: '手机先把本页「添加到主屏幕」，才能收到系统通知；关闭时不订阅、不推送',
           },
           { type: 'info', label: '推送状态', text: pushStatusText() },
           {
@@ -1191,9 +1191,7 @@ export const remotePlugin: Plugin.Object = {
             key: 'notifyWebhook',
             label: '通知 Webhook',
             placeholder: 'https://api.day.app/你的KEY/{title}/{body}',
-            help:
-              '留空 = 关。带 {title}/{body}/{url} 占位符的地址按 GET 发（Bark：https://api.day.app/你的KEY/{title}/{body}?url={url}）；' +
-              '不带占位符的地址按 POST JSON 发（ntfy：https://ntfy.sh/你的主题，body 是 {"title":…,"body":…,"url":…}）',
+            help: '留空 = 关。带 {title}/{body}/{url} 占位符的地址按 GET 发（Bark），不带的按 POST JSON 发（ntfy）',
           },
           { type: 'info', label: 'Webhook 状态', text: webhookStatusText(), mono: true },
           {
@@ -1201,7 +1199,7 @@ export const remotePlugin: Plugin.Object = {
             action: 'test-push',
             label: '发送测试推送',
             style: 'primary',
-            help: '浏览器推送与 Webhook 各发一条测试消息，结果就写在这个按钮下面',
+            help: '浏览器推送与 Webhook 各发一条，结果以右下角通知弹出',
           },
           {
             type: 'info',
@@ -1215,14 +1213,14 @@ export const remotePlugin: Plugin.Object = {
           rows.push({
             type: 'info',
             label: device.name,
-            text: `最近活跃 ${timeText(device.lastSeenAt)} · 创建于 ${timeText(device.createdAt)}`,
+            text: `最近活跃 ${timeText(device.lastSeenAt)}`,
           })
           rows.push({
             type: 'button',
             action: `revoke-device:${device.deviceId}`,
             label: '吊销',
             style: 'ghost',
-            help: `吊销「${device.name}」：它已经建立的连接当场断开，旧 token 再也换不到票据`,
+            help: `断开「${device.name}」的连接并作废它的凭据，重新配对后才能连回`,
           })
         }
         rows.push(
@@ -1231,7 +1229,7 @@ export const remotePlugin: Plugin.Object = {
             action: 'regenerate-code',
             label: '连接手机',
             style: 'primary',
-            help: '点开连接弹窗：显示配对码与二维码，手机扫码或输码，半小时内有效；每次点开（或弹窗里点「重新生成」）都会换一张新码，旧码立刻作废',
+            help: '打开连接弹窗，手机扫码或输码即可配对；配对码半小时内有效',
           },
           { type: 'button', action: 'revoke-all', label: '吊销全部设备', style: 'ghost', help: '所有手机立刻失效，需要重新配对' },
           {
@@ -1239,7 +1237,7 @@ export const remotePlugin: Plugin.Object = {
             action: 'release-owner',
             label: '退出主控',
             style: 'ghost',
-            help: '把伺服位让给别的 Muse Code 进程（本进程不再监听，直到你重新开关一次远程控制）',
+            help: '多开时把监听让给别的 Muse Code 进程，重新开关远程控制可拿回来',
           },
         )
         return rows
@@ -1356,7 +1354,7 @@ export const remotePlugin: Plugin.Object = {
             const result = await sendWebhook(webhook, message)
             lines.push(
               result.ok
-                ? `通知 Webhook：已发送（${result.mode === 'get' ? '占位符 GET 模式' : 'JSON POST 模式'}）`
+                ? `通知 Webhook：已发送（${result.mode === 'get' ? 'GET' : 'POST JSON'}）`
                 : `通知 Webhook：失败（${result.error}）`,
             )
           }
@@ -1367,7 +1365,7 @@ export const remotePlugin: Plugin.Object = {
           clearRetry()
           stopServer()
           owner.release()
-          return '已让出主控位（本进程不再伺服）；重新开关一次「开启远程控制」可以拿回来'
+          return '已让出主控位；重新开关「开启远程控制」可拿回来'
         }
         throw new Error(`这个分区没有动作 ${name}`)
       },

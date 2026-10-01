@@ -15,12 +15,14 @@ import type { RuntimeProxy } from './bridge.js'
 import { toastErr } from './components/toast.js'
 import { IconChart, IconRefresh } from './icons.js'
 
-/** 折线与环形的取色顺序：品牌蓝打头，后面用语义色顶上。 */
+/** 折线与环形的取色顺序：品牌蓝打头，后面用语义色顶上。
+ *  深色主题的 --dsc-purple 本身是蓝（#7aaaff，见 tokens.css），排第三会和品牌蓝撞色，
+ *  所以第三位给 orange，purple 只当第四条的兜底。 */
 const SERIES_COLORS = [
   'var(--dsc-accent)',
   'var(--dsc-green)',
-  'var(--dsc-purple)',
   'var(--dsc-orange)',
+  'var(--dsc-purple)',
 ]
 
 /** 数字压成中文习惯的「万 / 亿」（对齐 dsh 的 6.5 亿 / 449.3万）。 */
@@ -55,25 +57,37 @@ function buildCells(days: UsageDayView[]): { columns: Cell[][]; months: { column
     if (ratio > 0.1) return 2
     return 1
   }
-  // 第一列按星期对齐：GitHub 的列从周日开始
-  const firstDate = new Date(`${days[0]!.date}T12:00:00`)
   const columns: Cell[][] = []
   let current: Cell[] = []
-  for (let index = 0; index < firstDate.getDay(); index += 1) current.push(null)
   const months: { column: number; label: string }[] = []
   let lastMonth = -1
-  for (const day of days) {
-    const date = new Date(`${day.date}T12:00:00`)
+  /** 一天进列（真实数据与前置空档都走这条），满了就整列收进 columns。 */
+  const pushDay = (cell: Cell, date: Date): void => {
     if (date.getMonth() !== lastMonth) {
       // 月份切换处记一列（列里只要还有一格就能挂标签）
       if (current.length < 7) months.push({ column: columns.length, label: `${date.getMonth() + 1}月` })
       lastMonth = date.getMonth()
     }
-    current.push({ day, level: level(day) })
+    current.push(cell)
     if (current.length === 7) {
       columns.push(current)
       current = []
     }
+  }
+  // 窗口从今天回溯一整年、对齐到周日（GitHub 的列从周日开始）：
+  // 数据只覆盖其中一段，前面的空档也照常铺格子、标月份，热力图才是一张
+  // 完整的年历，而不是孤零零贴着左边的一小列。数据早于窗口时以数据起点为准。
+  const today = new Date()
+  today.setHours(12, 0, 0, 0)
+  const firstDate = new Date(`${days[0]!.date}T12:00:00`)
+  const windowStart = new Date(today.getTime() - 52 * 7 * 86400000)
+  const alignedStart = new Date(Math.min(firstDate.getTime(), windowStart.getTime()))
+  alignedStart.setDate(alignedStart.getDate() - alignedStart.getDay())
+  for (let at = new Date(alignedStart); at < firstDate; at.setDate(at.getDate() + 1)) {
+    pushDay(null, new Date(at.getTime()))
+  }
+  for (const day of days) {
+    pushDay({ day, level: level(day) }, new Date(`${day.date}T12:00:00`))
   }
   if (current.length > 0) columns.push(current)
   return { columns, months }

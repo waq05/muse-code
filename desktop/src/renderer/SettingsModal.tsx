@@ -68,6 +68,7 @@ import {
   IconInfo,
   IconKey,
   IconLayers,
+  IconPhone,
   IconPlus,
   IconSpark,
   IconSwap,
@@ -82,6 +83,7 @@ function sectionIcon(id: string): JSX.Element {
   if (id === 'skills') return <IconBolt size={size} />
   if (id === 'archive') return <IconArchive size={size} />
   if (id === 'usage') return <IconChart size={size} />
+  if (id === 'remote') return <IconPhone size={size} />
   if (id === 'about') return <IconInfo size={size} />
   return <IconGear size={size} />
 }
@@ -490,7 +492,7 @@ function AppearanceRows(props: {
       <div className="setting-row">
         <div className="setting-text">
           <div className="setting-label">主题</div>
-          <div className="setting-help">深浅两套均为完整配色；选择「跟随系统」时随 Windows 的浅色设置自动切换。</div>
+          <div className="setting-help">「跟随系统」随系统深浅自动切换。</div>
         </div>
         <div className="setting-control">
           <Segments
@@ -507,9 +509,7 @@ function AppearanceRows(props: {
       <div className="setting-row">
         <div className="setting-text">
           <div className="setting-label">字号</div>
-          <div className="setting-help">
-            拖动调整全局字号，正文 13px 基准按百分比缩放，代码块和终端跟着一起变。
-          </div>
+          <div className="setting-help">按百分比缩放全局字号，代码块与终端一起变。</div>
         </div>
         <div className="setting-control">
           <FontScaleRow
@@ -521,7 +521,7 @@ function AppearanceRows(props: {
       <div className="setting-row">
         <div className="setting-text">
           <div className="setting-label">按钮大小</div>
-          <div className="setting-help">拖动调整界面按钮和图标的大小，改动即时生效。</div>
+          <div className="setting-help">调整界面按钮与图标的大小。</div>
         </div>
         <div className="setting-control">
           <ButtonScaleRow
@@ -533,7 +533,7 @@ function AppearanceRows(props: {
       <div className="setting-row">
         <div className="setting-text">
           <div className="setting-label">密度</div>
-          <div className="setting-help">调整行高与纵向间距，紧凑档 90%，宽松档 115%，一屏可见的会话数随之变化。</div>
+          <div className="setting-help">调整行高与间距，一屏可见的会话数随之变化。</div>
         </div>
         <div className="setting-control">
           <Segments
@@ -551,10 +551,8 @@ function AppearanceRows(props: {
         <div className="setting-text">
           <div className="setting-label">过程折叠程度</div>
           <div className="setting-help">
-            一轮结束后，思考与工具调用这些过程条目整组收起，只留一行「用时 X」总开关，
-            轮里再按阶段分组。紧凑档不显示思考行的摘要预览、组头也不报实时详情；
-            详细档整轮照旧收起，但只有历史轮分组——正在跑的那一轮直接摊开；
-            完全展开档不做整轮折叠，阶段也不分组，过程条目逐条摊开。
+            一轮结束后把思考与工具条目收成一行「用时 X」。紧凑档连摘要也不留；
+            详细档只收历史轮，正在跑的一轮摊开；完全展开档逐条摊开。
           </div>
         </div>
         <div className="setting-control">
@@ -575,8 +573,7 @@ function AppearanceRows(props: {
         <div className="setting-text">
           <div className="setting-label">定稿的思考行</div>
           <div className="setting-help">
-            每条思考过程默认折成一行还是摊开正文。跑动中的那一段永远展开——它是「现在在干什么」
-            的唯一线索；这里只管已经写完的那些。你手动点开的某一条不会被这项改掉。
+            写完的思考默认折成一行还是摊开正文；正在跑的与手动点开的不受影响。
           </div>
         </div>
         <div className="setting-control">
@@ -849,9 +846,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
               ))}
             </select>
           </div>
-          <div className="setting-help">
-            写入 {config.configFile}；当前会话下一次请求就用新值。
-          </div>
+          <div className="setting-help">当前会话的下一次请求就用新值。</div>
         </div>
       </div>
 
@@ -901,7 +896,7 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
                   setKeyValue('')
                 }}
               >
-                <IconKey size={13} /> {provider.keyConfigured ? 'key 已配置' : '填写 key'}
+                <IconKey size={13} /> {provider.keyConfigured ? '密钥已配置' : '填写密钥'}
               </button>
               <button
                 className="text-btn"
