@@ -188,11 +188,14 @@ export const lspPlugin: Plugin.Object = {
       decide: (input) => captureBaseline(input),
     })
     const offObserver = ctx.guards.registerObserver(buildObserver())
-    const offTransform = ctx.prompt.transformMessages((messages: ChatMessage[]): ChatMessage[] => {
+    // 诊断不在会话日志里，塞进请求的同时必须落一条 note（Model-visible ⟺ logged）：
+    // 只投给主会话——队友的请求不走投影链，不会错拿主会话的 pending。
+    const offProjection = ctx.prompt.registerProjection('lsp-write-diagnostics', (messages: ChatMessage[]): ChatMessage[] => {
       if (pendingDiagnostics.length === 0) return messages
       const blocks = pendingDiagnostics
       pendingDiagnostics = []
-      // 补在末尾是安全的：llm.ts 发送前会把散落的 system 并进头部那一条。
+      ctx.session.current().appendNote('lsp-write-diagnostics', blocks.join('\n\n'))
+      // 补在末尾是安全的：fold-system 投影（order 500）会把散落的 system 并进头部那一条。
       return [...messages, { role: 'system', content: blocks.join('\n\n') }]
     })
     const offSection = ctx.settings.registerSection(buildSection())
@@ -212,7 +215,7 @@ export const lspPlugin: Plugin.Object = {
       offService()
       offPrompt()
       offSection()
-      offTransform()
+      offProjection()
       offObserver()
       offGuard()
       offTool()

@@ -12,8 +12,8 @@
  *
  * @module dsc/core/loop
  */
-import type { ChatMessage, StreamResult, ToolCall, ToolSchema } from './llm.js'
-import { LlmError, streamChat } from './llm.js'
+import type { ChatMessage, LlmRoute, StreamHandlers, StreamRequest, StreamResult, ToolCall, ToolSchema } from './llm.js'
+import { LlmError } from './llm.js'
 import type { CoreEvent } from './events.js'
 import type { Session } from './session.js'
 import type { ToolGuardChain } from './tool-guards.js'
@@ -21,7 +21,7 @@ import { callFacts, type ToolEntry } from './tools.js'
 
 export interface AgentDeps {
   /** 每次请求时动态读取（支持 /model 热切换）。 */
-  route(): { baseUrl: string; apiKey: string; model: string; maxTokens?: number; temperature?: number; thinking?: 'enabled' | 'disabled' }
+  route(): LlmRoute
   systemPrompt(): string
   tools(): ToolEntry[]
   /**
@@ -30,6 +30,11 @@ export interface AgentDeps {
    */
   guards: ToolGuardChain
   emit(event: CoreEvent): void
+  /**
+   * 发一次流式模型请求：按端点声明的协议经 llm 服务的适配器表派发。
+   * 循环不认识具体协议——OpenAI 兼容也好、别的插件注册的也好，都从这条缝过。
+   */
+  stream(api: string, request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult>
   /** 每轮请求前的一次维护动作（上下文压缩检查挂在这里）；缺省不启用。 */
   beforeRequest?(): Promise<void>
   /**
@@ -38,10 +43,11 @@ export interface AgentDeps {
    */
   onContextOverflow?(): Promise<boolean>
   /**
-   * 组装好「发给模型的那份消息」之后的改写钩子（只影响请求体，不改会话日志）。
-   * 插件用它丢掉过期截图之类「留在历史里只会撑上下文、对下一轮没用」的内容。
+   * 组装好「发给模型的那份消息」之后的投影链（只影响请求体，不改会话日志）。
+   * 插件用它丢掉过期截图之类「留在历史里只会撑上下文、对下一轮没用」的内容；
+   * 往请求里注入日志上没有的内容时，注入方自己用 appendNote 落一条备忘。
    */
-  transformMessages?(messages: ChatMessage[]): ChatMessage[]
+  rewrite?(messages: ChatMessage[]): ChatMessage[]
 }
 
 const errText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
@@ -186,8 +192,9 @@ export class MiniAgent {
       ...this.session.messages,
     ]
     const messages =
-      this.deps.transformMessages === undefined ? assembled : this.deps.transformMessages(assembled)
-    const result = await streamChat(
+      this.deps.rewrite === undefined ? assembled : this.deps.rewrite(assembled)
+    const result = await this.deps.stream(
+      route.api,
       {
         baseUrl: route.baseUrl,
         apiKey: route.apiKey,
@@ -196,6 +203,7 @@ export class MiniAgent {
         maxTokens: route.maxTokens,
         temperature: route.temperature,
         thinking: route.thinking,
+        reasoningEffort: route.reasoningEffort,
         signal,
         ...(tools.length > 0
           ? {

@@ -5,8 +5,8 @@
  * @module dsc/core/tools/index
  */
 import type { ToolEntry } from '../tools.js'
-import { bashTool } from './bash.js'
-import { editTool, readTool, writeTool } from './fs-tools.js'
+import { createBashTool } from './bash.js'
+import { createReadTool, editTool, writeTool } from './fs-tools.js'
 import { globTool, grepTool } from './search-tools.js'
 
-export const defaultTools: ToolEntry[] = [bashTool, readTool, writeTool, editTool, globTool, grepTool]
+export const defaultTools: ToolEntry[] = [createBashTool(), createReadTool(), writeTool, editTool, globTool, grepTool]

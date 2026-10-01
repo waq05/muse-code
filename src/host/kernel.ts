@@ -60,6 +60,7 @@ import { schedulePlugin } from '../plugins/schedule.js'
 import { lspPlugin } from '../plugins/lsp.js'
 import { browserPlugin } from '../plugins/browser.js'
 import { selfImprovePlugin } from '../plugins/self-improve.js'
+import { dshCompatPlugin } from '../plugins/dsh-compat.js'
 import { fileReviewPlugin } from '../plugins/file-review.js'
 
 const err = (error: unknown): string => (error instanceof Error ? error.message : String(error))
@@ -189,6 +190,13 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
     defaultDisabled: true,
     settingsSection: 'self-improve',
   },
+  {
+    file: 'dsh-compat',
+    name: 'dsh 兼容层',
+    description: '挂载 dsh（DeepSeek Harness）外部插件：垫起 logger 服务与 dsh 风格的工具注册，默认关',
+    toggleable: true,
+    defaultDisabled: true,
+  },
 ]
 
 /** 官方可开关插件的插件对象（开关键 → 对象）。 */
@@ -208,6 +216,7 @@ const OFFICIAL_OBJECTS: Readonly<Record<string, Plugin.Object>> = {
   lsp: lspPlugin,
   browser: browserPlugin,
   'self-improve': selfImprovePlugin,
+  'dsh-compat': dshCompatPlugin,
 }
 
 export interface KernelOptions {
@@ -231,7 +240,12 @@ export const BUILTIN_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
     settingsSection: 'hooks',
   },
   { file: 'tools', name: '工具注册表', description: '工具的注册与查找' },
-  { file: 'tools-default', name: '内置工具', description: 'bash / read / write / edit / glob / grep' },
+  {
+    file: 'tools-default',
+    name: '内置工具',
+    description: 'bash / read / write / edit / glob / grep',
+    settingsSection: 'tools-default',
+  },
   { file: 'transcript', name: '会话流', description: '事件折叠成对话条目与快照' },
   { file: 'commands', name: '斜杠命令', description: '/ 命令注册与补全' },
   { file: 'skills', name: '技能', description: 'SKILL.md 发现、开关、市场与 skill 工具' },

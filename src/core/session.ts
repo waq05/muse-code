@@ -25,6 +25,13 @@ export interface SessionMeta {
   title?: string
 }
 
+/** 一条请求注入备忘（note 记录的内存形状）。 */
+export interface SessionNote {
+  id: string
+  text: string
+  ts?: number
+}
+
 type SessionRecord =
   | ({ type: 'meta' } & SessionMeta)
   /**
@@ -54,6 +61,13 @@ type SessionRecord =
    * 存储层不认识具体功能，`id` 与负载类型见 {@link SessionStateMap}。
    */
   | { type: 'state'; id: string; payload: unknown }
+  /**
+   * 请求注入备忘（Model-visible ⟺ logged 的补丁）：插件投影往请求体里塞的、日志上
+   * 本来没有的内容（LSP 写后诊断、生命周期钩子的话术）在此留底。备忘不进请求消息流、
+   * 不参与重放折叠，恢复会话后经 `session.notes` 读出——模型看到的东西因此能从
+   * 日志完整重建。老构建读到此类型会静默跳过（load 的 switch 没有 default）。
+   */
+  | { type: 'note'; id: string; text: string; ts?: number }
   /**
    * 下面四种是早先「一种功能一条记录」的写法，已经不再写入，
    * 只为读得回老会话日志而留着（{@link Session.load} 的兼容分支）。
@@ -86,6 +100,12 @@ export interface SessionStateMap {
    * 读回来时由 `core/learnings/store.ts` 的 `normalizeLearningsState` 兜底。
    */
   learnings: unknown
+  /**
+   * 最近一次请求使用的系统提示词全文（agent 插件写，hash 去重——变了才写一条）。
+   * 系统提示不进 user/assistant 消息流，靠这条状态记录补上「模型看到的提示词」：
+   * 恢复会话后最后一条就是当前生效的那份（Model-visible ⟺ logged 的提示词半边）。
+   */
+  'system-prompt': { hash: string; text: string }
 }
 
 /**
@@ -128,6 +148,8 @@ export class Session {
    * 不发进请求体，恢复历史会话时由 {@link Session.load} 逐行填回来。
    */
   private readonly stateById = new Map<string, unknown>()
+  /** 请求注入备忘（note 记录）；恢复会话时从日志重放回来，经 {@link notes} 读出。 */
+  private readonly noteLog: SessionNote[] = []
 
   private constructor(
     meta: SessionMeta,
@@ -135,12 +157,14 @@ export class Session {
     initialMessages: ChatMessage[] = [],
     restored = false,
     state?: ReadonlyMap<string, unknown>,
+    initialNotes: SessionNote[] = [],
   ) {
     this.meta = meta
     this.file = file
     this.messages.push(...initialMessages)
     this.metaWritten = restored
     if (state !== undefined) for (const [id, payload] of state) this.stateById.set(id, payload)
+    this.noteLog.push(...initialNotes)
   }
 
   /**
@@ -164,6 +188,7 @@ export class Session {
     const messages: ChatMessage[] = []
     const toolErrors = new Map<string, string>()
     const state = new Map<string, unknown>()
+    const notes: SessionNote[] = []
     for (const line of lines) {
       let record: SessionRecord
       try {
@@ -245,6 +270,9 @@ export class Session {
         case 'state':
           state.set(record.id, record.payload)
           break
+        case 'note':
+          notes.push({ id: record.id, text: record.text, ts: record.ts })
+          break
         // ↓ 老会话日志的兼容分支（这四种记录已不再写入），按现在的条目名归位
         case 'mode':
           state.set('mode', record.mode)
@@ -267,6 +295,7 @@ export class Session {
       messages,
       true,
       state,
+      notes,
     )
     for (const [callId, error] of toolErrors) session.toolErrors.set(callId, error)
     return session
@@ -396,6 +425,24 @@ export class Session {
   appendState<K extends keyof SessionStateMap>(id: K, payload: SessionStateMap[K]): void {
     this.stateById.set(id as string, payload)
     this.write({ type: 'state', id: String(id), payload })
+  }
+
+  /** 已记录的请求注入备忘（note 记录），按写入顺序；恢复会话时从日志重放回来。 */
+  notes(): readonly SessionNote[] {
+    return this.noteLog
+  }
+
+  /**
+   * 追加一条请求注入备忘（note 记录）：投影往请求体里塞的、日志上本来没有的内容
+   * 必须在此留底，模型看到的东西才能从日志完整重建（dsh 的 Model-visible ⟺ logged）。
+   * 备忘不参与重放折叠，界面暂不显示；多次调用按顺序各留一条。
+   * @param id - 注入来源的投影名（例如 `lsp-write-diagnostics`）。
+   * @param text - 注入的原文。
+   */
+  appendNote(id: string, text: string): void {
+    const ts = Date.now()
+    this.noteLog.push({ id, text, ts })
+    this.write({ type: 'note', id, text, ts })
   }
 
   close(): void {

@@ -275,8 +275,9 @@ ${config.actionsPerScreenshot > 0 ? `${apps.length === 0 ? '8' : '9'}. 自上次
       disposers.push(ctx.prompt.register('computer-use', promptText))
     }
     syncTools()
-    // 旧截图只留文字，图像丢掉（否则每一轮请求都在重发过期画面）
-    const offPrune = ctx.prompt.transformMessages(dropStaleScreenshots)
+    // 旧截图只留文字，图像丢掉（否则每一轮请求都在重发过期画面）——命名纯投影，
+    // 日志原文 + 这条定义就能重建模型看见的内容
+    const offPrune = ctx.prompt.registerProjection('prune-stale-screenshots', dropStaleScreenshots)
 
     const fields = (): SettingsField[] => [
       { type: 'number', key: 'maxEdge', label: '截图最长边', min: 640, max: 3840, step: 64, help: '以像素为单位；超长屏幕会等比缩小，数值越小越省 token，但文字可能不清晰。' },

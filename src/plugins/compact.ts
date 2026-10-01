@@ -84,6 +84,8 @@ export const compactPlugin: Plugin.Object = {
   provide: 'compact',
   apply(ctx) {
     let config = readConfig()
+    /** 经 llm 服务适配器表派发的流式请求（压缩摘要用的模型调用从这条缝走）。 */
+    const stream = ctx.llm.stream.bind(ctx.llm)
     /** 写盘并立刻重读：下一次压缩就用新值，不必重启宿主。 */
     const applyConfig = (patch: Record<string, unknown | null>): void => {
       writePluginConfig(CONFIG_KEY, patch)
@@ -120,6 +122,7 @@ export const compactPlugin: Plugin.Object = {
         const outcome = await compactSession(
           ctx.session.current(),
           ctx.llm.route(),
+          stream,
           new AbortController().signal,
           carry(),
           limits(),
@@ -136,6 +139,7 @@ export const compactPlugin: Plugin.Object = {
         const outcome = await compactSession(
           ctx.session.current(),
           ctx.llm.route(),
+          stream,
           new AbortController().signal,
           carry(),
           limits(),
@@ -155,6 +159,7 @@ export const compactPlugin: Plugin.Object = {
           const outcome = await compactSession(
             ctx.session.current(),
             ctx.llm.route(),
+            stream,
             new AbortController().signal,
             carry(),
             limits(),

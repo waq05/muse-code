@@ -719,3 +719,37 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 诚实边界：① **桌面渲染层不在本批**：设置页那个「只画 `builtin` 分区」的过滤、队友面板上的收掉与传话按钮、`remote-web` 的一切，都由并行批次 B 做；本批只保证协议与投影这一半（`listSections` 里「远程控制」的 `builtin=true`、两个新方法在 `INVOKABLE_METHODS` 上可调），界面到底画没画出来、按钮接没接上，要 B 的截图证据。② **旧名册的 `sessionId` 不回填**：老记录永远是 `undefined`，界面要么按「未知」显示要么不显示这一栏；不回填是因为名册里没有能反查会话的依据，填了就是编。③ **收掉的队友仍留在名册里**：`team.list()` 是名册投影，`stopTeammate` 收掉后那条记录还在（状态可能还写着 `working`），这是工具版 `stop` 一直以来的行为，本批没改；UI 要显示成「已收掉」得自己加一档状态。④ 依赖闭包按**当前平台**解析 `optionalDependencies`：Windows 上只带 `@koromix/koffi-win32-x64`，跨平台打包要在各自平台各跑一遍（既有约束没变）。⑤ `lib` 里 import 了、dev 树上也没有的包只警告不拦——今天最终树上是零警告，但这条口子留在那里，将来真漏了包只会看到一行字，不会停打包。⑥ 更名只做了宿主侧：`README.md`、`docs/development.md`、`docs/plugin-development.md` 与 `desktop/src`（渲染层）里还留着「子智能体团队」，前三份不在本批允许改的文件清单里、后者归批次 B。
 
 发布：本阶段是 0.6.13 批次 A 的宿主半边，版本号与打包（根 `muse-code-0.6.13.tgz` + `desktop/dist`）等批次 B 与并行 dsh-compat 批次合并后统一落；`desktop/dist` 的 `resources/dsc-core` 由本批改好的 `prepare-runtime.mjs` 组装。
+
+## 阶段 30：对标 dsh 收尾三件套 + dsh 插件兼容层（随 0.6.13 批次合并落版本）
+
+审查报告（对照 dsh 的架构规范逐条核对）确认了三处真正的规范差距与一项能力诉求，本批全部落地：①模型协议不是接缝（`core/llm.ts` 是唯一的 OpenAI 兼容实现，加协议必须改内核）；②`transformMessages` 匿名改写违反 dsh 的「Model-visible ⟺ logged」不变量——模型看见的内容与日志记录的不是同一份，且无从重建；③bash/read 的超时与输出预算是钉死的常量（audit §五.4 的"两套输出预算互不知情"）；④用户要求兼容一部分 dsh 外部插件。
+
+| 决策 | 理由 |
+| --- | --- |
+| LLM 接缝做成 `ctx.llm.registerAdapter({ id, stream })` + 端点配置 `api` 字段 + `ctx.llm.stream(api, …)` 派发，循环/压缩/审批全部改走这条缝 | dsh 的 `LlmRuntime.registerAdapter(providers, adapter)` 就是"适配器注册 + 路由选择"这个形状；dsc 的 `streamChat` 签名天然就是适配器契约，内置 `openai-completions` 由 llm 插件预注册。重复 id 注册抛错（装配错误不许静默顶替）；未注册的协议在发请求时报错并**列出已注册的协议名**（多半是 api 字段写错或插件没开，把这两条可能直接告诉用户） |
+| `LlmRoute` 从 services/types.ts 下沉到 core/llm.ts，`AgentDeps.route()` 直接引用它 | 修本批抓到的真 bug 时发现的漂移根源：AgentDeps 里手抄了一份 route 形状，`reasoningEffort` 在 `routeFor` 里填了、llm 层也会发，但循环里那份手抄形状没有这个字段，档位从来没发出去过。类型只有一份，漂移才不会复发 |
+| 投影改成**命名纯投影** `registerProjection(id, fn, { order })`，内置 `fold-system`(500)/`drop-images`(900) 占保留名、同名注册报错；`transformMessages` 移除，三个调用方迁移赋名 | dsh 的达成方式是"插件注册 pure message projections，脱离宿主的读者拿同一批定义重放"。命名 + 纯函数约定 + 有序管道 = 日志原文 + 投影链即可重建请求；保留名防止外部插件顶掉协议护栏。投影抛错跳过并发通知，不拖垮整轮请求 |
+| 系统提示词落盘走 `state` 记录（`system-prompt` 条目，hash 去重）；注入走新的 `note` 记录（`session.appendNote`） | 系统提示不进 user/assistant 消息流，是提示词半边的不变量缺口；state 记录 latest-wins 正好匹配"最后一条即当前生效"。note 记录是新的 jsonl 类型——`Session.load` 的 switch 没有 default，未知类型老构建静默跳过，前向/后向都安全；不改用户可见行为（暂不进界面），只为重建模型可见内容留底 |
+| bash/read 预算做成 tools-default 插件配置 + 设置分区「工具预算」，保存后按新预算重注册工具 | dsh 规矩：部署差异的选择必须是可验证的 Config 字段。`bashTimeoutMs`/`bashMaxTimeoutMs`/`bashOutputChars`/`readLineLimit` 全部带上下限夹取；描述文案里的数值随预算走，模型看到的承诺与实际执行一致。160 字摘要上限、守卫 order 等按 dsh 规矩归类为协议常量保留 |
+| dsh 兼容层做成第 16 个官方可开关插件（`dsh-compat`，默认关），三件事：provide `logger` 服务、模块解析钩子、`ctx.tools` 双形状兼容面 | dsh 外部插件与 dsc 同为 cordis 命名导出插件、cordis 版本一致（^4.0.4），差的只是服务名与工具形状。默认关遵循"拉起外部机制的默认关"的既有规矩——它会改变外部插件的模块解析行为 |
+| `logger` 用 cordis 内置管道加桥，而不是自建服务 | 撞出来的事实：npm 发布的 cordis 4.0.4 里 `logger` 是**原型属性**不是可注入服务（dsh 的 vendor 版本才是服务），dsh 插件 `inject: ['logger']` 会让 fiber 永久等待、apply 根本不执行（自检用文件标记抓到的，transcript 无声）。所以 dsh-compat `provide('logger')` 一个委托到内置管道的门面：可调用、四种级别都在；warn/error 经 exporter 镜像进 transcript，且 exporter 显式 `levels: { default: 3 }`——缺省阈值是 info(1)，不放开 warn/error 会被静默滤掉 |
+| 解析钩子用 `module.registerHooks`（同步、本线程）而不是 `module.register` | Node 24 的 `register` 返回 undefined（旧文档承诺的 Promise 没了），就绪状态没法等；`registerHooks` 注册即生效，钩子函数直接闭包住运行时根与插件目录，没有跨线程数据要传。基点两个：dsc 根（直接依赖 cordis/dsh-tools）+ dsh-tools 的真实目录（pnpm 布局里 schemastery 等传递依赖住在兄弟位）；双构建包因此命中与 dsh-tools 内部 import 相同的文件，不会 CJS/ESM 双实例 |
+| 兼容层开着时给**所有**外部插件换双形状 `ctx.tools`（dsc ToolEntry 与 dsh ToolDefinition 都收），不做"是不是 dsh 插件"的猜测 | `inject: ['tools']` 在两边都是合法形状，挂载前无法区分；猜测会在错的那一半翻车。兼容面按形状分派：有 `execute` 没有 `run` 的按 dsh 转换（risk 缺省 exec，条目配置 `risk`/`risks` 现读覆盖），否则原样注册。dsh 风格定义误入原生注册表由 tools 插件的形状关拦下并提示启用兼容层 |
+| `@deepseek-ai/dsh-tools@0.2.0-rc.2` 精确 pin 进 dependencies，dsc 自身代码零 import | 它只是插件 import 的解析目标（defineTool/schemastery 的真实现，参数方言→JSON Schema 的编译与校验语义与 dsh 完全一致——自检证实 dsh 的 parameters 是纯对象方言，z 只用于 Config）；精确 pin 防上游 rc 版漂移 |
+| `inject` 有 dsc 不认识的服务名时按兼容层开关给两条不同的响亮文案 | 没开 → 提示"先启用 dsh 兼容层再打开本插件"；开了仍缺 → 列出服务名并说明"依赖 dsh 会话语义的插件个人版不兼容"。绝不静默跳过 |
+
+**本批抓到的真 bug**：`MiniAgent.requestOnce` 从未把 `route.reasoningEffort` 拷进请求——`routeFor` 填了值、llm 层也认这个字段，但循环的请求体里没有它，配置了 `thinkingParam: reasoning-effort` 的模型（网关按档位取值的）思考档位在主对话里**静默不生效**。根因是 AgentDeps 手抄的 route 形状漏了字段（见决策表第 2 条）。修复后顺带把 `AgentDeps.route()` 指到唯一的 `LlmRoute` 定义。
+
+验收（全部在临时 HOME 上跑，不碰真实 ~/.dsc）：
+
+- 根 `pnpm run build` **0 错**（每步改动后都过编译）。
+- `node shots/llm-adapter-check.mjs`（本批新建）**11/11**：内置适配器预注册、route 带 api 字段、自定义适配器注册→派发→卸载、重复 id 拒绝、未知协议报错列出已注册项、config 的 api 字段装载期校验（非字符串响亮报错、合法值原样读进端点）。
+- `node shots/prompt-projection-check.mjs`（本批新建）**17/17**：投影按 order 应用、fold-system 并 system、drop-images 换说明且原数组不动、保留名拒绝、退订生效、崩掉的投影跳过+通知；一轮真请求后 `system-prompt` 状态条目落盘且 hash 与文本一致、提示词没变不重复写；注入落 `note` 记录（每轮一条、原文在盘上）；`Session.load` 恢复后 note 与 system-prompt 都在。
+- 新增 **docs/dsh-plugin-porting.md**（dsh 插件适配指南）：判定流程、挂载路径、API 映射表、实测坑与验证清单；README 文档表与 plugin-development.md §9 链接它
+- `node shots/dsh-compat-check.mjs`（本批新建）**15/15**（补 printf 占位符还原断言；logger 桥升级为经 `Logger.format` 还原 printf）：兼容层没开时三个 dsh 插件全部被拦且文案点名 dsh-compat 与缺失服务；开着后——真 import `defineTool`/`schemastery` 的插件走解析钩子挂载成功、schemastery Config 校验、dsh_upper（自包含 ToolDefinition）进注册表、条目配置 `risk: read` 生效、execute 经 render 折成文本、defineTool 产物（纯对象方言）注册且编译出的参数 schema 是 JSON Schema、执行返回 render 文本、logger 桥把 warn 转进对话流；`dsh-needs-projections`（inject sessionProjections）被拒绝且说明超出兼容范围。
+- 回归：`shots/llm-retry-check.mjs` **10/10**、`shots/storage-check.mjs` 全过、`shots/spill-check.mjs` **53/53**、`shots/sandbox-check.mjs` **193/193**、`shots/integration-check.mjs` 全过、`shots/m5-integration-check.mjs` 全过（其版本断言随 KERNEL_API_VERSION 6 更新）。
+- 文档：`docs/development.md`（§6 数据面写「模型可见 ⟺ 已记录」的重建公式与 note/state 记录、§7 扩展点表加 registerAdapter/registerProjection 两行、§8 自检清单加三个新脚本、§12 tools 预算改配置化、§13 模块速查 llm 段、版本表 6）、`docs/plugin-development.md`（§4.4 llm 加 registerAdapter/stream、新增 §4.10 命名投影与 appendNote、新增 §9 dsh 兼容层专章、版本号表加 v6、三档计数 16）、`README.md`（官方插件 16 个 + dsh 兼容说明 + config 的 api 字段）。
+
+诚实边界：① **dsh 兼容是子集**：`tools`/`logger`/schemastery Config 之外的一切（sessionProjections、agents、goals、systemPrompt、UI 类插件）不支持，挂载时列出缺的服务名响亮拒绝；兼容面里 `ctx.tools` 只实现了 `register`，其余成员调用时响亮报错而不是静默 undefined。② **note 记录暂不上界面**：它只为重建模型可见内容留底，恢复会话后经 `session.notes()` 可读，但对话流不显示——要显示得动 transcript 投影与条目契约，本批没做。③ **dsh 工具的 risk 缺省 exec**：每次调用都过审批卡，宁多问不漏问；放宽靠条目配置，没有更细的权限模型。④ **渲染层产物不匹配 render 的图像块**：dsh `output.render` 返回图像块时降级成占位说明文字——dsc 工具输出的图像走 data URL，dsh 的 attachment 引用没法直接映射，v1 先不投递。⑤ **`@deepseek-ai/dsh-tools` 是 rc 版**：精确 pin 0.2.0-rc.2，上游升版（尤其破坏 rc 期约定）需要同步升 dsc 的 pin；dsc 自身零 import，只有 dsh 插件会碰到它。⑥ **版本号未落**：按阶段 29 的约定，版本与打包等批次合并时统一处理，本批没动 `package.json`。
+
+发布：随 0.6.13 批次合并统一落版本与打包；本批新增依赖 `@deepseek-ai/dsh-tools@0.2.0-rc.2`（`prepare-runtime.mjs` 的依赖闭包会自动带上它，嵌入运行时无需手工清单更新）。

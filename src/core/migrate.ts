@@ -34,6 +34,8 @@ export interface FileProvider {
   displayName: string
   baseURL: string
   apiKeyEnv?: string
+  /** 线上协议适配器 id；缺省 openai-completions。装了提供别的协议的插件后在这里选。 */
+  api?: string
   models: FileModel[]
 }
 

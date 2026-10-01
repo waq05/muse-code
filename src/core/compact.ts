@@ -11,8 +11,8 @@
  *
  * @module dsc/core/compact
  */
-import type { ChatMessage } from './llm.js'
-import { contentText, streamChat } from './llm.js'
+import type { ChatMessage, LlmRoute, LlmStream } from './llm.js'
+import { contentText } from './llm.js'
 import type { Session } from './session.js'
 import {
   buildAnchorIndex,
@@ -133,7 +133,10 @@ function renderRegion(messages: readonly ChatMessage[], argLimit: number | null)
 /** 压缩一次；历史太短返回 'noop'（不写任何记录）。 */
 export async function compactSession(
   session: Session,
-  route: { baseUrl: string; apiKey: string; model: string; maxTokens?: number; temperature?: number },
+  /** 当前模型路由（api 字段决定走哪个协议适配器）。 */
+  route: LlmRoute,
+  /** 经适配器表派发的流式请求调用（由 compact 插件从 llm 服务取）。 */
+  stream: LlmStream,
   signal: AbortSignal,
   /** 摘要之外要原样带过去的内容（任务清单、会话目标这类状态，不能被摘要吃掉）。 */
   extra?: string,
@@ -149,9 +152,15 @@ export async function compactSession(
   if (cut === 0) return 'noop'
   const region = messages.slice(0, cut)
 
-  const result = await streamChat(
+  const result = await stream(
+    route.api,
     {
-      ...route,
+      baseUrl: route.baseUrl,
+      apiKey: route.apiKey,
+      model: route.model,
+      maxTokens: route.maxTokens,
+      temperature: route.temperature,
+      signal,
       messages: [
         {
           role: 'system',

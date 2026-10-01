@@ -395,6 +395,7 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
 干完活用一段话交结果：做了什么、看到什么证据（文件名:行号）、还有什么没做。`,
           tools: () => toolsFor(teammate),
           guards: guardsFor(teammate),
+          stream: (api, request, handlers) => ctx.llm.stream(api, request, handlers),
           emit: (event) => {
             if (event.type === 'message') {
               teammate.rounds += 1

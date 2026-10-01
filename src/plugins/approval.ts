@@ -26,7 +26,6 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { streamChat } from '../core/llm.js'
 import type { ApprovalDecision, ApprovalRequest } from '../core/approval.js'
 import { argsSummary, callFacts } from '../core/tools.js'
 import { REJECTED_TOOL_TEXT } from '../core/session.js'
@@ -233,7 +232,8 @@ export const approvalPlugin: Plugin.Object = {
     const aiReview = async (request: ApprovalRequest, signal: AbortSignal): Promise<ApprovalDecision | null> => {
       try {
         const route = ctx.llm.route()
-        const result = await streamChat(
+        const result = await ctx.llm.stream(
+          route.api,
           {
             baseUrl: route.baseUrl,
             apiKey: route.apiKey,

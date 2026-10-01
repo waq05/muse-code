@@ -7,6 +7,8 @@ shots/
 # 本机运行产物：工具链的事件账本、沙箱 ACL 诊断报告
 .mimosa/
 .acl-report/
+# dsh 会话自己的计划存档（另一个 harness 的工作目录，不是本仓库的产物）
+.zcode/
 
 # pnpm pack 产物（打包验证用，不入库）
 *.tgz

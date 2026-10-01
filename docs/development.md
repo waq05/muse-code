@@ -31,7 +31,7 @@
              │  运行时子进程（node utilityProcess）              │
              │  lib/headless.js → host-stdio 插件               │
              │    └ createKernel() → cordis 上下文              │
-             │        内核插件 23 + 官方可开关 14 + 外部插件 N                     │
+             │        内核插件 25 + 官方可开关 16 + 外部插件 N                     │
              │  src/core/* 是纯能力，被插件包装后对外提供服务      │
              └──────────────────────────────────────────────────┘
 ```
@@ -52,12 +52,13 @@
 
 | 路径 | 规模 | 职责 |
 | --- | --- | --- |
-| `src/core/` | 42 个文件 ≈12600 行 | 纯能力：模型客户端、会话、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板 |
-| `src/core/tools/` | 6 个文件 ≈560 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep` + 沙箱的一次性升权参数与命令执行器缝 |
-| `src/plugins/` | 41 个文件 ≈13800 行 | 每个服务一个 cordis 插件 + 十四个官方可开关插件 |
-| `src/host/kernel.ts` | 310 行 | 内核装配顺序与三档插件元数据 |
-| `src/contract.ts` | 730 行 | UI ⇄ 运行时的中性契约（`DscRuntime` + 视图类型） |
-| `src/services/types.ts` | 804 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
+| `src/core/` | 45 个文件 ≈13000 行 | 纯能力：模型客户端与协议适配器、会话、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板 |
+| `src/core/tools/` | 6 个文件 ≈620 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
+| `src/core/dsh-compat/` | 3 个文件 ≈200 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
+| `src/plugins/` | 44 个文件 ≈14000 行 | 每个服务一个 cordis 插件 + 十六个官方可开关插件 |
+| `src/host/kernel.ts` | 385 行 | 内核装配顺序与三档插件元数据 |
+| `src/contract.ts` | 916 行 | UI ⇄ 运行时的中性契约（`DscRuntime` + 视图类型） |
+| `src/services/types.ts` | 950 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
 | `src/adapter/transcript.ts` | 279 行 | 内核事件 → UI 快照的折叠投影 |
 | `src/app/` | 7 个组件 | ink 终端界面（与桌面端共用契约） |
 | `desktop/electron/` | main + preload | 窗口、托盘、运行时子进程、终端与浏览器 dock |
@@ -121,15 +122,15 @@ export const myPlugin: Plugin.Object = {
 
 | 档 | 判定 | 开关 | 现在有谁 |
 | --- | --- | --- | --- |
-| 自定义 | `source: 'external'`，文件在 `~/.dsc/plugins/*.js` | 可拨，默认开 | 用户自己的 |
-| 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 14 个 |
+| 自定义 | `source: 'external'`，文件在 `~/.dsc/plugins/*.js` | 可拨，默认开 | 用户自己的（dsh 风格的插件走兼容层，见 [plugin-development.md](plugin-development.md) 的「dsh 兼容层」章） |
+| 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 16 个 |
 | 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关 | `llm`/`session`/`guards`/`surfaces`/`waiting`/`approval`/`hooks`/`tools`/`tools-default`/`transcript`/`commands`/`skills`/`prompt`/`mode`/`settings`/`compact`/`todo`/`plan`/`ask`/`agent`/`goal`/`memory`/`runtime` 共 23 个 |
 
 官方可开关插件（`src/host/kernel.ts` 的 `OFFICIAL_PLUGINS` + `OFFICIAL_OBJECTS`）：
 
 | 插件 | 默认 | 设置分区 | 干什么 |
 | --- | --- | --- | --- |
-| `subagent` 子智能体团队 | 关 | `subagent` | 把任务派给有明确授权的队友，提供 `subagent` 与 `team_task` 工具 |
+| `subagent` 智能体团队 | 关 | `subagent` | 把任务派给有明确授权的队友，提供 `subagent` 与 `team_task` 工具 |
 | `computer-use` 电脑操作 | 关 | `computer-use` | 截屏、点击、输入 Windows 桌面，每次动手都要审批 |
 | `web-search` 网页搜索 | 开 | `web-search` | 提供 `web_search` 工具，经 Tavily / 博查 / Serper 检索网页 |
 | `approval-floor` 审批灾难地板 | 开 | `approval-floor` | 守卫链 order 5 的硬闸：灾难命令、deny 黑名单、命令白名单、无人值守 |
@@ -143,6 +144,7 @@ export const myPlugin: Plugin.Object = {
 | `lsp` LSP 代码智能 | 关 | `lsp` | 连语言服务器查定义/引用/实现/悬停，并把本次编辑新引入的报错附在 write/edit 结果里 |
 | `browser` 浏览器自动化 | 关 | `browser` | DOM 级控制浏览器：无障碍快照 + ref 定位点击输入（`browser_look` 只读 / `browser` 动手），不是截图比坐标 |
 | `self-improve` 自我改进 | 关 | `self-improve` | 三条闭环：纠正捕获候选、复盘产技能草稿（默认停用待人启用）、技能自修 + 台账回滚 |
+| `dsh-compat` dsh 兼容层 | 关 | — | 挂载 dsh（DeepSeek Harness）外部插件：`logger` 服务、模块解析钩子、dsh 风格工具注册的形状适配 |
 
 默认开关按一条规矩定：会拉起外部进程、连外部服务器或改写每轮请求工具面的那几档默认关（`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`self-improve`）；提升安全与本地便利、且不配就完全无副作用的那几档默认开。沙箱是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
 
@@ -183,7 +185,7 @@ export const myPlugin: Plugin.Object = {
 
 | 常量 | 位置 | 当前值 | 什么时候动 |
 | --- | --- | --- | --- |
-| `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:71` | 5 | 插件能用的扩展点有增减 |
+| `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:88` | 6 | 插件能用的扩展点有增减 |
 | `HOST_PROTOCOL_VERSION` | `src/plugins/host-stdio.ts:25` + `desktop/electron/main/protocol.ts` | 2 | 协议消息种类或白名单语义变了 |
 
 两个版本都是「加载时对不上就报错」，不做静默兼容。插件可以声明 `apiVersion`，内核只拒绝
@@ -195,11 +197,11 @@ export const myPlugin: Plugin.Object = {
 
 | 路径 | 谁写 | 作用 |
 | --- | --- | --- |
-| `config.yaml` | 用户 / 设置界面（容错读写在 `src/core/config-store.ts`）/ `dsc config migrate` | 主配置：默认 provider/model + `providers`（`baseURL`/`apiKeyEnv`/`models`）+ `skills` 自定义目录 + `ui` 段选界面。每个模型可选 `contextWindow`/`maxTokens`/`thinkingLevels`/`thinkingParam`/`effortMap`/`modalities`（不写=四档 + `thinking` 开关 + 只吃文本） |
+| `config.yaml` | 用户 / 设置界面（容错读写在 `src/core/config-store.ts`）/ `dsc config migrate` | 主配置：默认 provider/model + `providers`（`baseURL`/`apiKeyEnv`/`models`，可选 `api` 选协议适配器，缺省 `openai-completions`）+ `skills` 自定义目录 + `ui` 段选界面。每个模型可选 `contextWindow`/`maxTokens`/`thinkingLevels`/`thinkingParam`/`effortMap`/`modalities`（不写=四档 + `thinking` 开关 + 只吃文本） |
 | `credentials.yaml` | 用户 / 设置界面 | key 的第二来源（第一是 `apiKeyEnv` 指向的环境变量，第三是回退读 `~/.dsh`） |
 | `config.json` | 用户（可选） | 轻量覆盖：provider / model / temperature |
 | `settings.json` | 设置界面与 `ctx.settings`（`src/core/prefs.ts:15`） | 审批与思考强度默认值、市场源清单、关窗是否缩托盘、侧栏界面偏好（排序、工作区顺序与别名） |
-| `plugins.json` | 插件中心、`plugin_manager` 工具 | 条目树：`entries[{file, disabled, config}]` + `history` 版本记录（自动回滚靠它）。十四个官方可开关插件各占一条，`config` 里存它们的可调值 |
+| `plugins.json` | 插件中心、`plugin_manager` 工具 | 条目树：`entries[{file, disabled, config}]` + `history` 版本记录（自动回滚靠它）。十六个官方可开关插件各占一条，`config` 里存它们的可调值（dsh 插件的 `risk` / `risks` 也存这里） |
 | `skills.json` | 技能中心 | 每个技能的开关 |
 | `desktop.json` | 桌面主进程（`desktop/electron/main/dsc-core.ts:42-60`） | 最近工作目录（最多记 12 个）、托盘提示是否弹过 |
 | `.last-session` | 会话插件 | `--resume` 无参时指向上次的会话文件 |
@@ -247,7 +249,18 @@ user     { text }
 assistant{ text, reasoning, toolCalls? }
 tool     { callId, name, text, images?, error? }   error = rejected | tool-error
 summary  { text, keep? }                压缩产生的摘要；keep = 摘要之外保留了尾部多少条
+state    { id, payload }                功能点状态（模式/清单/计划/目标/记忆/学习/system-prompt…）
+note     { id, text }                   请求注入备忘（投影塞进请求体的日志外内容在此留底）
 ```
+
+**「模型可见 ⟺ 已记录」**（对齐 dsh 的 Model-visible ⟺ logged）：发给模型的每一份
+都要求能从日志重建——消息历史存原文，改写走 `ctx.prompt.registerProjection` 的
+**命名纯投影链**（内置 `fold-system` 并 system、`drop-images` 兜底换图，插件投影按
+order 插队）；系统提示词不进消息流，由 agent 插件在每次请求时把用到的全文写进
+`system-prompt` 状态条目（hash 去重，恢复会话后最后一条即当前生效的那份）；投影往
+请求里注入的日志外内容（LSP 写后诊断、生命周期钩子话术）必须用 `session.appendNote`
+落一条 `note` 记录。重建公式：**日志原文 + 投影链定义 + system-prompt + notes = 模型
+看到的完整请求**。
 
 读到 `summary` 记录时，`Session.load` 把已经读到的消息换成「摘要 + 末尾 `keep` 条」，尾部在清空之前先取下来：日志是 append-only，摘要之前的原始记录一条都没删，重放时只能靠这个数字知道接回多少。老日志没有 `keep` 字段，按 0 处理，结果是「摘要 + 摘要之后的记录」——这是刻意的向后兼容，比把摘要之前的原文整段读回来（压缩等于白压）好得多。
 
@@ -266,7 +279,8 @@ summary  { text, keep? }                压缩产生的摘要；keep = 摘要之
 | 给模型加一个工具 | `ctx.tools.register({ name, description, parameters, risk, run })` | `risk='read'` 自动放行，`write`/`exec` 走审批卡 |
 | 加一个 `/命令` | `ctx.commands.register()` | 命令名撞内置的会被拒 |
 | 往系统提示加一段 | `ctx.prompt.register(id, 取文本, { order })` | 插件关着时这段话自动消失；order 决定段次（模式条款 30、模型信息 890） |
-| 改写发给模型的消息 | `ctx.prompt.transformMessages()` | 只改请求体，不动会话日志（旧截图裁剪用的就是它） |
+| 加一个模型协议 | `ctx.llm.registerAdapter({ id, stream })` | 端点在 config.yaml 用 `api: <id>` 选择；未注册的协议发请求时响亮报错 |
+| 改写发给模型的消息 | `ctx.prompt.registerProjection(id, fn, { order })` | **命名纯投影**：同一输入永远同一输出；模型可见 ⟺ 日志原文 + 投影链（旧截图裁剪用的就是它）。往请求里塞日志上没有的内容时必须配 `session.appendNote` |
 | 工具动手之前拦一道 | `ctx.guards.register({ id, order, decide })` | 内置刻度：灾难地板 5、沙箱 8、协作模式 10、LSP 写前留底 7、安全钩子 20、浏览器域名 20、生命周期钩子 25、审批 30；守卫自己抛错按「拒」处理 |
 | 改写工具的输出 | `ctx.guards.registerObserver({ id, order, observe })` | 内置刻度：密钥遮红 10、LSP 诊断注入 46、生命周期钩子 45、大输出溢出 50；order 小的先加工，后一位看到的是前一位的输出 |
 | 换掉命令的执行体（真隔离） | `registerCommandRunner()`（`src/core/tools/command-runner.ts`） | 随包发布的内置插件可用（外部插件拿不到）：沙箱的容器后端把 `powershell -Command X` 换成 `docker run … sh -c X`；没有注册者时行为与从前完全一致 |
@@ -292,6 +306,9 @@ cd D:\dsc\desktop && pnpm run typecheck
 node shots/team-check.mjs          # 插件与团队，98 条
 node shots/storage-check.mjs       # 会话存储与会话库
 node shots/llm-retry-check.mjs     # LLM 重试（连接失败 / 429 重试，400 与取消不重试）+ 版本号（10 条）
+node shots/llm-adapter-check.mjs   # 协议适配器接缝：注册/派发/卸载、重复拒绝、未注册报错、api 字段校验（11 条）
+node shots/prompt-projection-check.mjs # 命名投影链 + system-prompt 落盘 + note 记录与重放（17 条）
+node shots/dsh-compat-check.mjs    # dsh 兼容层：解析钩子、工具兼容面、logger 桥、不支持项响亮拒绝（14 条）
 node shots/model-caps-check.mjs    # 模型能力字段读写往返 + 档位 → 请求字段映射（23 条）
 node shots/order-check.mjs         # 侧栏工作区排序落点 + 按工作区树的层级（跑前先编 workspace-order.ts）
 node shots/sandbox-check.mjs       # 沙箱：路径围栏、命令策略、一次性升权、降级可见（193 条）
@@ -453,7 +470,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 
 ### 内核装配顺序
 
-`createKernel()` 依次挂 25 个内核插件：`llm` → `session` → 三个扩展点（`guards` / `surfaces` / `waiting`）→ `approval` → `tools` → `tools-default` → `transcript` → `commands` → `skills` → `prompt` → `mode` → `settings` → `hooks` → `compact` → `todo` → `plan` → `ask` → `agent` → `goal` → `memory` → `runtime` → `desktop-dock` → `plugin-manager`；末尾把十四个官方可开关插件登记进热挂载表（`registerBuiltinMount`），再按 `plugins.json` 的条目决定本次挂不挂（`src/host/kernel.ts`）。
+`createKernel()` 依次挂 25 个内核插件：`llm` → `session` → 三个扩展点（`guards` / `surfaces` / `waiting`）→ `approval` → `tools` → `tools-default` → `transcript` → `commands` → `skills` → `prompt` → `mode` → `settings` → `hooks` → `compact` → `todo` → `plan` → `ask` → `agent` → `goal` → `memory` → `runtime` → `desktop-dock` → `plugin-manager`；末尾把十六个官方可开关插件登记进热挂载表（`registerBuiltinMount`），再按 `plugins.json` 的条目决定本次挂不挂（`src/host/kernel.ts`）。
 这个顺序里有两处是必须的，不只是好看：`approval` 早于 `mode`，因为换档广播 `dsc/mode-changed` 而审批要听（审批卡上得写当前档位）；`transcript` 早于 `plan`，因为恢复会话时要先把会话流清空，计划卡那条条目才不会被清掉。
 官方可开关插件之间还有一条硬约束：`tool-search` 必须排在 `mcp` 之后，否则它 apply 时 `ctx.get('mcp')` 是 `undefined`，MCP 工具的 schema 永远不会被撤下。
 
@@ -469,7 +486,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 | `model-caps.ts` | 模型能力（思考档位 / 档位走哪个字段 / 输入模态）的**唯一**来源：默认值、YAML 容错解析（认 `vision`、`photo`、`图片`、旧字段 `vision: true`）、档位 → 请求字段映射 `effortToWire()`（`:201`）。切模型时越界的档位由 `clampEffort()`（`:184`）退回 `default`；界面文案（`THINKING_LEVEL_LABELS`、`MODALITY_LABELS`、`EFFORT_WIRE_HINT`）也在这里，渲染层不另抄一份 |
 | `config-store.ts` | 设置界面写 `config.yaml` / `credentials.yaml` 的**唯一**入口。端点名要匹配 `/^[a-z0-9][a-z0-9_-]{0,40}$/`（`:137`）；不写 `apiKeyEnv` 时按端点名推导成 `<名字大写>_API_KEY`；草稿的能力字段在 `validateDraft()`（`:156`）过枚举，缺省字段由 `capsOf()` 补，能力字段只在偏离缺省时写进 YAML（`:186`）；覆盖前会先存一份 `config.yaml.bak`，**YAML 注释会在这一步丢掉**（`:44`） |
 | `migrate.ts` | 一次性搬 dsh 的配置，只读 dsh。目标已存在且没给 `force` 就直接返回（`:107`）。只收 `api: openai-completions` 的端点（`:78`） |
-| `llm.ts` | 手写 SSE 解析：只认 `data:` 行，单行 JSON 解析失败就跳过（`:172-176`）。思考增量字段是 `delta.reasoning_content`（`:179-182`），重放给模型时原样回传（空串不回传）。工具调用按 `delta.tool_calls[].index` 拼，`arguments` 用 `+=` 续接，最后按 index 排序（`:187-216`）。最多 3 次尝试，退避 500ms、1000ms（`:89`、`:105`） |
+| `llm.ts` | 手写 SSE 解析：只认 `data:` 行，单行 JSON 解析失败就跳过。思考增量字段是 `delta.reasoning_content`，重放给模型时原样回传（空串不回传）。工具调用按 `delta.tool_calls[].index` 拼，`arguments` 用 `+=` 续接，最后按 index 排序。最多 3 次尝试，退避 500ms、1000ms。**协议适配器**：这份实现就是内置 `openai-completions` 适配器（`LlmAdapter`），别的协议由插件经 `ctx.llm.registerAdapter` 注册，端点配置 `api` 字段选择 |
 | `session.ts` | 列表只读每个文件前 8 行 + mtime（`:463-472`），所以列表页别指望读到深处的内容。目录名把 `\\`、`/`、`:` 换成 `-`（`:34-36`） |
 | `session-meta.ts` | `sessions/meta.json` 用 uuid 当键，所以归档挪文件不会丢状态（`:7`）。`version` 不是 1 就整表当空（`:53`） |
 | `events.ts` | `CoreEvent` 九个变体，是 core 唯一对外通道（`:10-22`） |
@@ -489,7 +506,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 | `tool-search.ts` | 工具渐进披露的纯逻辑：分词（中文按相邻两字）、手写 BM25 索引、延后判定（read 一律不许撤）、配置校验 |
 | `lifecycle-hooks.ts` | codex 十二事件的钩子引擎：事件能力清单（wired / partial / unwired 与理由）、codex 形态配置的解析、跑外部命令、按失败方向给裁决 |
 | `approval.ts` | 只有审批通道**接口**，判读在 `src/plugins/approval.ts` |
-| `tools/` | `bash` 默认 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收），Windows 走 `powershell -NoProfile -Command`，超时和取消都 SIGKILL。`read` 单次最多 2000 行。`glob` 遍历上限 1 万、`grep` 2 万，都跳过 `node_modules`/`.git`/`dist`/`build`/`coverage`/`__pycache__` 与 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
+| `tools/` | `bash` 缺省 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收）——三个值都由 tools-default 插件配置下发（`bashTimeoutMs` / `bashMaxTimeoutMs` / `bashOutputChars`，设置分区「工具预算」可改），代码里的常量只是缺省。Windows 走 `powershell -NoProfile -Command`，超时和取消都收进程树。`read` 单次缺省 2000 行（`tools-default.readLineLimit`）。`glob` 遍历上限 1 万、`grep` 2 万，都跳过 `node_modules`/`.git`/`dist`/`build`/`coverage`/`__pycache__` 与 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
 | `skills.ts` | 只认顶层 `<目录>/SKILL.md` 与顶层 `<名字>.md`，不递归（`:165-178`）。`name` 要 kebab-case，非法就退回文件名并记一条问题 |
 | `market.ts` | 缓存 1 小时、拉取超时 15 秒、浏览并发 6、附属文件最多 40 个。GitHub 匿名限额低，403/422 会提示设 `GITHUB_TOKEN` |
 | `prefs.ts` | 偏好文件读坏了按默认返回，不崩（`:89-91`）。`closeToTray` 默认 true |

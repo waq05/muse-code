@@ -31,12 +31,14 @@ export interface ModelInfo extends ModelCaps {
   maxTokens: number
 }
 
-/** 一个 OpenAI 兼容端点。 */
+/** 一个模型端点（线上协议由 `api` 选择，缺省 OpenAI 兼容；协议适配器见 llm 插件）。 */
 export interface ProviderConfig {
   name: string
   displayName: string
   baseUrl: string
   apiKey: string
+  /** 协议适配器 id；缺省 openai-completions。 */
+  api?: string
   models: ModelInfo[]
 }
 
@@ -75,11 +77,16 @@ function loadCredentials(): void {
 function toProvider(name: string, raw: FileProvider): ProviderConfig | null {
   const apiKey = raw.apiKeyEnv !== undefined ? (process.env[raw.apiKeyEnv] ?? '') : ''
   if (apiKey === '') return null
+  // api 字段自给自足（不依赖别的能力声明），写错了当场说，不留到发请求才炸
+  if (raw.api !== undefined && (typeof raw.api !== 'string' || raw.api.trim() === '')) {
+    throw new Error(`config.yaml 端点 ${name} 的 api 字段写法不对：要填协议适配器 id（如 openai-completions）`)
+  }
   return {
     name,
     displayName: raw.displayName ?? name,
     baseUrl: raw.baseURL.replace(/\/+$/, ''),
     apiKey,
+    ...(raw.api !== undefined ? { api: raw.api.trim() } : {}),
     models: raw.models.map((model) => ({
       id: model.id,
       name: model.name ?? model.id,

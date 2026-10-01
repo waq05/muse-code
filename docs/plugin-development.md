@@ -70,13 +70,13 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 - `config`：**透传给 `apply(ctx, config)` 第二参**——插件用它读自己的配置，不必再自建
   配置文件。取值统一走 `resolvePluginConfig('<file>', passed)`（`src/core/plugin-registry.ts:168`）：
   装配时那份作底，磁盘上这份覆盖它，所以设置分区保存后正在跑的插件下一次用值就是新值，不用重启宿主。
-  读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；十四个官方可开关插件（`subagent`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`sandbox`、`schedule`、`lsp`、`browser`、`self-improve`）也各读这一份，并把可调值挂进自己的设置分区。
+  读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；十六个官方可开关插件（`subagent`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`sandbox`、`file-review`、`schedule`、`lsp`、`browser`、`self-improve`、`dsh-compat`）也各读这一份，并把可调值挂进自己的设置分区。
 - **启停热生效**：切换开关 → 内核卸载（调用 disposer）或重新挂载插件，无需重启宿主；
   文件内容变更后重新启用也会加载新代码（按 mtime 破坏模块缓存）。
 
 ### 3.2 版本管理（自动回滚）
 
-内核有 API 版本号（当前 `KERNEL_API_VERSION = 5`）。插件声明 `export const apiVersion = 2`：
+内核有 API 版本号（当前 `KERNEL_API_VERSION = 6`）。插件声明 `export const apiVersion = 2`：
 - 等于内核版本 → 正常挂载；
 - **高于**内核（插件要求更新的内核）→ 拒绝挂载、**自动写入停用**（回滚到可用状态），
   管理页显示原因；升级 dsc 后重新启用即可；
@@ -87,6 +87,7 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 | 1 | 初始版本：工具、命令、事件、全部内核服务 |
 | 2 | 新增 `settings` 与 `skills` 服务：设置分区、技能来源、市场源三个扩展点；桌面端设置面板与技能中心 |
 | 3 | 新增请求组装扩展点：`ctx.prompt.register`（附加系统提示，带 order 刻度）与 `ctx.prompt.transformMessages`（改写发出去的请求体）；外部插件可用 `export const settingsSection` 声明自己的设置分区 id |
+| 6 | 模型层两条缝：`ctx.llm.registerAdapter`（协议适配器 + 端点 `api` 字段 + `ctx.llm.stream` 派发）；`ctx.prompt.registerProjection`（命名纯投影，接替 v3 的匿名 `transformMessages`，内置 `fold-system` / `drop-images` 为保留名）；会话新增 `session.appendNote`（投影注入日志外内容必须落一条） |
 | 4 | 新增三个内核扩展点：工具守卫链（`ctx.guards.register` / `registerObserver`）、快照片段（`ctx.surfaces.register`）、等人登记（`ctx.waiting.register`）；会话记录多一对按 id 存取的状态（`ctx.session.appendState` / `session.state`） |
 | 5 | 新增一个可选服务 `sandbox`（当前档位、强制执行等级、可写根与路径判定；读它要用 `ctx.get('sandbox')`），并把「命令执行器缝」（`src/core/tools/command-runner.ts`，沙箱的容器后端换执行体用）开给随包发布的内置插件 |
 
@@ -111,7 +112,7 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 | 官方可开关 | `source: 'builtin'` 且 `toggleable: true` | 可拨，`defaultDisabled: true` 时默认关 |
 | 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关，页面只露 3 行，其余折叠 |
 
-现有的十四个官方可开关插件：默认开的五个是 `web-search`（网页搜索）、`approval-floor`（审批灾难地板）、`spill`（大输出溢出）、`session-search`（会话全文检索）、`sandbox`（沙箱——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写）；默认关的九个是 `subagent`（子智能体团队）、`computer-use`（电脑操作）、`lifecycle-hooks`（生命周期钩子）、`mcp`（MCP 客户端）、`tool-search`（工具渐进披露）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（按需拉起语言服务器子进程）、`browser`（拉起浏览器进程并连调试端口）、`self-improve`（会写技能文件与提示词面）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
+现有的十四个官方可开关插件：默认开的五个是 `web-search`（网页搜索）、`approval-floor`（审批灾难地板）、`spill`（大输出溢出）、`session-search`（会话全文检索）、`sandbox`（沙箱——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写）；默认关的九个是 `subagent`（智能体团队）、`computer-use`（电脑操作）、`lifecycle-hooks`（生命周期钩子）、`mcp`（MCP 客户端）、`tool-search`（工具渐进披露）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（按需拉起语言服务器子进程）、`browser`（拉起浏览器进程并连调试端口）、`self-improve`（会写技能文件与提示词面）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
 
 新增一档官方可开关插件要做的三件事：
 
@@ -179,15 +180,26 @@ ctx.transcript.subscribe(listener): () => void  // 快照变化订阅（useSyncE
 ctx.transcript.touch()                       // 手动失效快照缓存并通知 UI
 ```
 
-### 4.4 llm —— 模型路由（只读为主）
+### 4.4 llm —— 模型路由（只读为主 + 两条注册缝）
 
 ```ts
 ctx.llm.provider / ctx.llm.model / ctx.llm.effort / ctx.llm.contextWindow   // 当前状态
-ctx.llm.route(): LlmRoute               // { baseUrl, apiKey, model, maxTokens?, thinking? }
+ctx.llm.route(): LlmRoute               // { api, baseUrl, apiKey, model, maxTokens?, thinking? }
                                         // 注意：返回值含 apiKey，不要打印/落盘
 ctx.llm.setModel(provider, model)       // 切换；端点/模型不存在时抛错
 ctx.llm.setEffort('off' | 'low' | 'high' | 'max')
 ctx.llm.listModels(): ModelChoiceView[] // [{ value: '端点/模型', provider, model, description }]
+
+// 模型协议适配器（内核 API v6）：一种线上协议一份实现，端点在 config.yaml 里
+// 用 `api: <id>` 选择。重复 id 抛错；返回卸载函数。
+const off = ctx.llm.registerAdapter({
+  id: 'my-protocol',
+  async stream(request, handlers) {     // request: StreamRequest，handlers: { onDelta, onToolPrepare?, onRetry? }
+    // 发请求 → 流式回调 handlers.onDelta('text'|'reasoning', piece)
+    return { text, reasoning, toolCalls: [], usage, finishReason }   // StreamResult
+  },
+})
+// 派发统一走 ctx.llm.stream(api, request, handlers)——循环/压缩/审批都从这条缝走
 ```
 
 ### 4.5 session / agent / approval / compact
@@ -330,7 +342,34 @@ ctx.session.current().state('myPanel')               // 恢复会话时读回来
 
 这四样都是**注册**，不是改内核：内置的协作模式闸门、审批卡、灾难地板、安全钩子、生命周期钩子、任务清单、计划评审、会话目标、密钥遮红、大输出溢出全都挂在这些点上，外部插件走同一扇门。
 
-有些服务是可选的（插件关着时整个不存在，或者只在某些入口才登记），读它们只能用 `ctx.get('<服务名>')`，不能写进 `inject` 也不能用 `ctx.<服务名>?.`：`team`（子智能体团队）、`mcp`（MCP 客户端）、`sessionSearch`（会话全文检索）、`approvalFloor`（灾难地板的只读视图，插件关着时不存在）、`interactive`（界面可达性，只有 tui 与 host-stdio 入口才登记）、`sandbox`（沙箱）、`lsp`（LSP 代码智能）。例如 tool-search 读 MCP 工具目录就是 `const mcp = ctx.get('mcp')`，读到 `undefined` 就当没接 MCP；审批插件读 `ctx.get('interactive')`，读到 `undefined` 且不是终端直连就当「没人能回答审批卡」。
+有些服务是可选的（插件关着时整个不存在，或者只在某些入口才登记），读它们只能用 `ctx.get('<服务名>')`，不能写进 `inject` 也不能用 `ctx.<服务名>?.`：`team`（智能体团队）、`mcp`（MCP 客户端）、`sessionSearch`（会话全文检索）、`approvalFloor`（灾难地板的只读视图，插件关着时不存在）、`interactive`（界面可达性，只有 tui 与 host-stdio 入口才登记）、`sandbox`（沙箱）、`lsp`（LSP 代码智能）。例如 tool-search 读 MCP 工具目录就是 `const mcp = ctx.get('mcp')`，读到 `undefined` 就当没接 MCP；审批插件读 `ctx.get('interactive')`，读到 `undefined` 且不是终端直连就当「没人能回答审批卡」。
+
+### 4.10 prompt —— 附加系统提示与命名投影
+
+```js
+// 1) 附加系统提示（v3 起有）：每次组装请求时调用取文本；order 决定段次。
+const offText = ctx.prompt.register('my-plugin', () => '我这段话每次都进系统提示', { order: 60 })
+
+// 2) 命名投影（v6）：改写发给模型的消息。**必须是纯函数**——同一输入永远同一输出、
+//    不碰注册表之外的任何状态。dsh 的「Model-visible ⟺ logged」不变量靠它成立：
+//    模型看见什么 = 会话日志原文按 order 应用全部投影。
+const offProj = ctx.prompt.registerProjection('my-plugin-prune', (messages) => {
+  // 例：把过期截图从历史里裁掉
+  return messages
+}, { order: 60 })   // 内置刻度：插件投影 60（缺省）、fold-system 500（多条 system 并进头部）、drop-images 900（模型没勾照片时兜底）
+
+// 3) 投影往请求里**加**日志上没有的内容时，必须同时落一条 note：
+ctx.prompt.registerProjection('my-inject', (messages) => {
+  const extra = takePending()
+  if (extra === '') return messages
+  ctx.session.current().appendNote('my-inject', extra)   // 没有这条，模型看到的东西就没法从日志重建
+  return [...messages, { role: 'system', content: extra }]
+})
+```
+
+规则：`fold-system` / `drop-images` 是内核保留名，同名注册直接报错；投影抛错时这一轮
+跳过它并发一条通知，不拖垮请求；`transformMessages`（v3 的匿名改写）已移除，迁移就是把
+函数换成命名投影。
 
 ## 5. 事件
 
@@ -502,3 +541,48 @@ export function apply(ctx, config) {
 | 技能中心有条目但 `/名字` 调不动 | 条目 `userInvocable` 为 false，或名字撞了内置命令（new/resume/compact/model/help/exit/effort/plugins/skills） |
 | 写入类工具绕过审批直接执行 | risk 误标为 `'read'`——写文件/执行命令必须是 `'write'`/`'exec'`（权限模式 readonly 下一律拒绝） |
 | 插件被启用但行为还是旧的 | 文件变更后需重新停用→启用（或重启宿主）以触发重载 |
+
+## 9. dsh 兼容层（挂载 DeepSeek Harness 的插件）
+
+> 本节是速查；**逐插件的判定流程、API 映射表与实测坑见
+> [dsh-plugin-porting.md](dsh-plugin-porting.md)（dsh 插件适配指南）**。
+
+dsh（DeepSeek Harness）的外部插件与 dsc 同为 cordis 模块插件（命名导出 `inject`/`apply`），
+cordis 版本一致，所以**一部分 dsh 插件可以直接挂到 dsc 上跑**。开关是官方可开关插件
+「dsh 兼容层」（`dsh-compat`，默认关——它会改变外部插件的模块解析与工具注册行为，
+按「拉起外部机制的默认关」的规矩走）。
+
+### 9.1 支持范围
+
+| dsh 插件用到 | dsc 兼容层给什么 |
+|---|---|
+| `inject: ['tools']`，`ctx.tools.register(defineTool({...}))` | 直接支持：ToolDefinition 转成 dsc 工具条目——参数 schema（defineTool 编译出的 JSON Schema）原样透传、`execute(args, exec)` 的 `exec.signal` 对应 dsc 取消信号、模型可见内容由 `output.render` 折成文本、`timeoutMs` 到点放弃等待 |
+| `inject: ['logger']`，`ctx.logger.warn/error(...)` | 直接支持：cordis 内置 logger 管道 + 桥，warn/error 镜像进对话流（`[dsh 插件·名字]` 前缀），info/debug 不落地 |
+| `export const Config = z.object({...})`（schemastery） | 挂载时调用一次做配置校验，失败响亮回滚（提示检查 plugins.json 的 config） |
+| `inject` 里出现 `sessionProjections` / `agents` / `goals` / `systemPrompt` 等 | **不支持**：这些要整个 dsh 会话语义，挂载被拒绝并列出缺的服务名 |
+
+`defineTool`、`z`、`@deepseek-ai/cordis` 这些 `@deepseek-ai/*` 导入不用装——兼容层把插件
+目录里的这类导入重定向到 dsc 自带的 `@deepseek-ai/dsh-tools`（精确 pin 的 0.2.0-rc.2）与
+cordis（保证单实例）。**cordis 版本必须两边一致**，升级 dsc 依赖时留意。
+
+### 9.2 risk 映射（dsh 没有这个概念）
+
+dsh 工具没有 risk 分级；转进 dsc 后缺省 `risk: 'exec'`（每次调用都过审批卡，宁多问不漏问）。
+想放宽，在插件条目配置里写（`~/.dsc/plugins.json` 该条目的 `config`）：
+
+```json
+{ "file": "dsh-some-tool.js", "disabled": false, "config": { "risk": "read", "risks": { "dsh_echo": "read", "dsh_deploy": "write" } } }
+```
+
+`risk` 是这份插件全部工具的缺省，`risks` 按工具名覆盖；每次注册现读，改完重新启用插件即生效。
+
+### 9.3 装一个真实的 dsh 插件
+
+```sh
+# dsh 插件是 npm 包时：把它的依赖连同本体装进插件目录（npm ≥7 会自动装 peer 依赖）
+cd ~/.dsc/plugins && npm install <dsh 插件包>
+# 然后在 config.yaml 的 plugins 段声明入口（包的 lib/index.js），或复制成单文件
+```
+
+自包含的 dsh 风格插件见 [examples/plugins/dsh-style-clock.js](../examples/plugins/dsh-style-clock.js)；
+兼容层的自检（解析钩子、工具兼容面、logger 桥、不支持项拒绝）跑 `node shots/dsh-compat-check.mjs`。

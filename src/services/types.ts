@@ -19,7 +19,7 @@ import type { HookJudgement, HooksDoc, HookTrust } from '../core/hooks.js'
 import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryWriteResult, WriteOptions } from '../core/memory.js'
 import type { ProviderConfig } from '../core/config.js'
 import type { Session } from '../core/session.js'
-import type { ChatMessage } from '../core/llm.js'
+import type { ChatMessage, LlmAdapter, LlmRoute, StreamHandlers, StreamRequest, StreamResult } from '../core/llm.js'
 import type { ToolEntry } from '../core/tools.js'
 import type { CoreEvent } from '../core/events.js'
 import type { SkillDefinition, SkillSummary } from '../core/skills.js'
@@ -80,18 +80,8 @@ export interface SessionOpenPayload {
 
 // ── llm ──────────────────────────────────────────────────────────────────────
 
-/** 每次请求的模型路由。 */
-export interface LlmRoute {
-  baseUrl: string
-  apiKey: string
-  model: string
-  maxTokens?: number
-  temperature?: number
-  /** 思考开关注入；undefined = 不发 thinking 字段（端点默认行为）。 */
-  thinking?: 'enabled' | 'disabled'
-  /** `reasoning_effort` 的线上值；undefined = 不发。与 thinking 二选一，看模型怎么声明。 */
-  reasoningEffort?: string
-}
+/** 每次请求的模型路由（定义在 core/llm，这里转出口供插件引用；文件头已同时引入本地绑定）。 */
+export type { LlmRoute } from '../core/llm.js'
 
 /** 模型端点路由服务（provider/model 热切换的唯一状态持有者）。 */
 export interface LlmService {
@@ -112,6 +102,16 @@ export interface LlmService {
    * 子智能体用它跑角色自己指定的模型；端点或模型不存在时抛错。
    */
   routeTo(provider: string, model: string, effort: EffortLevel): LlmRoute
+  /**
+   * 注册一个模型协议适配器；端点在 config.yaml 里用 `api: <id>` 选择它。
+   * 重复 id 抛错（装配错误不许静默顶替）；返回卸载函数，插件卸载时一并撤销。
+   */
+  registerAdapter(adapter: LlmAdapter): () => void
+  /**
+   * 经适配器发一次流式请求。`api` 没有对应的已注册适配器时抛错
+   * （消息可直接展示：多半是端点的 api 字段写错或提供它的插件没开）。
+   */
+  stream(api: string, request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult>
   /** 校验并切换端点/模型；失败抛错（消息可直接展示）。 */
   setModel(provider: string, model: string): void
   /**
@@ -464,10 +464,19 @@ export interface PromptService {
    */
   register(id: string, text: () => string, options?: { order?: number }): () => void
   /**
-   * 注册一个请求体改写函数。只改发出去的那份，会话日志不动。
-   * 典型用法：电脑操作插件只保留最近一张截图，旧截图留在历史里除了撑上下文没有用。
+   * 注册一个「模型可见投影」：对发给模型的消息做一次**纯函数**改写——同一输入永远
+   * 同一输出、不读不改注册表之外的任何状态。
+   *
+   * 这是 dsh「Model-visible ⟺ logged」不变量的个人版达成方式：会话日志只存原文，
+   * 模型看见什么 = 日志原文按注册序应用全部投影的结果，投影是命名且可复算的定义，
+   * 任何人拿日志都能重建请求。往请求里**加**日志上没有的内容（LSP 诊断、钩子话术）
+   * 的投影，必须同时用 `session.appendNote` 把加的东西落进日志。
+   *
+   * @param id - 投影名（诊断与文档用）。`fold-system`、`drop-images` 是内核保留名。
+   * @param options.order - 应用次序，小的先做。内置刻度：插件投影 60（缺省）、
+   *   fold-system 500（多条 system 并进头部一条）、drop-images 900（模型没勾照片时兜底）。
    */
-  transformMessages(fn: (messages: ChatMessage[]) => ChatMessage[]): () => void
+  registerProjection(id: string, fn: (messages: ChatMessage[]) => ChatMessage[], options?: { order?: number }): () => void
   /** 已注册段（带顺序），拼提示词时与内核自己的段合并；外部插件一般不必直接调。 */
   sections(): PromptContribution[]
   /**
@@ -476,7 +485,8 @@ export interface PromptService {
    */
   systemPrompt(cwd: string): string
   /**
-   * 应用全部改写钩子，得到真正发给模型的那份消息。
+   * 按注册序应用全部投影（含内置 fold-system / drop-images），得到真正发给模型的那份消息。
+   * 这条链是纯函数管道：日志原文 + 这份定义 = 模型看见的内容。
    * @param messages - 已经拼好系统提示的那份。
    */
   rewrite(messages: ChatMessage[]): ChatMessage[]

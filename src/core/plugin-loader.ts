@@ -16,10 +16,13 @@ import { basename, join } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import type { Context, Fiber, Plugin } from '@deepseek-ai/cordis'
+import { ensureResolveHook } from './dsh-compat/resolve-hook.js'
+import { dshToolsFacade } from './dsh-compat/tools-facade.js'
 import {
   checkApiVersion,
   getPluginConfig,
   getPluginMeta,
+  isPluginEnabled,
   readPluginEntries,
   registerPluginMeta,
   writePluginEnabled,
@@ -32,11 +35,24 @@ const err = (error: unknown): string => (error instanceof Error ? error.message 
 /** 内核插件 API 版本（重导出，供宿主/文档引用）。 */
 export { KERNEL_API_VERSION }
 
+/**
+ * dsc 自己的全部服务名（services/types.ts 的 Context 声明）。外部插件 inject 里
+ * 出现这张表之外的名字，就认定是 dsh 风格的插件，走兼容层挂载路径。
+ */
+const DSC_SERVICE_NAMES = new Set([
+  'llm', 'session', 'approval', 'mode', 'todo', 'plan', 'ask', 'goal', 'tools', 'transcript',
+  'commands', 'compact', 'agent', 'prompt', 'guards', 'surfaces', 'waiting', 'skills', 'settings',
+  'hooks', 'memory', 'dock', 'ui', 'team', 'mcp', 'sessionSearch', 'approvalFloor', 'interactive',
+  'sandbox', 'logger',
+])
+
+/** 兼容层开着的判定与说明文案在挂载路径里；这里只留服务名清单。 */
+
 /** 已挂载的外部插件：文件名 → cordis Fiber（dispose 即卸载）。 */
 const mounted = new Map<string, Fiber>()
 
 /**
- * 内置但可停用的官方插件（子智能体团队、电脑操作）：这里登记它们的插件对象，
+ * 内置但可停用的官方插件（智能体团队、电脑操作）：这里登记它们的插件对象，
  * 于是「打开开关」不必去找 `~/.dsc/plugins/` 下的文件，热挂载直接挂内置对象。
  */
 const builtinMounts = new Map<string, Plugin.Object>()
@@ -62,6 +78,8 @@ interface PluginModule {
   apiVersion?: unknown
   inject?: unknown
   apply?: unknown
+  /** dsh 插件的 schemastery 配置 schema（可调用：传入原始 config，返回校验后的值）。 */
+  Config?: unknown
 }
 
 /**
@@ -139,15 +157,56 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
     return false
   }
 
+  // ---- dsh 风格识别 ----
+  // inject 里有 dsc 不认识的服务名 = dsh 生态的插件。兼容层没开就提示先开它；开了也
+  // 垫不起的（sessionProjections、agents 这类要整个 dsh 会话语义的），话说明白再回滚。
+  const injectNames = Array.isArray(mod.inject) ? mod.inject.filter((n): n is string => typeof n === 'string') : []
+  const foreign = injectNames.filter((n) => !DSC_SERVICE_NAMES.has(n))
+  if (foreign.length > 0) {
+    if (!isPluginEnabled('dsh-compat')) {
+      meta.problem =
+        `插件需要 dsc 不认识的服务：${foreign.join('、')}。若这是 dsh（DeepSeek Harness）风格的插件，` +
+        '请先在插件中心启用「dsh 兼容层」（dsh-compat）再打开本插件'
+    } else {
+      meta.problem =
+        `这个 dsh 插件需要 ${foreign.join('、')} 服务，超出 dsc 兼容层的支持范围。` +
+        '依赖 dsh 会话语义（投影、agent、目标）的插件个人版不兼容'
+    }
+    await disableSilently(base)
+    return false
+  }
+
+  // ---- 配置校验（dsh 插件用 schemastery 导出 Config；有就调一次，失败响亮回滚） ----
+  let configForApply = getPluginConfig(base)
+  if (typeof (mod.Config as unknown) === 'function') {
+    try {
+      const validated = (mod.Config as (raw: unknown) => unknown)(configForApply)
+      if (validated !== null && typeof validated === 'object') configForApply = validated as Record<string, unknown>
+    } catch (error) {
+      meta.problem = `插件配置校验失败：${err(error)}（检查 ~/.dsc/plugins.json 里这条目目的 config）`
+      await disableSilently(base)
+      return false
+    }
+  }
+
   // ---- 挂载 ----
   await unmountExternalPlugin(base)
+  // 兼容层开着：外部插件的 ctx.tools 换成双形状兼容面（dsc ToolEntry 与 dsh
+  // ToolDefinition 都收），dsh 插件 inject ['tools'] 时不再需要任何特判。
+  // 解析钩子同步注册（registerHooks），这里先确保它在，插件导入 @deepseek-ai/* 才走得通。
+  const needsCompat = isPluginEnabled('dsh-compat')
+  if (needsCompat) ensureResolveHook([DSC_PLUGINS_DIR])
   try {
     const pluginObject = {
       name: meta.name,
       inject: mod.inject as string[] | undefined,
-      apply: mod.apply as (ctx: Context, config: Record<string, unknown>) => unknown,
+      apply: (innerCtx: Context, config: Record<string, unknown>): unknown =>
+        (mod.apply as (ctx: Context, config: Record<string, unknown>) => unknown)(
+          needsCompat ? compatCtx(innerCtx, base) : innerCtx,
+          config,
+        ),
     }
-    const fiber = root.plugin(pluginObject, getPluginConfig(base))
+    const fiber = root.plugin(pluginObject, configForApply)
     await fiber
     mounted.set(base, fiber)
     meta.problem = undefined
@@ -157,6 +216,27 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
     await disableSilently(base)
     return false
   }
+}
+
+/**
+ * dsh 兼容的 ctx 视图：`ctx.tools` 换成双形状的兼容面（risk 的映射每次 register
+ * 时现读插件条目配置），其余服务原样透传。logger 是 cordis 内置服务，不用垫。
+ */
+function compatCtx(innerCtx: Context, file: string): Context {
+  return new Proxy(innerCtx, {
+    get(target, prop, receiver) {
+      if (prop === 'tools') {
+        return dshToolsFacade((entry) => target.tools.register(entry), () => resolveRiskConfig(file))
+      }
+      return Reflect.get(target, prop, receiver)
+    },
+  })
+}
+
+/** 从条目树现读 risk 映射：`risk` 是这份插件全部工具的缺省，`risks` 按工具名覆盖。 */
+function resolveRiskConfig(file: string): { risk?: unknown; risks?: Record<string, unknown> } {
+  const raw = getPluginConfig(file)
+  return { risk: raw.risk, risks: raw.risks as Record<string, unknown> | undefined }
 }
 
 /** 卸载外部插件（未挂载时静默）。 */

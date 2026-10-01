@@ -10,7 +10,7 @@
  *   PreToolUse       → 守卫 order 25，可 deny；
  *   PostToolUse      → 观察者 order 45（同步点，钩子挂后台跑，话进下一次请求）；
  *   SessionStart     → `dsc/session-open` + 请求末尾补 system；
- *   UserPromptSubmit → 在 transformMessages 里认出新的用户消息；
+ *   UserPromptSubmit → 在 user-prompt-submit 投影里认出新的用户消息；
  *   PostCompact      → `dsc/compacted`；
  *   Stop / Interrupt → `dsc/turn-end` 的 completed / aborted；
  *   SessionEnd       → `dsc/exit`（退出不等钩子跑完）；
@@ -207,12 +207,15 @@ export const lifecycleHooksPlugin: Plugin.Object = {
 
     // ── 请求组装：UserPromptSubmit 认新消息 + 把攒下的话补在末尾 ─────────────────
 
-    const offTransform = ctx.prompt.transformMessages((messages: ChatMessage[]): ChatMessage[] => {
+    // 钩子产出不在会话日志里，塞进请求的同时必须落一条 note（Model-visible ⟺ logged）：
+    // 只投给主会话——队友的请求不走投影链，不会错拿主会话的 pending。
+    const offProjection = ctx.prompt.registerProjection('user-prompt-submit', (messages: ChatMessage[]): ChatMessage[] => {
       submitIfNewPrompt(messages)
       if (pending.length === 0) return messages
       const blocks = pending
       pending = []
-      // 补在末尾是安全的：llm.ts 发送前会把散落的 system 并进头部那一条（llm.ts:87-104、:167）
+      ctx.session.current().appendNote('lifecycle-hooks', blocks.join('\n\n'))
+      // 补在末尾是安全的：fold-system 投影（order 500）会把散落的 system 并进头部那一条。
       return [...messages, { role: 'system', content: blocks.join('\n\n') }]
     })
 
@@ -233,7 +236,7 @@ export const lifecycleHooksPlugin: Plugin.Object = {
 
     // ── 事件监听 ─────────────────────────────────────────────────────────────
 
-    const offs: Array<() => void> = [ctx.guards.register(guard), ctx.guards.registerObserver(observer), offTransform]
+    const offs: Array<() => void> = [ctx.guards.register(guard), ctx.guards.registerObserver(observer), offProjection]
 
     offs.push(
       ctx.on('dsc/session-open', ({ session, filePath }) => {

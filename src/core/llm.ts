@@ -50,6 +50,25 @@ export interface ChatMessage {
   ts?: number
 }
 
+/**
+ * 一次模型请求的路由：端点连接信息 + 协议字段。
+ * 这是请求体的来源形状，放协议层（core/llm）定义，循环与服务层共用同一份，
+ * 免得两处各抄一份字段名、加字段时漂移。
+ */
+export interface LlmRoute {
+  /** 协议适配器 id（端点 config.yaml 的 `api` 字段，缺省 openai-completions）。 */
+  api: string
+  baseUrl: string
+  apiKey: string
+  model: string
+  maxTokens?: number
+  temperature?: number
+  /** 思考开关注入；undefined = 不发 thinking 字段（端点默认行为）。 */
+  thinking?: 'enabled' | 'disabled'
+  /** `reasoning_effort` 的线上值；undefined = 不发。与 thinking 二选一，看模型怎么声明。 */
+  reasoningEffort?: string
+}
+
 export interface StreamRequest {
   baseUrl: string
   apiKey: string
@@ -165,6 +184,29 @@ export interface StreamResult {
   finishReason: string | null
 }
 
+/**
+ * 模型协议适配器（对应 dsh `ctx.llm.registerAdapter` 的个人版）：一种线上协议
+ * 一份实现。内置的 openai-completions 由 llm 插件预注册；外部插件可以注册别的
+ * 协议（例如某家原生 API），端点在 config.yaml 里用 `api: <id>` 选择。
+ * 重复 id 注册会被拒绝——两个插件争一个协议名是装配错误，响亮失败好过静默顶替。
+ */
+export interface LlmAdapter {
+  /** 协议 id；端点配置里的 `api` 字段按它选适配器。 */
+  readonly id: string
+  /** 发起一次流式对话（与 {@link streamChat} 同一契约）。 */
+  stream(request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult>
+}
+
+/** 内置协议 id：OpenAI chat-completions（DeepSeek/GLM 系 thinking 扩展同属此协议）。 */
+export const OPENAI_COMPLETIONS_API = 'openai-completions'
+
+/** 已按协议派发的一次流式请求调用（LlmService.stream 的形状；循环/压缩/审批共用）。 */
+export type LlmStream = (
+  api: string,
+  request: StreamRequest,
+  handlers: StreamHandlers,
+) => Promise<StreamResult>
+
 export class LlmError extends Error {
   /** HTTP 状态码；fetch 自己抛的异常（连不上、DNS 失败、连接被切断）没有这个值。 */
   readonly status?: number
@@ -186,7 +228,7 @@ export class LlmError extends Error {
 
 const MAX_ATTEMPTS = 3
 
-/** 发起一次流式对话。 */
+/** 发起一次流式对话（openai-completions 适配器的实现；经 LlmService.stream 派发）。 */
 export async function streamChat(request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult> {
   let attempt = 0
   for (;;) {
@@ -210,7 +252,9 @@ export async function streamChat(request: StreamRequest, handlers: StreamHandler
 async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult> {
   const body: Record<string, unknown> = {
     model: request.model,
-    messages: serializeMessages(foldSystemMessages(request.messages)),
+    // 消息按调用方给的原样发：历史里混进多条 system 的合并是 prompt 层的
+    // 命名投影（fold-system）该做的事，协议适配器只认一条流水线形状。
+    messages: serializeMessages(request.messages),
     stream: true,
     stream_options: { include_usage: true },
   }

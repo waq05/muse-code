@@ -10,10 +10,24 @@
  *
  * @module dsc/plugins/agent
  */
-import type { Plugin } from '@deepseek-ai/cordis'
+import { createHash } from 'node:crypto'
+import type { Context, Plugin } from '@deepseek-ai/cordis'
 import { MiniAgent } from '../core/loop.js'
 import { appendUsageRecord } from '../core/usage-log.js'
 import type { AgentService } from '../services/types.js'
+
+/**
+ * 系统提示词落盘（Model-visible ⟺ logged 的提示词半边）：系统提示不进 user/assistant
+ * 消息流，这里在每次请求组装时把用到的全文写进会话的 `system-prompt` 状态条目——
+ * hash 变了才写（换模型、换模式、改 AGENTS.md、跨天都会变），重放会话时最后一条
+ * 就是模型当前看到的提示词。
+ */
+function noteSystemPrompt(ctx: Context, text: string): void {
+  const hash = createHash('sha256').update(text).digest('hex').slice(0, 16)
+  const current = ctx.session.current()
+  if (current.state('system-prompt')?.hash === hash) return
+  current.appendState('system-prompt', { hash, text })
+}
 
 export const agentPlugin: Plugin.Object = {
   name: 'agent',
@@ -24,7 +38,12 @@ export const agentPlugin: Plugin.Object = {
       {
         route: () => ctx.llm.route(),
         // 系统提示每次请求重拼：切模式、改 AGENTS.md、换模型都不用重启。
-        systemPrompt: () => ctx.prompt.systemPrompt(ctx.session.current().meta.cwd),
+        // 拼好的这份同时落进 system-prompt 状态条目（hash 去重）。
+        systemPrompt: () => {
+          const text = ctx.prompt.systemPrompt(ctx.session.current().meta.cwd)
+          noteSystemPrompt(ctx, text)
+          return text
+        },
         tools: () => ctx.tools.list(),
         guards: ctx.guards,
         emit: (event) => {
@@ -47,7 +66,9 @@ export const agentPlugin: Plugin.Object = {
         beforeRequest: () => ctx.compact.check(),
         // 请求因爆窗失败时压一次再重试（对齐 dsh 的溢出重试；压不出空间就把原错误抛回去）。
         onContextOverflow: () => ctx.compact.forceCompact(),
-        transformMessages: (messages) => ctx.prompt.rewrite(messages),
+        rewrite: (messages) => ctx.prompt.rewrite(messages),
+        // 发请求走 llm 服务的适配器表：端点声明什么协议就由谁的适配器去说
+        stream: (api, request, handlers) => ctx.llm.stream(api, request, handlers),
       },
       ctx.session.current(),
     )

@@ -42,7 +42,8 @@ msc --resume <会话jsonl路径>              # 恢复指定会话
 Muse Code 只读**自己的**配置文件，与 dsh 完全解耦：
 
 - **`~/.dsc/config.yaml`**（主配置）：`default`（默认 provider/model）+ `providers`
-  （`displayName` / `baseURL` / `apiKeyEnv` / `models` 列表，OpenAI 兼容协议）。
+  （`displayName` / `baseURL` / `apiKeyEnv` / `models` 列表；可选 `api` 选线上协议适配器，
+  缺省 `openai-compat` 风格的 `openai-completions`，装了提供别的协议的插件后可换）。
 - **模型可选字段**（不写就用默认，设置界面「模型」分区每个模型一行可直接改）：
 
   ```yaml
@@ -93,7 +94,7 @@ src/core/           自研引擎（零 UI 依赖、零 dsh 依赖）
 src/adapter/        core 事件 → 快照投影（transcript 折叠 + core-runtime）
 src/contract.ts     UI ⇄ 运行时 的中性契约（DscRuntime）
 src/host/kernel.ts  内核装配顺序 + 三档插件清单（运行内核 / 官方可开关 / 自定义）
-src/plugins/        每个服务一个 cordis 插件（含十四个可开关的官方插件，见 §4 表）
+src/plugins/        每个服务一个 cordis 插件（含十六个可开关的官方插件，见 §4 表）
 src/app/            ink UI（App/ChatView/Composer/ToolCard/ApprovalCard/SessionPicker/StatusBar）
 desktop/            Electron 桌面端：主进程 + 独立运行时子进程 + React renderer
 scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scripts/composer-test.mjs，16 项断言）
@@ -101,7 +102,9 @@ scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scrip
 
 与 dsh 的取舍：复用其**设计**（turn 语义、事件流、审批分级、JSONL 落盘、压缩），不复用其**实现**（无沙箱、无检查点修复、无投影事件语义——个人版不需要）。
 
-官方可开关插件共 **14 个**（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索、沙箱；默认关：子智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露、定时任务、LSP 代码智能、浏览器自动化、自我改进），在插件中心里手动开关；长期记忆是默认开的内核插件。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
+官方可开关插件共 **16 个**（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索、沙箱、文件更改预览；默认关：智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露、定时任务、LSP 代码智能、浏览器自动化、自我改进、dsh 兼容层），在插件中心里手动开关；长期记忆是默认开的内核插件。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
+
+**dsh 插件兼容**：启用「dsh 兼容层」后，一部分 dsh（DeepSeek Harness）外部插件可以直接挂载——`defineTool` 定义的工具、logger 日志、schemastery 配置校验都走通，依赖 dsh 会话语义（投影/agent/目标）的不支持、挂载时响亮提示。详见 [docs/plugin-development.md](docs/plugin-development.md) 第 9 节。
 
 ## 已知限制
 
@@ -124,4 +127,5 @@ scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scrip
 | [docs/development-log.md](docs/development-log.md) | 开发记录：十一个阶段各自引入了什么、决策台账、真 bug 台账、还欠什么 |
 | [docs/harness-benchmark-roadmap.md](docs/harness-benchmark-roadmap.md) | 对标计划书：对照 codex / hermes / dsh 的差距矩阵、可移植项与落地顺序、红线 |
 | [docs/plugin-development.md](docs/plugin-development.md) | 插件 API 与开发规范 |
+| [docs/dsh-plugin-porting.md](docs/dsh-plugin-porting.md) | **dsh 插件适配指南**：判定能不能直接挂、挂载步骤、API 映射表、实测坑、验证清单 |
 | [docs/ui-design.md](docs/ui-design.md) | 界面开发规范：设计原则、令牌体系、原语层、布局与反馈、键盘与动效、主题与 hermes 主题引擎对照 |

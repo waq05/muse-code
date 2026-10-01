@@ -11,6 +11,7 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { ModelInfo, DscCoreConfig } from '../core/config.js'
 import { DEFAULT_CAPS, clampEffort, effortToWire, hasEffortLevel, THINKING_LEVEL_LABELS, type ModelCaps } from '../core/model-caps.js'
+import { OPENAI_COMPLETIONS_API, streamChat, type LlmAdapter } from '../core/llm.js'
 import type { EffortLevel, ModelChoiceView, Modality } from '../contract.js'
 import type { LlmRoute, LlmService } from '../services/types.js'
 
@@ -22,6 +23,10 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
     let currentModel = config.defaultModel
     // 'default' = 不发思考字段（跟随端点默认行为）
     let currentEffort: EffortLevel = 'default'
+    /** 协议适配器表：id → 适配器。内置 openai-completions 预注册，插件可补新的协议。 */
+    const adapters = new Map<string, LlmAdapter>([
+      [OPENAI_COMPLETIONS_API, { id: OPENAI_COMPLETIONS_API, stream: streamChat }],
+    ])
 
     function findModel(providerName: string, modelName: string): ModelInfo | undefined {
       return config.providers[providerName]?.models.find((model) => model.id === modelName)
@@ -47,6 +52,7 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
       const model = findModel(providerName, modelName)
       const wire = effortToWire(capsFor(providerName, modelName), clampEffort(capsFor(providerName, modelName), effort))
       return {
+        api: provider.api ?? OPENAI_COMPLETIONS_API,
         baseUrl: provider.baseUrl,
         apiKey: provider.apiKey,
         model: modelName,
@@ -78,6 +84,26 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
       },
       routeTo(provider, model, effort): LlmRoute {
         return routeFor(provider, model, effort)
+      },
+      registerAdapter(adapter) {
+        if (adapters.has(adapter.id)) {
+          throw new Error(`协议适配器 ${adapter.id} 已经注册过（内置与插件不允许重名，换个 id）`)
+        }
+        adapters.set(adapter.id, adapter)
+        return () => {
+          if (adapters.get(adapter.id) === adapter) adapters.delete(adapter.id)
+        }
+      },
+      stream(api, request, handlers) {
+        const adapter = adapters.get(api)
+        if (adapter === undefined) {
+          const known = [...adapters.keys()].map((id) => (id === api ? `「${id}」` : id)).join('、')
+          throw new Error(
+            `端点声明的协议 ${api} 没有对应的适配器（已注册：${known}）。\n` +
+              '检查 config.yaml 里这个端点的 api 字段，或启用提供该协议的插件。',
+          )
+        }
+        return adapter.stream(request, handlers)
       },
       setEffort(effort) {
         const caps = capsFor(currentProvider, currentModel)

@@ -60,7 +60,7 @@ export function getPluginMeta(file: string): PluginMeta | undefined {
  * 2 = 增加设置分区（`ctx.settings.registerSection`）与技能来源
  * （`ctx.skills.registerProvider` / `registerMarket`）两个扩展点；
  * 3 = 增加请求组装扩展点（`ctx.prompt.register` 附加系统提示、
- * `ctx.prompt.transformMessages` 改写发给模型的消息），并允许外部插件用
+ * `ctx.prompt.registerProjection` 命名纯投影改写发给模型的消息），并允许外部插件用
  * `export const settingsSection` 声明自己的设置分区 id（插件中心据此在详情页画它的配置表单）；
  * 4 = 增加三个内核扩展点：工具守卫链（`ctx.guards.register` / `registerObserver`，
  * 工具动手之前的闸门与工具输出的改写）、快照片段（`ctx.surfaces.register`，界面每块状态
@@ -69,9 +69,13 @@ export function getPluginMeta(file: string): PluginMeta | undefined {
  * 5 = 新增一个可选服务 `sandbox`（当前档位、强制执行等级、可写根与路径判定；
  * 插件关着时不存在，读它要用 `ctx.get('sandbox')`），并把「命令执行器缝」开给随包发布的
  * 内置插件（`src/core/tools/command-runner.ts`：沙箱的容器后端靠它把本机 shell 换成容器）。
- * 1 到 4 的插件照常挂载（版本检查只拦「高于内核」的声明）。
+ * 6 = 模型层开两条缝：协议适配器（`ctx.llm.registerAdapter` + 端点配置的 `api` 字段 +
+ * `ctx.llm.stream` 派发）与命名投影（`ctx.prompt.registerProjection` 接替 v3 的匿名改写，
+ * 内置 fold-system / drop-images 是保留名）；会话多了 `appendNote`（投影往请求里注入的
+ * 日志外内容必须落一条，模型可见 ⟺ 已记录）。
+ * 1 到 5 的插件照常挂载（版本检查只拦「高于内核」的声明）。
  */
-export const KERNEL_API_VERSION = 5
+export const KERNEL_API_VERSION = 6
 
 /** 条目树的一项。 */
 export interface PluginEntry {

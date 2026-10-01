@@ -11,7 +11,8 @@ import type { ToolEntry } from '../tools.js'
 import { noteRead, noteWrite, readBlockReason, staleOverwriteReason, writeHardBlockReason } from '../path-policy.js'
 import { sandboxPermissionProperties } from './sandbox-args.js'
 
-const READ_LINE_LIMIT = 2000
+/** read 工具缺省一次读多少行（配置没给 readLineLimit 时用）。 */
+export const READ_DEFAULT_LINE_LIMIT = 2000
 
 const abs = (cwd: string, p: unknown): string => {
   if (typeof p !== 'string' || p === '') throw new Error('path 必须是非空字符串')
@@ -23,38 +24,47 @@ const str = (v: unknown, name: string): string => {
   return v
 }
 
-export const readTool: ToolEntry = {
-  name: 'read',
-  description:
-    '读取文本文件内容，输出「行号 + 制表符 + 原文」，可指定起始行与行数。' +
-    '读代码、配置、日志一律用它，不要用 bash 跑 cat/head/tail——那样拿不到行号，也没法续读。' +
-    '要整写覆盖一个已存在的文件之前必须先读过它，本工具会记下你读过哪个版本。',
-  parameters: {
-    type: 'object',
-    properties: {
-      path: { type: 'string', description: '文件路径（绝对或相对当前目录）' },
-      offset: { type: 'number', description: '起始行（1-based，默认 1）' },
-      limit: { type: 'number', description: '读取行数（默认 2000）' },
+/**
+ * 造一个 read 工具。单次读取行数由 tools-default 插件从配置取值传入
+ * （缺省 {@link READ_DEFAULT_LINE_LIMIT}）；模型传了 limit 就用模型的，这里只是缺省。
+ */
+export function createReadTool(lineLimit = READ_DEFAULT_LINE_LIMIT): ToolEntry {
+  return {
+    name: 'read',
+    description:
+      '读取文本文件内容，输出「行号 + 制表符 + 原文」，可指定起始行与行数。' +
+      '读代码、配置、日志一律用它，不要用 bash 跑 cat/head/tail——那样拿不到行号，也没法续读。' +
+      '要整写覆盖一个已存在的文件之前必须先读过它，本工具会记下你读过哪个版本。',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '文件路径（绝对或相对当前目录）' },
+        offset: { type: 'number', description: '起始行（1-based，默认 1）' },
+        limit: { type: 'number', description: `读取行数（默认 ${lineLimit}）` },
+      },
+      required: ['path'],
     },
-    required: ['path'],
-  },
-  risk: 'read',
-  async run(args, ctx) {
-    const file = abs(ctx.cwd, args.path)
-    const blocked = readBlockReason(file)
-    if (blocked !== null) throw new Error(blocked)
-    const raw = await fs.readFile(file, 'utf8')
-    noteRead(file)
-    const lines = raw.split(/\r?\n/)
-    const start = Math.max(1, typeof args.offset === 'number' ? Math.floor(args.offset) : 1)
-    const limit = Math.max(1, typeof args.limit === 'number' ? Math.floor(args.limit) : READ_LINE_LIMIT)
-    const slice = lines.slice(start - 1, start - 1 + limit)
-    const body = slice.map((line, index) => `${start + index}\t${line}`).join('\n')
-    const total = lines.length
-    const more = start - 1 + slice.length < total ? `\n…（共 ${total} 行，可用 offset/limit 续读）` : ''
-    return `${file}\n${body}${more}`
-  },
+    risk: 'read',
+    async run(args, ctx) {
+      const file = abs(ctx.cwd, args.path)
+      const blocked = readBlockReason(file)
+      if (blocked !== null) throw new Error(blocked)
+      const raw = await fs.readFile(file, 'utf8')
+      noteRead(file)
+      const lines = raw.split(/\r?\n/)
+      const start = Math.max(1, typeof args.offset === 'number' ? Math.floor(args.offset) : 1)
+      const limit = Math.max(1, typeof args.limit === 'number' ? Math.floor(args.limit) : lineLimit)
+      const slice = lines.slice(start - 1, start - 1 + limit)
+      const body = slice.map((line, index) => `${start + index}\t${line}`).join('\n')
+      const total = lines.length
+      const more = start - 1 + slice.length < total ? `\n…（共 ${total} 行，可用 offset/limit 续读）` : ''
+      return `${file}\n${body}${more}`
+    },
+  }
 }
+
+/** 缺省预算的 read 工具（自检脚本直接复用；插件里走 {@link createReadTool} 收配置值）。 */
+export const readTool: ToolEntry = createReadTool()
 
 export const writeTool: ToolEntry = {
   name: 'write',
