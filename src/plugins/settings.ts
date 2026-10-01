@@ -292,12 +292,15 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
 
     const service: SettingsService = {
       kernelApiVersion: KERNEL_API_VERSION,
-      registerSection(section) {
+      registerSection(section, options) {
         if (builtinIds.has(section.id)) {
           ctx.transcript.system(`插件试图覆盖内置设置分区 ${section.id}，已忽略`)
           return () => {}
         }
-        return register(section, false)
+        // 第二参是「进桌面端设置页」的声明：落在分区自己的 inSettings 上（投影只认这一位），
+        // 不覆盖插件传进来的对象，只做一份带上该位的浅拷贝。
+        const spec = options?.inSettings === true ? { ...section, inSettings: true } : section
+        return register(spec, false)
       },
       sections(): SettingsSectionView[] {
         return [...sections.values()]
@@ -307,7 +310,7 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
             title: section.title,
             subtitle: section.subtitle,
             order: section.order ?? 100,
-            builtin: builtinIds.has(section.id),
+            builtin: section.inSettings === true || builtinIds.has(section.id),
             custom: section.custom === true,
             fields: section.fields(),
           }))

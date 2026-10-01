@@ -48,7 +48,7 @@
 
 ## 2. dsc 现状（一句话，细节见 development.md）
 
-dsc 已具备：自研 ReAct 循环、OpenAI 兼容流式客户端（reasoning / tool_calls / usage / 重试）、会话 JSONL 落盘与重放恢复、会话库（归档 / 置顶 / 改名 / 分叉 / 回收站）、六件套工具（bash / read / write / edit / glob / grep）、四档权限模式（readonly / auto-edit / full-access / ai-review）、保头折尾摘要压缩（含重放折叠与锚点加固）、todo / plan / ask / goal、九个官方可开关插件（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索；默认关：子智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露）、安全钩子（用户自登记的规则与脚本，四个事件）、技能系统与技能市场、外部单文件插件系统、Electron 桌面端（终端 / 浏览器 / 文件 / git dock）、主题引擎、模型能力字段、AGENTS.md 说明书预算注入。
+dsc 已具备：自研 ReAct 循环、OpenAI 兼容流式客户端（reasoning / tool_calls / usage / 重试）、会话 JSONL 落盘与重放恢复、会话库（归档 / 置顶 / 改名 / 分叉 / 回收站）、六件套工具（bash / read / write / edit / glob / grep）、四档权限模式（readonly / auto-edit / full-access / ai-review）、保头折尾摘要压缩（含重放折叠与锚点加固）、todo / plan / ask / goal、九个官方可开关插件（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索；默认关：智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露）、安全钩子（用户自登记的规则与脚本，四个事件）、技能系统与技能市场、外部单文件插件系统、Electron 桌面端（终端 / 浏览器 / 文件 / git dock）、主题引擎、模型能力字段、AGENTS.md 说明书预算注入。
 
 dsc 的插件扩展点（`src/core/plugin-registry.ts:71`，`KERNEL_API_VERSION = 4`）已经很够用：`tools.register`、`commands.register`、`prompt.register + transformMessages`、`guards.register + registerObserver`、`surfaces.register`、`waiting.register`、`session.appendState / state`、`events.on`、`settings.defineSection`、`skills.source`、`transcript.system`。这份清单决定了「哪些能力不改内核就能挂」。
 

@@ -71,7 +71,7 @@ const err = (error: unknown): string => (error instanceof Error ? error.message 
 export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   {
     file: 'subagent',
-    name: '子智能体团队',
+    name: '智能体团队',
     description: '将任务拆分给有明确授权的队友并行执行，提供 subagent 与 team_task 工具',
     toggleable: true,
     defaultDisabled: true,

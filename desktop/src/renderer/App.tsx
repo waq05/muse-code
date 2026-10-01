@@ -21,6 +21,7 @@ import { SettingsModal } from './SettingsModal.js'
 import { Sidebar } from './Sidebar.js'
 import { SkillsView } from './SkillsView.js'
 import { StatusBar } from './StatusBar.js'
+import { SubagentMenu, TeamPanel, matesOf } from './TeamPanel.js'
 import { TeammatePeek } from './TeammatePeek.js'
 import { ThreadResizer } from './ThreadResizer.js'
 import { TraceView } from './TraceView.js'
@@ -49,9 +50,14 @@ export function App(): JSX.Element {
   const [view, setView] = useState<'chat' | 'plugins' | 'skills'>('chat')
   // 设置面板：open 控制遮罩，section 是打开时定位的分区（技能页右上也用它）
   const [settings, setSettings] = useState<{ open: boolean; section: string }>({ open: false, section: 'general' })
-  // 正在只读查看的队友（侧栏「队友」那一档点开）；它不是当前会话，切不走也改不了
+  // 正在只读查看的队友（标题旁下拉或团队面板点开）；它不是当前会话，切不走也改不了
   const [peek, setPeek] = useState<TeammateView | null>(null)
   const [peekEntries, setPeekEntries] = useState<TranscriptEntry[]>([])
+  // 队友名册（智能体团队）：标题旁的「N 个子智能体」下拉与「智能体团队」面板共用这一份。
+  // 清单是跨会话的，头部那颗要按会话 id 自己筛（见下面的 sessionMates）。
+  const [mates, setMates] = useState<TeammateView[]>([])
+  const [subOpen, setSubOpen] = useState(false)
+  const [teamOpen, setTeamOpen] = useState(false)
   const [dockOpen, setDockOpen] = useState(false)
   // 顶栏「多种方式打开工作区」的下拉菜单（对照 dsh 的文件夹+下拉分组钮）
   const [wsMenu, setWsMenu] = useState(false)
@@ -200,6 +206,10 @@ export function App(): JSX.Element {
     if (page === 'plugins' || page === 'skills') setView(page)
     const section = shotParams.get('settings')
     if (section !== null && section !== '') setSettings({ open: true, section })
+    // ?team=1 直接开「智能体团队」面板、?subagents=1 直接展开会话标题旁的下拉（截图钩子；
+    // 侧栏那档队友清单撤掉后，原来 ?teammates=1 的位置由 ?team=1 接上）
+    if (shotParams.has('team')) setTeamOpen(true)
+    if (shotParams.has('subagents')) setSubOpen(true)
     if (shotParams.has('reveal')) document.body.classList.add('shot-reveal')
     // ?dropline=1 给第二个工作区块画上真实的落点线，好拍清拖动指示长什么样
     const dropLine = shotParams.has('dropline')
@@ -221,7 +231,7 @@ export function App(): JSX.Element {
         if (alive && mates.length > 0) setPeek(mates[0]!)
       })
       .catch(() => {
-        /* 没开子智能体团队时这个调用会失败，自检环境里不必管 */
+        /* 没开智能体团队时这个调用会失败，自检环境里不必管 */
       })
     return () => {
       alive = false
@@ -254,6 +264,53 @@ export function App(): JSX.Element {
       clearInterval(timer)
     }
   }, [peek, proxy])
+
+  // ---- 队友名册（智能体团队）：标题旁下拉 + 团队面板 + 只读运行记录共用 ----
+
+  /** 重读名册。智能体团队插件没开时宿主会拒这个调用——那时就是没有队友，清空即可。 */
+  const refreshMates = useCallback((): void => {
+    void proxy.listTeammates().then(setMates, () => setMates([]))
+  }, [proxy])
+
+  // 换会话要重读：标题旁那颗数字只看本会话派出的队友，换了会话就是另一批。
+  // （挂载时也走这里，冷启动的头部数字因此不用等用户打开面板。）
+  const liveSessionId = snapshot === null ? null : snapshot.status.sessionId
+  useEffect(() => {
+    refreshMates()
+  }, [refreshMates, liveSessionId])
+
+  // 一轮收工顺手重读一次：队友是模型在跑的那一轮里派出去的，收工时名单最有可能是新的。
+  // 只在「跑动 → idle」这一步读，轮中每次状态跳动不重复拉。
+  const lastTurnState = useRef<RuntimeSnapshot['status']['turnState'] | null>(null)
+  useEffect(() => {
+    const state = snapshot === null ? null : snapshot.status.turnState
+    if (lastTurnState.current !== null && lastTurnState.current !== 'idle' && state === 'idle') {
+      refreshMates()
+    }
+    lastTurnState.current = state
+  }, [snapshot, refreshMates])
+
+  // 两个面板开着的时候每 3 秒拉一次（照项目里「看的这档是活的就轮询」的惯例）：
+  // 队友在后台干活，状态、轮数、耗时一直在动。
+  useEffect(() => {
+    if (!subOpen && !teamOpen) return
+    refreshMates()
+    const timer = setInterval(refreshMates, 3000)
+    return () => clearInterval(timer)
+  }, [subOpen, teamOpen, refreshMates])
+
+  // Esc 关掉这两层浮层。确认框（「停掉队友？」）在捕获阶段就把 Esc 拦走了，
+  // 所以关确认框那一下不会连带把面板一起关掉。
+  useEffect(() => {
+    if (!subOpen && !teamOpen) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setSubOpen(false)
+      setTeamOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [subOpen, teamOpen])
 
   // ---- 插件页动作 ----
   const refreshPlugins = (): void => {
@@ -353,6 +410,8 @@ export function App(): JSX.Element {
   const conversationTitle =
     active?.title ??
     (lastUser !== undefined && lastUser.kind === 'user' ? lastUser.text.slice(0, 40) : '新会话')
+  // 标题旁那颗数字看的是**本会话**派出的队友：名册是跨会话的，这里自己筛一遍。
+  const sessionMates = matesOf(mates, snapshot.status.sessionId)
   // 空态 = 没有任何用户/回复/工具条目（宿主预写的 system 提示行随欢迎态一起显示）
   const empty =
     !snapshot.entries.some((entry) => entry.kind !== 'system') && snapshot.status.turnState === 'idle'
@@ -378,6 +437,20 @@ export function App(): JSX.Element {
     // 换自己的会话就退出队友视图，别让标题还写着别人的名字
     setPeek(null)
     await proxy.openSession(id)
+  }
+
+  /**
+   * 从「N 个子智能体」下拉或「智能体团队」面板点开一个队友的运行记录（只读）。
+   *
+   * 两层浮层都收掉：面板是盖住整窗的浮层，不收掉的话运行记录打开在它下面，用户看不见。
+   * 看完记录点 Peek 头部的关闭就回到自己的会话，两颗入口随手就能再点开。
+   */
+  const openMate = (mate: TeammateView): void => {
+    setView('chat')
+    setTab('chat')
+    setSubOpen(false)
+    setTeamOpen(false)
+    setPeek(mate)
   }
 
   /** 顶栏下拉：用系统能力打开当前工作区；失败原因走 Toast。 */
@@ -421,12 +494,6 @@ export function App(): JSX.Element {
         proxy={proxy}
         onSwitchCwd={switchCwd}
         onUiPrefs={saveUiPrefs}
-        onPeekTeammate={(mate) => {
-          setView('chat')
-          setTab('chat')
-          setPeek(mate)
-        }}
-        peekFile={peek?.file ?? null}
         rail={rail}
         sidebarWidth={sidebarWidth}
         onToggleRail={toggleRail}
@@ -461,6 +528,28 @@ export function App(): JSX.Element {
                 <span className="title" data-tip={peek === null ? conversationTitle : `队友 ${peek.name} 的运行记录，只读`}>
                   {peek === null ? conversationTitle : `队友 ${peek.name}`}
                 </span>
+                {/* 本会话派出的子智能体（对齐 dsh 的「55 个子智能体」下拉）：一个都没有时
+                    整颗不渲染，标题右边不留空壳。 */}
+                {sessionMates.length > 0 && (
+                  <SubagentMenu
+                    mates={sessionMates}
+                    currentSessionId={snapshot.status.sessionId}
+                    open={subOpen}
+                    onToggle={() => setSubOpen((current) => !current)}
+                    proxy={proxy}
+                    peekFile={peek?.file ?? null}
+                    onPeek={openMate}
+                    onChanged={refreshMates}
+                  />
+                )}
+                {/* 整支队伍的全量名册（含历史）：与上一颗的分工写在面板顶部 */}
+                <button
+                  className="team-btn"
+                  data-tip="智能体团队：全部队友（含历史），可停止 / 发话 / 看运行记录"
+                  onClick={() => setTeamOpen(true)}
+                >
+                  智能体团队
+                </button>
                 <div className="drag-fill" />
                 {/* 多种方式打开当前工作区（对照 dsh 的「文件夹+下拉」分组钮）：
                     主钮直接开文件资源管理器，下拉里还有终端 / VS Code / 复制路径。 */}
@@ -582,8 +671,10 @@ export function App(): JSX.Element {
                   />
                 ) : (
                   <div className="peek-lock">
-                    你在看队友 {peek.name} 的运行记录，这里不能发言。要给它的活得由派它的那一方用
-                    <code>subagent</code> 工具传话；你用自己的账号插手会打乱它的上下文。
+                    你在看队友 {peek.name} 的运行记录，这里是只读的：写不了字，也改不了它的上下文。
+                    要跟它说话，用会话标题旁那两颗入口里的「发话」（走宿主转交给它）；
+                    模型之间派活仍走
+                    <code>subagent</code> 工具。
                   </div>
                 )}
               </div>
@@ -616,6 +707,20 @@ export function App(): JSX.Element {
             localStorage.setItem('dsc.dockWidth', String(width))
           }}
           onClose={() => setDockOpen(false)}
+        />
+      )}
+
+      {/* 团队面板与设置面板同档浮层（都用 .settings-mask + .settings）。
+          点一行看运行记录时它自己收起来（见 openMate），别把记录挡在下面。 */}
+      {teamOpen && (
+        <TeamPanel
+          mates={mates}
+          currentSessionId={snapshot.status.sessionId}
+          proxy={proxy}
+          peekFile={peek?.file ?? null}
+          onClose={() => setTeamOpen(false)}
+          onPeek={openMate}
+          onChanged={refreshMates}
         />
       )}
 

@@ -113,15 +113,28 @@ export const runtimePlugin: Plugin.Object = {
       },
 
       listTeammates() {
-        // 「子智能体团队」没开时这个服务就不存在，侧栏因此看到空列表。
+        // 「智能体团队」没开时这个服务就不存在，侧栏因此看到空列表。
         // 必须走 ctx.get：cordis 的上下文代理对没 inject 的属性是直接抛错的，`ctx.team?.` 也会先抛
         const team = ctx.get('team')
         return team === undefined ? [] : team.list()
       },
 
+      stopTeammate(name) {
+        // 与 listTeammates 同一条理由：team 是可选服务，只能 ctx.get
+        const team = ctx.get('team')
+        if (team === undefined) return Promise.reject(new Error('智能体团队没开，没有队友可以收掉'))
+        return team.stop(name)
+      },
+
+      messageTeammate(name, text) {
+        const team = ctx.get('team')
+        if (team === undefined) return Promise.reject(new Error('智能体团队没开，没法给队友传话'))
+        return team.message(name, text)
+      },
+
       peekTranscript(file) {
         const team = ctx.get('team')
-        if (team === undefined) return Promise.reject(new Error('子智能体团队没开，看不到队友的运行记录'))
+        if (team === undefined) return Promise.reject(new Error('智能体团队没开，看不到队友的运行记录'))
         return team.peek(file)
       },
 

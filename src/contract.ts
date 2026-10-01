@@ -554,7 +554,7 @@ export interface PluginInfoView {
   problem?: string
 }
 
-/** 一个队友（子智能体团队派出去的子智能体）；侧栏「队友」这一档看到的行。 */
+/** 一个队友（智能体团队派出去的子智能体）；侧栏「队友」这一档看到的行。 */
 export interface TeammateView {
   /** 队友名，例如 writer-1。 */
   name: string
@@ -574,6 +574,11 @@ export interface TeammateView {
   rounds: number
   startedAt: number
   finishedAt?: number
+  /**
+   * 出生会话 id（派它的那个会话，名册持久化下来的）。
+   * roster.json 是跨重启的台账，字段后加；老记录没有这一项，读档时按 undefined 处理。
+   */
+  sessionId?: string
 }
 
 /** 可切换的模型（/model 补全与校验的数据源）。 */
@@ -689,7 +694,10 @@ export interface SettingsSectionView {
   /** nav 行下方的一句话说明。 */
   subtitle?: string
   order: number
-  /** 内核内置分区（插件贡献的为 false）。 */
+  /**
+   * 内核内置分区，或声明了 inSettings 的插件代管分区（插件里的内核级功能，
+   * 例如远程控制：它登记在插件上，但界面归设置页）。
+   */
   builtin: boolean
   /**
    * true = 内容要由桌面端自己画（模型、技能这类结构化界面），
@@ -824,10 +832,20 @@ export interface DscRuntime {
   /** 更新外部插件启用状态（热生效：热挂载/卸载，写 ~/.dsc/plugins.json 持久化）。 */
   setPluginEnabled(file: string, enabled: boolean): void
   /**
-   * 队友清单（子智能体团队开着才有内容；关着返回空数组）。
+   * 队友清单（智能体团队开着才有内容；关着返回空数组）。
    * UI 在「队友」这一档开着时轮询它。
    */
   listTeammates(): TeammateView[]
+  /**
+   * 收掉一个队友（用户从界面上动手；等价于 `subagent` 工具的 stop）。
+   * 队友名字不存在时返回的那句话就是明确的错误说明，不抛错。
+   */
+  stopTeammate(name: string): Promise<string>
+  /**
+   * 给队友投一句话（用户从界面上传话；等价于 `subagent` 工具的 message）。
+   * 名字不存在或话是空的，返回的那句话就是明确的错误说明，不抛错。
+   */
+  messageTeammate(name: string, text: string): Promise<string>
   /**
    * 只读重放一个会话文件的对话条目（看队友在干什么用）。
    * 它不改那个文件，也不能归档/删除/分叉——校验在 core/session.ts。

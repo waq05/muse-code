@@ -254,6 +254,16 @@
   user-select: none;
 }
 
+/* 会话列表的小标题：「会话 | 队友」分段控件撤掉后，这一档只剩一个纯文字标签。
+   字距与字号收回正文档（.section-head 那份大字距是给品牌色小节标题用的，
+   紧接着右边还排着三颗操作按钮，跟着它走会显得散）。 */
+.side-title {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
+  font-weight: 500;
+  letter-spacing: normal;
+}
+
 /* 行尾小图标按钮：静息三级灰，hover 才提亮并上底色。 */
 .icon-btn {
   align-items: center;
@@ -4138,56 +4148,189 @@ body.resizing iframe {
   flex-shrink: 0;
 }
 
-/* ══════════ 队友（子智能体团队）：侧栏列表 + 只读查看 ══════════ */
+/* ══════════ 智能体团队：会话标题旁的下拉 + 团队面板 + 只读查看 ══════════ */
 
-/* 侧栏顶部「会话 | 队友」这一档：与设置里的分段选择器共用几何。 */
-.side-tabs {
-  background: var(--dsc-fill-quaternary);
-  border-radius: var(--dsc-r-control);
-  display: inline-flex;
-  gap: 1px;
-  padding: 2px;
+/* 标题旁的「N 个子智能体」胶囊：展开时点亮（.on）。topbar 整体是窗口拖拽区，这层豁免。 */
+.sub-open {
+  flex-shrink: 0;
+  position: relative;
+  -webkit-app-region: no-drag;
 }
 
-.side-tab {
+.sub-btn {
+  align-items: center;
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-3);
   border-radius: var(--dsc-r-control);
   color: var(--dsc-text-tertiary);
-  font-size: var(--dsc-fs-ui);
-  font-weight: 500;
-  padding: 2px 8px;
+  display: inline-flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
   transition:
     background var(--dsc-dur) var(--dsc-ease),
     color var(--dsc-dur) var(--dsc-ease);
 }
 
-.side-tab:hover {
-  color: var(--dsc-text-secondary);
-}
-
-.side-tab.on {
-  background: var(--dsc-control-active-bg);
+.sub-btn:hover,
+.sub-btn.on {
+  background: var(--dsc-control-hover-bg);
   color: var(--dsc-text-primary);
 }
 
-/* 侧栏里的一个队友行 */
-.tm-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: var(--dsc-r-control);
-  cursor: pointer;
+/* 下拉沿用侧栏的 .row-menu 渲染表（弹层底色 + 发丝边 + shadow-md），只改挂点：
+   贴着胶囊左下展开，宽一些——一行里要放下状态、任务、轮数、耗时与管理按钮。 */
+.sub-menu {
+  left: 0;
+  max-height: min(52vh, 420px);
+  min-width: 420px;
+  overflow-y: auto;
+  right: auto;
+  top: calc(100% + 6px);
+  width: min(520px, calc(100vw - 48px));
 }
 
-.tm-row:hover,
-.tm-row.on {
+/* 标题旁的「智能体团队」按钮：纯文字，与胶囊同高 */
+.team-btn {
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  flex-shrink: 0;
+  font-size: var(--dsc-fs-caption);
+  height: 24px;
+  padding: 0 8px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+  -webkit-app-region: no-drag;
+}
+
+.team-btn:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+/* 团队面板：与设置面板同档浮层（.settings-mask + .settings），尺寸小一号——里面只有一列名册 */
+.team-panel {
+  width: min(760px, calc(100vw - 80px));
+  height: min(560px, calc(100vh - 72px));
+}
+
+.team-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 名册行：状态点 + 名称 + 角色 + 任务 + 第 N 轮 + 用时 + 管理按钮。
+   flex-wrap 让「回执 / 输入口」那一段另起一行，行首那几格不必为它让位。 */
+.team-row {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 10px;
+  row-gap: 6px;
+}
+
+.team-row:hover,
+.team-row.on {
   background: var(--dsc-row-hover-bg);
 }
 
-.tm-row.on {
+.team-row.on {
   box-shadow: inset 2px 0 0 var(--dsc-accent);
 }
 
+/* 任务那一格吃掉剩余宽度，长了就地省略（完整任务在整行的悬浮提示里） */
+.team-task {
+  color: var(--dsc-text-quaternary);
+  flex: 1;
+  font-size: var(--dsc-fs-tool);
+  min-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-round {
+  color: var(--dsc-text-tertiary);
+  flex-shrink: 0;
+  font-size: var(--dsc-fs-tool);
+}
+
+/* 团队面板里的「哪来的」：本会话两个字，别的会话给一段短 id */
+.team-origin {
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-badge);
+  color: var(--dsc-text-quaternary);
+  flex-shrink: 0;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-label);
+  padding: 0 4px;
+}
+
+.team-acts {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+/* 回执与输入口各占一整行（靠 flex-basis 换行，不挤走行首那几格）。
+   这一段的点击不该当成「打开运行记录」，所以自己吃掉冒泡（见组件里的 stopPropagation）。 */
+.team-side {
+  cursor: default;
+  display: flex;
+  flex-basis: 100%;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.team-write {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.team-write input {
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-primary);
+  flex: 1;
+  font-size: var(--dsc-fs-caption);
+  height: var(--dsc-input-min-h);
+  min-width: 0;
+  outline: none;
+  padding: 0 8px;
+}
+
+.team-write input:focus {
+  border-color: var(--dsc-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 45%, transparent);
+}
+
+/* 宿主回来的那句话：成功与失败同一格，只有失败换成红 */
+.team-note {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-tool);
+}
+
+.team-note.bad {
+  color: var(--dsc-red);
+}
+
+.team-hint {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-label);
+  line-height: 1.6;
+  padding: 6px 8px 2px;
+}
+
+/* 状态点：working 绿（还在跑，带呼吸）/ idle 灰（干完待命）/ stopped 黄 / failed 红。
+   色值一律取现有令牌；中间那颗灰点就是「没在动」的本色。 */
 .tm-dot {
   width: 7px;
   height: 7px;
@@ -4197,12 +4340,12 @@ body.resizing iframe {
 }
 
 .tm-dot.working {
-  background: var(--dsc-accent);
+  background: var(--dsc-green);
   animation: tm-pulse 1.2s ease-in-out infinite;
 }
 
 .tm-dot.idle {
-  background: var(--dsc-green);
+  background: var(--dsc-text-quaternary);
 }
 
 .tm-dot.failed {
@@ -4223,6 +4366,7 @@ body.resizing iframe {
   }
 }
 
+/* 名册行里的固定几格：名称、角色标签、状态标签、用时 */
 .tm-name {
   font-size: var(--dsc-fs-body);
   color: var(--dsc-text-secondary);
@@ -4241,7 +4385,6 @@ body.resizing iframe {
 }
 
 .tm-state {
-  margin-left: auto;
   flex-shrink: 0;
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-tool);
@@ -6259,6 +6402,11 @@ body.resizing iframe {
   .step-fold-label[data-shimmer]::after {
     animation: none;
     opacity: 0;
+  }
+
+  /* 队友的「运行中」呼吸点：动效降级档下只留绿色，不闪 */
+  .tm-dot.working {
+    animation: none;
   }
 }
 

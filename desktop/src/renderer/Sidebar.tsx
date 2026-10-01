@@ -9,10 +9,13 @@
  *   - 会话行拿到焦点后可用 Ctrl+Alt+R 改名、Ctrl+Alt+F 分叉、Ctrl+Shift+A 归档。
  * 快捷键刻意绑在行元素上而不是全局，避免和输入框抢键。
  *
+ * 这一档只放自己的会话：队友名册（原来「会话 | 队友」双 tab 的右边那半）连同运行记录
+ * 一起搬到了会话标题旁的「智能体团队」，这里不再认识队友这件事。
+ *
  * @module desktop/renderer/Sidebar
  */
 import { useEffect, useMemo, useRef, useState, type DragEvent, type JSX, type KeyboardEvent } from 'react'
-import type { SessionSummary, SettingsMutation, TeammateView, TokenUsageView, UiPrefsView } from '@dsc/runtime/contract.js'
+import type { SessionSummary, SettingsMutation, TokenUsageView, UiPrefsView } from '@dsc/runtime/contract.js'
 import iconUrl from '../../build/icon.png'
 import { confirmAction } from './components/confirm.js'
 import { toastErr, toastOk } from './components/toast.js'
@@ -82,10 +85,6 @@ export function Sidebar(props: {
   onSwitchCwd(cwd: string): void
   /** 改界面偏好（会话排序、工作区顺序、显示名别名）：写盘与状态更新都在 App。 */
   onUiPrefs(patch: Partial<UiPrefsView>): void
-  /** 点开一个队友的运行记录（只读查看）。 */
-  onPeekTeammate(teammate: TeammateView): void
-  /** 当前正看着哪个队友的运行记录（高亮那一行）。 */
-  peekFile: string | null
   /** 侧栏收成 56px 图标窄栏（Ctrl+B，或点窄栏最上面那颗 logo）。 */
   rail: boolean
   /** 拖出来的侧栏宽度（px）。null = 没拖过，用样式表默认的 237px。 */
@@ -123,23 +122,6 @@ export function Sidebar(props: {
   const [pendingNew, setPendingNew] = useState<string | null>(null)
   /** 刚拖完就不要再触发一次「点击切换工作区」。 */
   const justDragged = useRef(false)
-
-  /** 这一档看什么：自己的会话，还是队友的运行记录。?teammates=1 直接落到队友档（自检截图用）。 */
-  const [tab, setTab] = useState<'sessions' | 'teammates'>(() =>
-    new URLSearchParams(location.search).has('teammates') ? 'teammates' : 'sessions',
-  )
-  const [teammates, setTeammates] = useState<TeammateView[]>([])
-  // 队友在后台干活，状态一直在动，所以停在这一档时每两秒拉一次
-  // （子智能体团队没开时宿主返回空表，这里就一直显示引导文案）
-  useEffect(() => {
-    if (tab !== 'teammates') return
-    const pull = (): void => {
-      void props.proxy.listTeammates().then(setTeammates).catch(() => {})
-    }
-    pull()
-    const timer = setInterval(pull, 2000)
-    return () => clearInterval(timer)
-  }, [tab, props.proxy])
 
   const aliases = props.uiPrefs.workspaceAliases
   const order = props.uiPrefs.workspaceOrder
@@ -758,56 +740,43 @@ export function Sidebar(props: {
 
       <div className="sidebar-scroll">
         <div className="section-head">
-          <span className="side-tabs">
-            <button className={`side-tab${tab === 'sessions' ? ' on' : ''}`} onClick={() => setTab('sessions')}>
-              会话
+          <span className="side-title">会话</span>
+          <span className="head-actions">
+            <button
+              className={`icon-btn${searching ? ' on' : ''}`}
+              data-tip="搜索会话"
+              onClick={() => {
+                setSearching((current) => !current)
+                setQuery('')
+              }}
+            >
+              <IconSearch size={15} />
             </button>
             <button
-              className={`side-tab${tab === 'teammates' ? ' on' : ''}`}
-              data-tip="子智能体团队的队友，点击查看只读运行记录"
-              onClick={() => setTab('teammates')}
+              className={`icon-btn${viewMenu !== null ? ' on' : ''}`}
+              data-tip="视图选项：分组方式、排序方式、筛选会话"
+              onClick={(event) => {
+                if (viewMenu !== null) {
+                  setViewMenu(null)
+                  return
+                }
+                // 用视口坐标定位：菜单挂在滚动区里的头部上，就地绝对定位会被裁掉。
+                // 右缘贴侧栏右边而不是按钮自己的右缘——按钮左边还排着两颗，跟着它对齐会顶出窗口。
+                const rect = event.currentTarget.getBoundingClientRect()
+                const rail = event.currentTarget.closest('.sidebar')
+                const edge = rail === null ? rect.right : rail.getBoundingClientRect().right - 6
+                setViewMenu({ top: rect.bottom + 6, right: window.innerWidth - edge })
+              }}
             >
-              队友{teammates.length > 0 ? ` ${teammates.length}` : ''}
+              <IconSort size={15} />
+            </button>
+            <button className="icon-btn" data-tip="浏览其他目录" onClick={props.onChooseDir}>
+              <IconFolderOpen size={15} />
             </button>
           </span>
-          {tab === 'sessions' && (
-            <span className="head-actions">
-              <button
-                className={`icon-btn${searching ? ' on' : ''}`}
-                data-tip="搜索会话"
-                onClick={() => {
-                  setSearching((current) => !current)
-                  setQuery('')
-                }}
-              >
-                <IconSearch size={15} />
-              </button>
-              <button
-                className={`icon-btn${viewMenu !== null ? ' on' : ''}`}
-                data-tip="视图选项：分组方式、排序方式、筛选会话"
-                onClick={(event) => {
-                  if (viewMenu !== null) {
-                    setViewMenu(null)
-                    return
-                  }
-                  // 用视口坐标定位：菜单挂在滚动区里的头部上，就地绝对定位会被裁掉。
-                  // 右缘贴侧栏右边而不是按钮自己的右缘——按钮左边还排着两颗，跟着它对齐会顶出窗口。
-                  const rect = event.currentTarget.getBoundingClientRect()
-                  const rail = event.currentTarget.closest('.sidebar')
-                  const edge = rail === null ? rect.right : rail.getBoundingClientRect().right - 6
-                  setViewMenu({ top: rect.bottom + 6, right: window.innerWidth - edge })
-                }}
-              >
-                <IconSort size={15} />
-              </button>
-              <button className="icon-btn" data-tip="浏览其他目录" onClick={props.onChooseDir}>
-                <IconFolderOpen size={15} />
-              </button>
-            </span>
-          )}
         </div>
 
-        {tab === 'sessions' && searching && (
+        {searching && (
           <div className="side-search">
             <IconSearch size={14} />
             <input
@@ -828,7 +797,7 @@ export function Sidebar(props: {
           </div>
         )}
 
-        {tab === 'sessions' && props.sessions.length === 0 && props.recentCwds.length === 0 && (
+        {props.sessions.length === 0 && props.recentCwds.length === 0 && (
           <div className="sidebar-empty">
             还没有历史会话。
             <br />
@@ -836,7 +805,7 @@ export function Sidebar(props: {
           </div>
         )}
 
-        {tab === 'sessions' && groups.length === 0 && !(props.sessions.length === 0 && props.recentCwds.length === 0) && (
+        {groups.length === 0 && !(props.sessions.length === 0 && props.recentCwds.length === 0) && (
           <div className="sidebar-empty">
             {trimmed !== ''
               ? `没有匹配「${query.trim()}」的会话。`
@@ -846,49 +815,16 @@ export function Sidebar(props: {
           </div>
         )}
 
-        {tab === 'teammates' && teammates.length === 0 && (
-          <div className="sidebar-empty">
-            当前没有队友。
-            <br />
-            在「插件」页启用「子智能体团队」后，模型派出的队友会显示在这里。
-          </div>
-        )}
-
-        {tab === 'teammates' &&
-          teammates.map((mate) => (
-            <div
-              key={mate.file}
-              className={`tm-row${props.peekFile === mate.file ? ' on' : ''}`}
-              role="button"
-              tabIndex={0}
-              data-tip={`任务：${mate.task}`}
-              onClick={() => props.onPeekTeammate(mate)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') props.onPeekTeammate(mate)
-              }}
-            >
-              <span className={`tm-dot ${mate.state}`} />
-              <span className="tm-name">{mate.name}</span>
-              <span className="tm-role">{mate.role}</span>
-              <span className="tm-state">
-                {mate.state === 'working' ? `运行中 · ${mate.rounds} 轮` : mate.state === 'idle' ? '已完成' : mate.state === 'stopped' ? '已停止' : '已失败'}
-              </span>
-              <span className="tm-time">{relative(mate.finishedAt ?? mate.startedAt)}</span>
-            </div>
-          ))}
-
         {/* 单列表：不分工作区，会话混成一条流 */}
-        {tab === 'sessions' &&
-          group === 'flat' &&
+        {group === 'flat' &&
           (showAll ? flatSessions : flatSessions.slice(0, PREVIEW_COUNT)).map((session) => renderSession(session))}
-        {tab === 'sessions' && group === 'flat' && !showAll && flatSessions.length > PREVIEW_COUNT && (
+        {group === 'flat' && !showAll && flatSessions.length > PREVIEW_COUNT && (
           <button className="expand-link" onClick={() => setShowAll(true)}>
             展开剩余 {flatSessions.length - PREVIEW_COUNT} 个会话
           </button>
         )}
 
-        {tab === 'sessions' &&
-          group !== 'flat' &&
+        {group !== 'flat' &&
           groups.filter((item) => !hiddenByAncestor(item)).map(({ cwd, sessions, depth }) => {
           const key = `w:${cwd}`
           const expanded = isExpanded(cwd)

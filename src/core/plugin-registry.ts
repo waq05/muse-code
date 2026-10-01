@@ -27,7 +27,7 @@ export interface PluginMeta {
   /** 加载失败/被自动停用的原因（回滚说明），正常时 undefined。 */
   problem?: string
   /**
-   * true = 内置但可停用（官方插件，例如子智能体团队、电脑操作）。
+   * true = 内置但可停用（官方插件，例如智能体团队、电脑操作）。
    * 缺省 false 且 source='builtin' 的就是运行内核，不提供开关。
    */
   toggleable?: boolean

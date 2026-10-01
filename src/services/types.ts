@@ -485,14 +485,25 @@ export interface PromptService {
 // ── team ─────────────────────────────────────────────────────────────────────
 
 /**
- * 子智能体团队服务：由 subagent 插件提供，插件关着时这个服务不存在（可选属性）。
- * 侧栏的「队友」列表与只读查看都走它，UI 因此不必知道队友文件放在哪。
+ * 智能体团队服务：由 subagent 插件提供，插件关着时这个服务不存在（可选属性）。
+ * 侧栏的「队友」列表、只读查看与管理动作都走它，UI 因此不必知道队友文件放在哪。
  */
 export interface TeamService {
   /** 队友清单，含已经收工的（来自 `~/.dsc/team/roster.json`）。 */
   list(): TeammateView[]
   /** 只读重放一个队友的运行记录，返回可渲染的对话条目。 */
   peek(file: string): Promise<TranscriptEntry[]>
+  /**
+   * 收掉一个队友（打断当前这一轮并从在场名单里摘掉）。
+   * 与 `subagent` 工具的 `stop` 是同一条路：来自用户界面，署名是用户。
+   * @returns 给用户看的一句话；名字不存在时这句话就是明确的错误说明（不抛错）。
+   */
+  stop(name: string): Promise<string>
+  /**
+   * 给队友投一句话（写进它的信箱并叫醒）。与 `subagent` 工具的 `message` 同一条路。
+   * @returns 给用户看的一句话；名字不存在或话是空的，这句话就是明确的错误说明（不抛错）。
+   */
+  message(name: string, text: string): Promise<string>
 }
 
 // ── skills ───────────────────────────────────────────────────────────────────
@@ -564,6 +575,13 @@ export interface SettingsSectionSpec {
    * 此时 fields 返回空数组，数据走 SettingsService / SkillService 的专门方法。
    */
   custom?: boolean
+  /**
+   * true = 这个插件代管的分区要进桌面端的设置页（在插件注册时声明，见
+   * {@link SettingsService.registerSection} 的第二参）。给的是「内核级功能」：
+   * 桌面端设置页只列 `builtin: true` 的分区，而这些功能不属于内核自己注册的那几档。
+   * 不声明时插件分区照旧只出现在插件中心那张卡上。
+   */
+  inSettings?: boolean
   /** 分区内的控件清单（值从 values() 取）。 */
   fields(): SettingsField[]
   /** 当前控件值（打开分区时调用）。 */
@@ -576,9 +594,14 @@ export interface SettingsSectionSpec {
 
 /** 设置服务：分区注册表 + 模型配置读写 + 偏好持久化。 */
 export interface SettingsService {
-  /** 注册一个设置分区；返回退订函数。 */
-  registerSection(section: SettingsSectionSpec): () => void
-  /** 分区清单（按 order 排序，内置标记 builtin）。 */
+  /**
+   * 注册一个设置分区；返回退订函数。
+   * @param options.inSettings - true = 这个插件代管的分区也进桌面端设置页
+   *   （投影出来的 `builtin` 为 true）。内核级功能（例如远程控制）用它；
+   *   普通插件分区不传，仍旧只出现在插件中心那张卡上。
+   */
+  registerSection(section: SettingsSectionSpec, options?: { inSettings?: boolean }): () => void
+  /** 分区清单（按 order 排序；`builtin` = 内核内置分区，或声明了 inSettings 的插件代管分区）。 */
   sections(): SettingsSectionView[]
   values(id: string): Promise<SettingsValues>
   /** 写入一个控件；分区不存在或校验失败返回错误原因。 */
@@ -808,7 +831,7 @@ declare module '@deepseek-ai/cordis' {
     surfaces: SurfaceService
     /** 「正在等人」登记表（内核扩展点：卡片挂没挂着一问就知道）。 */
     waiting: WaitingService
-    /** 子智能体团队（subagent 插件提供；插件没开时不存在）。 */
+    /** 智能体团队（subagent 插件提供；插件没开时不存在）。 */
     team?: TeamService
     /** 技能服务（发现/启停/市场/模型可见目录）。 */
     skills: SkillService

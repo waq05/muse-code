@@ -129,6 +129,9 @@ export function createRuntimeProxy(): RuntimeProxy {
     setPluginEnabled: (file, enabled) => callVoid('setPluginEnabled', file, enabled),
     listTeammates: () => call<TeammateView[]>('listTeammates'),
     peekTranscript: (file) => call<TranscriptEntry[]>('peekTranscript', file),
+    // 队友管理两通道：停一个队友、给队友发一句话，回执都是「给用户看的一句话」
+    stopTeammate: (name) => call<string>('stopTeammate', name),
+    messageTeammate: (name, text) => call<string>('messageTeammate', name, text),
     runCommand: (input) => call<boolean>('runCommand', input),
     setPolicy: (policy) => callVoid('setPolicy', policy),
     setMode: (mode) => callVoid('setMode', mode),

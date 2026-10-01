@@ -1,5 +1,5 @@
 /**
- * 子智能体团队（官方插件，默认关闭）。
+ * 智能体团队（官方插件，默认关闭）。
  *
  * 打开后模型多出两个工具：`subagent`（派活、传话、打断）和 `team_task`（共享任务板）。
  * 关掉后这两个工具、它们注入的提示词、以及在跑的队友一起消失——本插件不提供第二套
@@ -44,7 +44,7 @@ import {
   type BoardAction,
 } from '../core/team-board.js'
 import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TranscriptEntry } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
+import type { SettingsSectionSpec, TeamService } from '../services/types.js'
 
 /** 插件配置（存 `~/.dsc/plugins.json` 条目树的 config 里）。 */
 interface SubagentConfig {
@@ -137,6 +137,11 @@ interface RosterRecord {
   rounds: number
   startedAt: number
   finishedAt?: number
+  /**
+   * 出生会话 id（派它的那个会话）。名册是跨重启的台账，所以这一项让队友永久带着
+   * 「它是从哪个会话派出去的」。老记录没有这一项，读档时按 undefined 处理。
+   */
+  sessionId?: string
 }
 
 /** 名字合法字符，跟角色名同一套。 */
@@ -244,6 +249,8 @@ export const subagentPlugin: Plugin.Object = {
         depth: teammate.depth,
         rounds: teammate.rounds,
         startedAt: teammate.startedAt,
+        // 出生会话：队友从哪个会话派出去的，名册上永久记着（用户切走会话也认得出它属于谁）
+        sessionId: teammate.parentSession.meta.id,
         ...(teammate.finishedAt !== undefined ? { finishedAt: teammate.finishedAt } : {}),
       }
       const rest = readRoster().filter((entry) => entry.name !== teammate.name)
@@ -455,14 +462,17 @@ ${body}
     }
 
     // ── 侧栏要的服务 ────────────────────────────────────────────────────────
-    // 队友清单与只读查看：UI 因此不必知道队友文件放在哪，插件关着时这个服务也不存在。
-    ctx.provide('team', {
+    // 队友清单、只读查看与两条管理通道：UI 因此不必知道队友文件放在哪，
+    // 插件关着时这个服务也不存在。
+    const teamService: TeamService = {
       list: (): TeammateView[] => {
         const views: TeammateView[] = []
         for (const record of readRoster()) {
           // 在队的队友以内存为准（轮数、状态都在动），收工的以名册为准
           const live = teammates.get(record.name)
           const finishedAt = live?.finishedAt ?? record.finishedAt
+          // 出生会话同理：在队的问内存里那个会话对象，收工的问名册（老记录没有这一项）
+          const sessionId = live?.parentSession.meta.id ?? record.sessionId
           views.push({
             name: record.name,
             role: record.role,
@@ -474,6 +484,7 @@ ${body}
             rounds: live === undefined ? record.rounds : live.rounds,
             startedAt: record.startedAt,
             ...(finishedAt === undefined ? {} : { finishedAt }),
+            ...(sessionId === undefined ? {} : { sessionId }),
           })
         }
         return views.sort((a, b) => b.startedAt - a.startedAt)
@@ -489,7 +500,13 @@ ${body}
         replay.replayHistory(session.messages, session.toolErrors)
         return [...replay.entries, ...replay.liveEntries()]
       },
-    })
+      // 用户从界面上管理队友的两条通道：与模型用的 subagent 工具走同一段逻辑，
+      // 只是署名换成 user（队友信箱里看得出这句话是人说的）；
+      // 名字不存在时返回的那句话本身就是给用户看的错误说明。
+      stop: async (name: string): Promise<string> => stopTeammate(name, 'stop'),
+      message: async (name: string, text: string): Promise<string> => messageTeammate(name, text, 'user'),
+    }
+    ctx.provide('team', teamService)
 
     // ── 模型侧工具 ──────────────────────────────────────────────────────────
     async function runTeamTool(
@@ -511,6 +528,33 @@ ${body}
       return `${role}-${Date.now()}`
     }
 
+    /**
+     * `subagent` 的 interrupt/stop 与界面管理通道（TeamService.stop）共用的那一条。
+     * 两条路的话术刻意保持一字不差：模型与用户看到的是同一件事。
+     */
+    function stopTeammate(name: string, mode: 'interrupt' | 'stop'): string {
+      const teammate = teammates.get(name)
+      if (teammate === undefined) return `没有叫 ${name} 的队友（team_task list 或 subagent list 看现役名单）`
+      teammate.agent.cancel()
+      if (mode === 'stop') teammates.delete(name)
+      return `${name} ${mode === 'interrupt' ? '这一轮被打断了（信箱里的话还在，可以再传话叫醒它）' : '被收掉了'}`
+    }
+
+    /**
+     * `subagent` 的 message 与界面传话通道（TeamService.message）共用的那一条。
+     * @param from - 署名：模型派话是派它的那一方，用户传话是 'user'。
+     */
+    function messageTeammate(name: string, text: string, from: string): string {
+      const trimmed = text.trim()
+      if (trimmed === '') return 'message 要带上 text（想传的话）'
+      const teammate = teammates.get(name)
+      const wrapped = `<message from="${from}"> ${trimmed} </message>`
+      inboxAppend(name === '' ? 'unknown' : name, wrapped)
+      if (teammate === undefined) return `没有叫 ${name} 的队友，话写进了它的信箱（${join(ctx.settings.about().home, 'team', 'inbox')}）但没人会读`
+      teammate.agent.followup(wrapped)
+      return `话已投给 ${name}${teammate.state === 'working' ? '（它正在干，会在这轮结束后看到）' : '（已把它叫醒）'}`
+    }
+
     async function runSubagent(
       args: Record<string, unknown>,
       runCtx: { cwd: string; signal: AbortSignal },
@@ -529,23 +573,10 @@ ${body}
           : `在队/收工的队友：\n${lines.join('\n')}\n\n可用角色：\n${roles}`
       }
       if (action === 'interrupt' || action === 'stop') {
-        const name = String(args.name ?? '')
-        const teammate = teammates.get(name)
-        if (teammate === undefined) return `没有叫 ${name} 的队友（team_task list 或 subagent list 看现役名单）`
-        teammate.agent.cancel()
-        if (action === 'stop') teammates.delete(name)
-        return `${name} ${action === 'interrupt' ? '这一轮被打断了（信箱里的话还在，可以再传话叫醒它）' : '被收掉了'}`
+        return stopTeammate(String(args.name ?? ''), action)
       }
       if (action === 'message') {
-        const name = String(args.name ?? '')
-        const text = String(args.text ?? '').trim()
-        if (text === '') return 'message 要带上 text（想传的话）'
-        const teammate = teammates.get(name)
-        const wrapped = `<message from="${caller.name}"> ${text} </message>`
-        inboxAppend(name === '' ? 'unknown' : name, wrapped)
-        if (teammate === undefined) return `没有叫 ${name} 的队友，话写进了它的信箱（${join(ctx.settings.about().home, 'team', 'inbox')}）但没人会读`
-        teammate.agent.followup(wrapped)
-        return `话已投给 ${name}${teammate.state === 'working' ? '（它正在干，会在这轮结束后看到）' : '（已把它叫醒）'}`
+        return messageTeammate(String(args.name ?? ''), String(args.text ?? ''), caller.name)
       }
       if (action !== 'spawn') {
         return `不认识的 action「${action}」。要用的值：spawn / list / message / interrupt / stop`
@@ -749,7 +780,7 @@ ${body}
             const tools = role.tools === null ? '不限工具' : role.tools.length === 0 ? '不带工具' : role.tools.join('/')
             return `- ${role.name}：${role.description || '（没写 description）'}（${tools}，最多 ${role.maxTurns} 轮）`
           })
-          return `# 子智能体团队
+          return `# 智能体团队
 你可以用 subagent 工具把能独立完成的活派给队友，用 team_task 工具在共享任务板上登记与认领。
 可用角色（文件在 ${DSC_AGENTS_DIR}，用户可以自己加）：
 ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能体」里打开或新建）'}

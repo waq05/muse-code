@@ -685,3 +685,37 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 诚实边界：① **手机界面那一半不在本批**：增量帧的合并、`lastSeq` 的记账与重连、上传入口、推送订阅与 Service Worker 的显示都由并行批次 B 做，本批只验宿主半边（自检里的「客户端重放视图」是我按契约写的可执行说明，不是批 B 的实现）。② **Web Push 的「真的送到手机」没法在自检里验**：host-test 注入假发送器验数据层与 404/410 清理，e2e 里验到的是路由（公钥、订阅入库去重、退订），真机上还得人工验一次（iOS 必须先把页面加到主屏幕）。③ 上传配额淘汰按 mtime 从旧到新，同一毫秒写入的文件之间顺序不稳定（生产上无所谓，自检里用 `utimesSync` 把时间钉死才可复现）。④ 一次推送的两条腿是**串行** await 的（先 Web Push 再 Webhook）：某台订阅超时会把它后面的 Webhook 推后最多 5 秒，没做并发，登记在 roadmap。⑤ 会话切换的「立即全量」靠 `sessionId` 变号；同一会话内的整体重排（压缩之类）不触发全量，靠 diff 自然收敛。⑥ `removedIds` 在常规流里很少出现（条目只在回滚/清空时消失），自检里是用合成快照逐格验的。⑦ 设置分区的「发送测试推送」在两条腿都关着时只会告诉你「没开 / 没配」，不会替你打开。
 
 发布（0.6.12）：手机界面那一半（批次 B）同批落地——`remote-web/src/lib/reduce.ts` 的帧归并（全量重置 / 增量按 id 合并）、`client.ts` 的 `lastSeq` 记账与补帧重连、上传入口（图片 canvas 压缩长边 1568 走 `images[]`，其它文件走 `/api/upload` 后拼「`[附件] <path>`」，总量 8MB）、PWA（manifest + Service Worker，`isSecureContext` 才注册）、推送订阅开关；`remote-web/selfcheck.mjs` **91/91**（归并 15 / 帧序号 6 / 假 socket 客户端 30+ / Web Push 12 / 附件 20 / PWA 产物 6）。批次 B 就地修掉一个跨批次口径坑：宿主在推送开关关着时回 403，客户端原先把 403 当凭据失效会踢回配对页——现在只有 401 算凭据失效，403 原样显示宿主的提示。`.webmanifest` 的 mime 宿主没配，界面用 `manifest.json`（application/json）绕开。汇总复验（Lead 本机）：host-test 134/134、e2e 78/78、selfcheck 91/91、根 typecheck/build 0 错、integration 95 / approval-floor 53 / sandbox 193 / compact 全绿。诚实边界：Web Push 只在 https（或 localhost）能注册——局域网明文 http 下界面会如实提示，锁屏送达靠 Webhook 那条腿（Bark/ntfy）；iOS 真机的通知权限、加主屏幕、大图压缩耗时待人工验收。
+
+---
+
+## 阶段 29：宿主侧三项——远程控制进设置页、嵌入运行时补依赖、智能体团队（0.6.13 批次 A）
+
+0.6.13 分两个批次：**批次 A（本阶段）只动宿主**（`src/**`、`desktop/scripts/prepare-runtime.mjs`、`scripts/` 下的探针），**渲染层的队友面板、设置页过滤与手机端一律归批次 B**，两边并行开发、不在同一批提交。本批三件事各自的来路：① 「远程控制」分区在桌面设置页里点不开；② 打包件在别的机器上会崩（`ws` / `web-push` 没进嵌入运行时）；③ 智能体团队的更名、队友与会话的关联、以及用户从界面管理队友的通道。
+
+| 决策 | 理由 |
+| --- | --- |
+| 「进设置页」做成 `registerSection(section, { inSettings: true })` 第二参，投影时 `builtin = section.inSettings === true \|\| builtinIds.has(id)` | 桌面端设置页只列 `builtin: true` 的分区，而 remote 插件由 `boot.ts` / `headless.ts` 直接挂载（不在 `OFFICIAL_PLUGINS` 里，插件中心压根没有它的卡），`builtin` 为 false 时两头都进不去。做成可选第二参而不是给 `SettingsSectionSpec` 加必填位，现有十几个 `registerSection` 调用点一行都不用改；`inSettings` 只落在分区声明上、**不进 `SettingsSectionView` 投影**——多一个字段就等于改 IPC 契约 |
+| 注册时只做一份带上该位的浅拷贝，不改插件传进来的对象 | 插件常把同一份声明留着复用（重挂、多实例），就地改会让它下次注册白白带上上次的位 |
+| 嵌入运行时的依赖清单改成「`package.json` dependencies 闭包 + `lib` 真实 import 对账」 | 旧的手工清单只有 5 个顶层包，`remote` 插件 import 的 `ws` 与 `web-push` 不在里面（开发机上靠 Node 从 `desktop/node_modules` 爬回仓库侥幸能跑，换机器直接崩）。只读 dependencies 也不够：`@deepseek-ai/schemastery`（`cordis-plugin-loader` 的传递依赖）旧清单同样漏了，编译产物是唯一真相，所以两处取并集 |
+| `optionalDependencies` 也算一条边，解析不到就跳过 | `koffi` 的 win32 原生二进制拆在 `@koromix/koffi-win32-x64`（optional），不带它沙箱后端就废；其余十几个平台子包 pnpm 根本没装，把「解析不到」当错误会把 Windows 上的打包直接拦死 |
+| `REQUIRED = ['ws', 'web-push']` 缺失当场抛错，装完再从产物目录 `require` 一次 | 解析对了不代表传递依赖齐（漏一个要到运行时才炸）。两个包真加载一次，顺带把「以后又有人在插件里 import 新包」这类地雷拦在打包阶段，而不是用户机器上 |
+| TUI 专用（`ink` / `react`）照旧不带；`lib` 里 import 了但 dev 树上也解析不到的包只警告不拦 | `headless` 入口不 import 它们（旧清单的决定，继承）。而 dev 树上解析不到多半是别处正在写的代码，打包脚本不该替它判死刑——但也不能装看不见，所以打一行警告说明「嵌入运行时一样带不了它」 |
+| 更名只改**用户可见**的「子智能体团队」→「智能体团队」 | 工具名 `subagent`、事件名、文件路径（`~/.dsc/team`）、JSONL 格式一律不动，外部脚本与老日志才不会碎；设置分区标题仍叫「子智能体」（那是分区名，不在改名范围） |
+| `sessionId` 记**出生会话**（`parentSession.meta.id`）而不是队友自己的会话 id，且写进名册 | 用户要知道的是「这个队友是哪个会话派出去的」。名册是跨重启的台账，写进去之后新队友永久带着它；老记录没有这一位，读档时按 `undefined` 处理、投影里也**不补空值**（补了 UI 就分不清「没有」与「空」） |
+| `stop` / `message` 从 `subagent` 工具的动作里抽出来，工具与 `TeamService` 共用同一段函数 | 话术一字不差，模型与用户看到的必须是同一件事；重写第二套迟早会漂。名字不存在时返回一句明确的错误说明（契约是 `Promise<string>`，界面直接显示这句话），不抛错 |
+| 宿主方法名用 `stopTeammate` / `messageTeammate`，与 `listTeammates` 同族，并进 `INVOKABLE_METHODS`；**不进** remote 的 `REMOTE_METHODS` | 手机端本批不做管理。`INVOKABLE_METHODS` 的 `satisfies` + `INVOKE_COVERAGE` 是编译期兜底：往 `DscRuntime` 加了方法却没进白名单，编译当场报错 |
+
+**中途撞上的一件事（记一笔）**：本批开发期间，树里另有一个批次（dsh 兼容层）正在写未跟踪的 `src/plugins/dsh-compat.ts` 与 `src/core/dsh-compat/`，并且**与我们同改 `src/services/types.ts`**（它加 `LoggerService` 与 `llm.registerAdapter` / `prompt.registerProjection`，把 `KERNEL_API_VERSION` 从 5 提到 6）。那段时间根 `pnpm run typecheck` 报的 4～6 条错全在它的文件/行上（`tools-facade.ts` 的 `../../tools.js` 路径笔误、`logger?: LoggerService` 与 cordis 内置 `logger` 的声明合并冲突）。处理办法是**不改别人的文件**：把 `src` 拷一份到临时目录、只摘掉它那两处，再单独 `tsc` → 0 错，以此证明本批改动本身干净；它修完之后整树两次 `pnpm run typecheck` / `pnpm run build` 都是 0 错（本阶段的验收数字以最终整树为准）。
+
+验收（全部在最终整树上跑）：
+
+- 根 `pnpm run typecheck`、`pnpm run build` **0 错**。
+- `node scripts/settings-sections-check.mjs`（本批新建）**20/20**：内核六个分区 `builtin` 不变；挂上 remote 插件后「远程控制」分区 `builtin=true`、`fields` 有控件；挂插件前后插件中心清单逐字节一致；分区投影的字段名只有 `builtin,custom,fields,id,order,subtitle,title` 七个（`inSettings` 不漏进 IPC）；不传第二参的插件分区照旧 `builtin=false`；传了的是 true；退订后分区消失且写不进去。
+- `node shots/team-check.mjs` **118 PASS / 1 FAIL**：本批新加的 **21 条全过**（3a 两条：系统提示词标题、插件中心插件名；3b 七条：老名册无 `sessionId` 不炸也不补空值、带 `sessionId` 的原样露出、IPC 那条路同样读得到、真派一个队友后名册与投影都带出生会话 id；3c 十二条：`TeamService` 上两个方法在位、`stopTeammate` 收掉队友、收掉后台账仍在而在场名单里没有它、投话进信箱且署名 `user`、不存在的名字与空话都给明确说明、`team` 服务与 `ui` 适配器同路，另加团队没开时两个方法都拒得说明白）。唯一那条 FAIL 与本次改动无关：`shots/team-check.mjs:127` 写死 `KERNEL_API_VERSION === 5`，而并行 dsh-compat 批次已把它升到 6（`src/core/plugin-registry.ts` 的 `5 → 6` 是它的改动，本批没碰这一行）。
+- `node shots/integration-check.mjs` **104/104**、`node scripts/remote-host-test.mjs` **134/134**：远程插件的挂载、注册与白名单没被本批带偏。
+- 嵌入运行时：`node desktop/scripts/prepare-runtime.mjs` 组装 **35 个依赖包**，`node_modules/ws` 与 `node_modules/web-push` 及其全部传递依赖（`asn1.js` / `http_ece` / `https-proxy-agent` / `jws` / `minimist` / `bn.js` / `inherits` / `minimalistic-assert` / `safer-buffer` / `agent-base` / `debug` / `jwa` / `safe-buffer` / `ms` / `buffer-equal-constant-time` / `ecdsa-sig-formatter`）真实存在；脚本自己从产物目录 `require` 这两个包成功。再做一次「换机器」的等价验证：把整个 `desktop/runtime-staging/dsc-core` 拷到 `%TEMP%`（没有任何祖先 `node_modules`）后 `import lib/plugins/remote.js` 成功（`remotePlugin` 是对象）；离线静态扫描 `lib` 下 157 个 `.js` 的裸依赖，除刻意不带的 `ink` / `react` 外**零缺失**。
+- 隔离纪律：四个探针各自把 `HOME` / `USERPROFILE` 换到临时目录；跑前跑后对真实 `~/.dsc` 逐文件比对（138 个文件的路径 + 大小 + UTC 时间戳），**零改动**。
+
+诚实边界：① **桌面渲染层不在本批**：设置页那个「只画 `builtin` 分区」的过滤、队友面板上的收掉与传话按钮、`remote-web` 的一切，都由并行批次 B 做；本批只保证协议与投影这一半（`listSections` 里「远程控制」的 `builtin=true`、两个新方法在 `INVOKABLE_METHODS` 上可调），界面到底画没画出来、按钮接没接上，要 B 的截图证据。② **旧名册的 `sessionId` 不回填**：老记录永远是 `undefined`，界面要么按「未知」显示要么不显示这一栏；不回填是因为名册里没有能反查会话的依据，填了就是编。③ **收掉的队友仍留在名册里**：`team.list()` 是名册投影，`stopTeammate` 收掉后那条记录还在（状态可能还写着 `working`），这是工具版 `stop` 一直以来的行为，本批没改；UI 要显示成「已收掉」得自己加一档状态。④ 依赖闭包按**当前平台**解析 `optionalDependencies`：Windows 上只带 `@koromix/koffi-win32-x64`，跨平台打包要在各自平台各跑一遍（既有约束没变）。⑤ `lib` 里 import 了、dev 树上也没有的包只警告不拦——今天最终树上是零警告，但这条口子留在那里，将来真漏了包只会看到一行字，不会停打包。⑥ 更名只做了宿主侧：`README.md`、`docs/development.md`、`docs/plugin-development.md` 与 `desktop/src`（渲染层）里还留着「子智能体团队」，前三份不在本批允许改的文件清单里、后者归批次 B。
+
+发布：本阶段是 0.6.13 批次 A 的宿主半边，版本号与打包（根 `muse-code-0.6.13.tgz` + `desktop/dist`）等批次 B 与并行 dsh-compat 批次合并后统一落；`desktop/dist` 的 `resources/dsc-core` 由本批改好的 `prepare-runtime.mjs` 组装。

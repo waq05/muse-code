@@ -1359,7 +1359,9 @@ export const remotePlugin: Plugin.Object = {
         throw new Error(`这个分区没有动作 ${name}`)
       },
     }
-    const offSection = ctx.settings.registerSection(section)
+    // 远程控制是内核级功能：桌面端设置页只列 builtin 分区，这里声明 inSettings
+    // 让它进设置页（插件中心那张卡照旧不放它，避免同一处配置两个入口）。
+    const offSection = ctx.settings.registerSection(section, { inSettings: true })
 
     // 设置页改开关 / 改端口都走 settings.setPrefs，写盘那一刻就会回调到这里
     const offPrefs = ctx.settings.watchPrefs(() => {
