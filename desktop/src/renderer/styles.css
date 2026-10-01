@@ -3425,11 +3425,12 @@ body.resizing iframe {
   color: var(--dsc-text-primary);
 }
 
-/* 选中态跟侧栏的 .nav-item.on / .rail-btn.on 用同一档底色：全站「我在这一页」
-   只该有一个长相（以前这里是 11% 品牌色填充，比别处重一档）。 */
+/* 选中态照 dsh：抬升一档底色 + 一圈 1px 描边（它的侧栏导航就是这两个一起给）。
+   全站「我在这一页」仍然只有这一种长相，别的 .nav-item.on 不受影响。 */
 .settings-nav-item.on {
-  background: var(--dsc-row-active-bg);
+  background: var(--dsc-bg-raised);
   color: var(--dsc-text-primary);
+  box-shadow: inset 0 0 0 1px var(--dsc-stroke-3);
 }
 
 .settings-nav-empty {
@@ -3459,7 +3460,8 @@ body.resizing iframe {
   align-items: center;
   gap: 12px;
   padding: 18px 22px 12px;
-  border-bottom: 1px solid var(--dsc-stroke-4);
+  /* 与行间线同一档粗细：标题区底边也是 0.5px，免得两种线宽并排出现。 */
+  border-bottom: 0.5px solid var(--dsc-stroke-4);
 }
 
 .settings-head h2 {
@@ -3517,54 +3519,82 @@ body.resizing iframe {
 .settings-fields {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  max-width: 680px;
+  /* 行距交给行间那条发丝线（dsh 的做法）：每项自己 padding，末行不画线。 */
+  gap: 0;
+  max-width: none;
 }
 
 .settings-fields.models {
   max-width: none;
 }
 
-/* 外观分区是渲染层本地生效的三项，用一道发丝线和宿主的字段隔开。 */
+/* 外观分区是渲染层本地生效的五项，和宿主的字段同处一列：
+   不再画一条额外的顶线，改由「外观」这个小标题承担分组。 */
 .settings-appearance {
-  border-top: 1px solid var(--dsc-stroke-4);
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding-top: 14px;
+  gap: 0;
+  padding-top: 4px;
 }
 
 .settings-group-title {
-  color: var(--dsc-accent);
+  color: var(--dsc-text-tertiary);
   font-size: var(--dsc-fs-label);
   font-weight: 600;
   letter-spacing: 0.1em;
+  padding: 14px 2px 4px;
 }
 
+/* 一行设置：左边标题 + 说明，右边控件，行间一条发丝线（dsh 的版式）。
+   为什么不继续用两列网格：网格里「说明」只能跟着控件待在右列，
+   而 dsh 是说明压在标题下面、控件单独靠右；改成 flex 之后左右两栏各自成块。 */
 .setting-row {
-  display: grid;
-  grid-template-columns: 150px 1fr;
-  gap: 16px;
-  align-items: start;
+  align-items: center;
+  border-bottom: 0.5px solid var(--dsc-stroke-4);
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  padding: 13px 2px;
+}
+
+/* 最后一行后面不画线：一条悬空的线看着像下面还有内容。 */
+.setting-row:last-child {
+  border-bottom: none;
+}
+
+/* 左栏：标题在上、说明在下（说明可能很长，允许收缩换行）。 */
+.setting-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* 动作行（按钮那种）没有标题，左栏只剩说明；没说明时它就是个占位，
+   把按钮顶到右边——所以给它一个最小高度，行高才和别的行一致。 */
+.setting-row.action .setting-text {
+  min-height: 1px;
 }
 
 .setting-row.action {
-  grid-template-columns: 1fr;
+  justify-content: flex-end;
 }
 
 .setting-label {
-  color: var(--dsc-text-secondary);
+  color: var(--dsc-text-primary);
   font-size: var(--dsc-fs-body);
-  padding-top: 5px;
+  line-height: 1.45;
 }
 
-/* 纵向 flex 默认会把子项拉满宽度，分段选择器因此被撑成一整行；
- * 改成左上对齐后，输入框靠自己的 width:100% 保持满宽，分段器按内容收缩。 */
+/* 右栏：控件自己一列，靠右对齐；宽度按内容收缩，长控件（输入框）有下限。 */
 .setting-control {
-  align-items: flex-start;
+  align-items: flex-end;
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 6px;
+  max-width: 52%;
   min-width: 0;
 }
 
@@ -3576,6 +3606,7 @@ body.resizing iframe {
   color: var(--dsc-text-primary);
   font-size: var(--dsc-fs-body);
   min-height: calc(var(--dsc-ctl) + 4px);
+  min-width: 220px;
   padding: 0 10px;
   width: 100%;
 }
@@ -3604,10 +3635,13 @@ body.resizing iframe {
   align-items: center;
   color: var(--dsc-text-secondary);
   display: flex;
+  flex: 0 0 auto;
   font-size: var(--dsc-fs-caption);
   gap: 10px;
+  justify-content: flex-end;
+  max-width: 60%;
   min-width: 0;
-  padding-top: 5px;
+  text-align: right;
 }
 
 .setting-info > span:first-child {
@@ -3624,9 +3658,9 @@ body.resizing iframe {
   margin-left: auto;
 }
 
-/* 说明跟在值下面，与值同列（info 行是 label + 值 两列网格） */
+/* info 行的说明现在跟标题一起待在左栏（见 .setting-text），不再需要网格列号。 */
 .setting-row.info > .setting-help {
-  grid-column: 2;
+  grid-column: auto;
 }
 
 /* ── 设置「模型」分区 ── */

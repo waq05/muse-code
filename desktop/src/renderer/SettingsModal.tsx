@@ -315,7 +315,11 @@ export function GenericFields(props: {
     if (field.type === 'info') {
       return (
         <div className="setting-row info" key={`${field.label ?? 'info'}-${String(index)}`}>
-          {field.label !== undefined && <div className="setting-label">{field.label}</div>}
+          {/* 标题与说明一起待在左栏（dsh 的版式），值靠右对齐 */}
+          <div className="setting-text">
+            {field.label !== undefined && <div className="setting-label">{field.label}</div>}
+            {field.help !== undefined && <div className="setting-help">{field.help}</div>}
+          </div>
           <div className="setting-info">
             <span className={field.mono === true ? 'mono' : ''}>{field.text}</span>
             {field.copyable === true && (
@@ -345,20 +349,22 @@ export function GenericFields(props: {
               </span>
             )}
           </div>
-          {field.help !== undefined && <div className="setting-help">{field.help}</div>}
         </div>
       )
     }
     if (field.type === 'button') {
       return (
         <div className="setting-row action" key={`${field.action}-${String(index)}`}>
+          {/* 动作行左边只有说明（按钮自己带名字），照 dsh：说明在左、按钮在右 */}
+          <div className="setting-text">
+            {field.help !== undefined && <div className="setting-help">{field.help}</div>}
+          </div>
           <button
             className={field.style === 'ghost' ? 'btn-ghost' : 'btn-primary'}
             onClick={() => act(field.action)}
           >
             {field.label}
           </button>
-          {field.help !== undefined && <div className="setting-help">{field.help}</div>}
         </div>
       )
     }
@@ -366,7 +372,10 @@ export function GenericFields(props: {
       const current = String(values[field.key] ?? '')
       return (
         <div className="setting-row" key={field.key}>
-          <div className="setting-label">{field.label}</div>
+          <div className="setting-text">
+            <div className="setting-label">{field.label}</div>
+            {field.help !== undefined && <div className="setting-help">{field.help}</div>}
+          </div>
           <div className="setting-control">
             <select
               className="setting-select"
@@ -383,7 +392,6 @@ export function GenericFields(props: {
                 <option value={current}>{current} · 未识别</option>
               )}
             </select>
-            {field.help !== undefined && <div className="setting-help">{field.help}</div>}
           </div>
         </div>
       )
@@ -392,7 +400,10 @@ export function GenericFields(props: {
       const on = values[field.key] === true
       return (
         <div className="setting-row" key={field.key}>
-          <div className="setting-label">{field.label}</div>
+          <div className="setting-text">
+            <div className="setting-label">{field.label}</div>
+            {field.help !== undefined && <div className="setting-help">{field.help}</div>}
+          </div>
           <div className="setting-control">
             <button
               className={`switch${on ? ' on' : ''}`}
@@ -400,7 +411,6 @@ export function GenericFields(props: {
               aria-checked={on}
               onClick={() => commit(field.key, !on)}
             />
-            {field.help !== undefined && <div className="setting-help">{field.help}</div>}
           </div>
         </div>
       )
@@ -410,7 +420,10 @@ export function GenericFields(props: {
     const text = draft[field.key] ?? (stored === undefined ? '' : String(stored))
     return (
       <div className="setting-row" key={field.key}>
-        <div className="setting-label">{field.label}</div>
+        <div className="setting-text">
+          <div className="setting-label">{field.label}</div>
+          {field.help !== undefined && <div className="setting-help">{field.help}</div>}
+        </div>
         <div className="setting-control">
           <input
             className={`setting-input${field.type === 'text' && field.mono === true ? ' mono' : ''}`}
@@ -429,7 +442,6 @@ export function GenericFields(props: {
               if (event.key === 'Enter') event.currentTarget.blur()
             }}
           />
-          {field.help !== undefined && <div className="setting-help">{field.help}</div>}
         </div>
       </div>
     )
@@ -468,10 +480,13 @@ function AppearanceRows(props: {
   return (
     <div className="settings-appearance">
       <div className="settings-group-title">外观</div>
-      {/* 一行两列：标签在左，控件与说明包在 setting-control 里靠右。
-          少了这层包装，说明会被网格排到左列标签下面。 */}
+      {/* dsh 的版式：标题与说明在左栏（.setting-text），控件单独靠右（.setting-control），
+          行间由 .setting-row 的发丝线分隔。 */}
       <div className="setting-row">
-        <div className="setting-label">主题</div>
+        <div className="setting-text">
+          <div className="setting-label">主题</div>
+          <div className="setting-help">深浅两套均为完整配色；选择「跟随系统」时随 Windows 的浅色设置自动切换。</div>
+        </div>
         <div className="setting-control">
           <Segments
             value={props.uiPrefs.themeMode}
@@ -482,33 +497,39 @@ function AppearanceRows(props: {
             ]}
             onPick={(value) => props.onUiPrefs({ themeMode: value })}
           />
-          <div className="setting-help">深浅两套均为完整配色；选择「跟随系统」时随 Windows 的浅色设置自动切换。</div>
         </div>
       </div>
       <div className="setting-row">
-        <div className="setting-label">字号</div>
+        <div className="setting-text">
+          <div className="setting-label">字号</div>
+          <div className="setting-help">
+            拖动调整全局字号，正文 13px 基准按百分比缩放，代码块和终端跟着一起变。
+          </div>
+        </div>
         <div className="setting-control">
           <FontScaleRow
             value={normalizeFontScale(props.uiPrefs.fontSize)}
             onPick={(scale) => props.onUiPrefs({ fontSize: scale })}
           />
-          <div className="setting-help">
-            拖动调整全局字号，正文 13px 基准按百分比缩放，代码块和终端跟着一起变。
-          </div>
         </div>
       </div>
       <div className="setting-row">
-        <div className="setting-label">按钮大小</div>
+        <div className="setting-text">
+          <div className="setting-label">按钮大小</div>
+          <div className="setting-help">拖动调整界面按钮和图标的大小，改动即时生效。</div>
+        </div>
         <div className="setting-control">
           <ButtonScaleRow
             value={normalizeButtonScale(props.uiPrefs.buttonScale)}
             onPick={(scale) => props.onUiPrefs({ buttonScale: scale })}
           />
-          <div className="setting-help">拖动调整界面按钮和图标的大小，改动即时生效。</div>
         </div>
       </div>
       <div className="setting-row">
-        <div className="setting-label">密度</div>
+        <div className="setting-text">
+          <div className="setting-label">密度</div>
+          <div className="setting-help">调整行高与纵向间距，紧凑档 90%，宽松档 115%，一屏可见的会话数随之变化。</div>
+        </div>
         <div className="setting-control">
           <Segments
             value={props.uiPrefs.density}
@@ -519,11 +540,18 @@ function AppearanceRows(props: {
             ]}
             onPick={(value) => props.onUiPrefs({ density: value })}
           />
-          <div className="setting-help">调整行高与纵向间距，紧凑档 90%，宽松档 115%，一屏可见的会话数随之变化。</div>
         </div>
       </div>
       <div className="setting-row">
-        <div className="setting-label">过程折叠程度</div>
+        <div className="setting-text">
+          <div className="setting-label">过程折叠程度</div>
+          <div className="setting-help">
+            一轮结束后，思考与工具调用这些过程条目整组收起，只留一行「用时 X」总开关，
+            轮里再按阶段分组。紧凑档不显示思考行的摘要预览、组头也不报实时详情；
+            详细档整轮照旧收起，但只有历史轮分组——正在跑的那一轮直接摊开；
+            完全展开档不做整轮折叠，阶段也不分组，过程条目逐条摊开。
+          </div>
+        </div>
         <div className="setting-control">
           <Segments
             value={props.uiPrefs.processFold}
@@ -536,16 +564,16 @@ function AppearanceRows(props: {
             ]}
             onPick={(value) => props.onUiPrefs({ processFold: value })}
           />
-          <div className="setting-help">
-            一轮结束后，思考与工具调用这些过程条目整组收起，只留一行「用时 X」总开关，
-            轮里再按阶段分组。紧凑档不显示思考行的摘要预览、组头也不报实时详情；
-            详细档整轮照旧收起，但只有历史轮分组——正在跑的那一轮直接摊开；
-            完全展开档不做整轮折叠，阶段也不分组，过程条目逐条摊开。
-          </div>
         </div>
       </div>
       <div className="setting-row">
-        <div className="setting-label">定稿的思考行</div>
+        <div className="setting-text">
+          <div className="setting-label">定稿的思考行</div>
+          <div className="setting-help">
+            每条思考过程默认折成一行还是摊开正文。跑动中的那一段永远展开——它是「现在在干什么」
+            的唯一线索；这里只管已经写完的那些。你手动点开的某一条不会被这项改掉。
+          </div>
+        </div>
         <div className="setting-control">
           <Segments
             value={props.uiPrefs.reasoningDefaultOpen ? 'open' : 'closed'}
@@ -555,14 +583,15 @@ function AppearanceRows(props: {
             ]}
             onPick={(value) => props.onUiPrefs({ reasoningDefaultOpen: value === 'open' })}
           />
-          <div className="setting-help">
-            每条思考过程默认折成一行还是摊开正文。跑动中的那一段永远展开——它是「现在在干什么」
-            的唯一线索；这里只管已经写完的那些。你手动点开的某一条不会被这项改掉。
-          </div>
         </div>
       </div>
       <div className="setting-row">
-        <div className="setting-label">工具卡</div>
+        <div className="setting-text">
+          <div className="setting-label">工具卡</div>
+          <div className="setting-help">
+            每张工具卡默认只显示「工具名 + 状态」一行，还是连参数与结果一起摊开。
+          </div>
+        </div>
         <div className="setting-control">
           <Segments
             value={props.uiPrefs.toolDefaultOpen ? 'open' : 'closed'}
@@ -572,9 +601,6 @@ function AppearanceRows(props: {
             ]}
             onPick={(value) => props.onUiPrefs({ toolDefaultOpen: value === 'open' })}
           />
-          <div className="setting-help">
-            每张工具卡默认只显示「工具名 + 状态」一行，还是连参数与结果一起摊开。
-          </div>
         </div>
       </div>
     </div>

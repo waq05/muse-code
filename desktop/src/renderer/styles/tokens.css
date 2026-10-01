@@ -10,156 +10,201 @@
  * views.css 放各视图布局。规则里出现硬编码色值就算写错地方了。
  */
 
-/* ══════════════════ 深色（默认）══════════════════ */
+/* ══════════════════ 深色（默认）══════════════════
+ *
+ * 深色配色对齐 dsh（DeepSeek Harness）：中性蓝灰底 + 纯白半透明描边。
+ * 值取自 dsh 打包体里的设计令牌（`--dsw-static-neutral-bluish-*` 与
+ * `--dsw-alias-*` 的深色映射），对照关系：
+ *   页面底 #151517（bg-base）、侧栏 #1b1b1c、面板 #232324（layer-1）、
+ *   浮层与控件 #2c2c2e（layer-2）、抬升态 #353638（layer-3）、
+ *   描边纯白 6% / 12% / 16% / 20%（dsh 的 border-l1..l4）、
+ *   文字 #f9fafb / #cfd3d6 / #adb2b8 / #81858c（label-primary..caption）、
+ *   强调蓝 #5686fe（brand-primary-new）、业务与链接蓝 #7aaaff（state-business）、
+ *   危险 #f25a5a、成功 #22c55e、警告 #f59e0b。
+ * 老结构不变：仍然只有两个种子（墨色 + 品牌蓝）加一组百分比旋钮，
+ * 只是深色这边的旋钮值按 dsh 定（描边/交互态不再掺品牌蓝，就是纯白半透明）；
+ * 浅色主题在下面把「今天实际生效的那些百分比」显式写全，观感一点不动。
+ */
 
 :root {
   color-scheme: dark;
 
   /* ── 种子：改观感先改这两个 ── */
-  --dsc-base: #f2f4f7;
+  --dsc-base: #f9fafb;
   /* 品牌蓝。同时充当强调色与描边、填充里的暖色来源：所有「带一点蓝」的表面
      都是从它按百分比混出来的，换品牌色不会漏改某一处。 */
-  --dsc-accent: #4d6bfe;
+  --dsc-accent: #5686fe;
 
-  /* ── 旋钮：本主题的派生百分比（浅色主题各有一套）── */
-  --dsc-mix-primary: 16%;
-  --dsc-mix-secondary: 11%;
-  --dsc-mix-tertiary: 8%;
-  --dsc-mix-quaternary: 5%;
-  --dsc-mix-quinary: 3%;
-  --dsc-stroke-primary: 24%;
-  --dsc-stroke-secondary: 16%;
-  --dsc-stroke-tertiary: 10%;
-  --dsc-stroke-quaternary: 6%;
-  --dsc-row-hover: 4%;
-  --dsc-row-active: 8%;
-  --dsc-control-hover: 6%;
-  --dsc-control-active: 8%;
+  /* ── 旋钮：本主题的派生百分比（浅色主题各有一套）──
+   * `--dsc-*-a` 是「墨色那一半」的不透明度：dsh 的深色表面就是纯白半透明压在
+   * 中性底上，所以深色这边把品牌蓝的占比全部压到 0，只留白的那一档。 */
+  --dsc-mix-primary: 0%;
+  --dsc-mix-secondary: 0%;
+  --dsc-mix-tertiary: 0%;
+  --dsc-mix-quaternary: 0%;
+  --dsc-mix-quinary: 0%;
+  --dsc-fill-primary-a: 12%;
+  --dsc-fill-secondary-a: 9%;
+  --dsc-fill-tertiary-a: 7%;
+  --dsc-fill-quaternary-a: 5%;
+  --dsc-fill-quinary-a: 3%;
+  --dsc-stroke-primary: 0%;
+  --dsc-stroke-secondary: 0%;
+  --dsc-stroke-tertiary: 0%;
+  --dsc-stroke-quaternary: 0%;
+  --dsc-stroke-primary-a: 20%;
+  --dsc-stroke-secondary-a: 16%;
+  --dsc-stroke-tertiary-a: 12%;
+  --dsc-stroke-quaternary-a: 6%;
+  --dsc-text-primary-a: 100%;
+  --dsc-text-secondary-a: 82%;
+  --dsc-text-tertiary-a: 66%;
+  --dsc-text-quaternary-a: 47%;
+  --dsc-text-scaffold-a: 74%;
+  --dsc-text-scaffold-meta-a: 56%;
+  --dsc-row-hover: 0%;
+  --dsc-row-active: 0%;
+  --dsc-control-hover: 0%;
+  --dsc-control-active: 0%;
+  --dsc-row-hover-a: 8%;
+  --dsc-row-active-a: 14%;
+  --dsc-control-hover-a: 8%;
+  --dsc-control-active-a: 14%;
 
-  /* 三个大面各自的中性底色 + 种子往里混的比例。深色下中性底占大头，
-     所以 74% 意思是「底色里 74% 是种子色、26% 是中性灰」。 */
-  --dsc-neutral-page: #0d0d0e;
-  --dsc-neutral-side: #0a0a0b;
-  --dsc-neutral-card: #161618;
-  --dsc-seed-page: #121627;
-  --dsc-seed-side: #101322;
-  --dsc-seed-card: #1b2033;
-  --dsc-mix-page: 74%;
-  --dsc-mix-side: 78%;
-  --dsc-mix-card: 38%;
+  /* 三个大面各自的中性底色 + 种子往里混的比例。深色下 seed 与 neutral 取同一个
+     值、混比 100%，算出来就正好是 dsh 那一档；保留混比是因为浅色主题要用它
+     调冷暖倾向。 */
+  --dsc-neutral-page: #151517;
+  --dsc-neutral-side: #1b1b1c;
+  --dsc-neutral-card: #232324;
+  --dsc-seed-page: #151517;
+  --dsc-seed-side: #1b1b1c;
+  --dsc-seed-card: #232324;
+  --dsc-mix-page: 100%;
+  --dsc-mix-side: 100%;
+  --dsc-mix-card: 100%;
 
   /* ── 大面（从外到内三级）── */
   --dsc-bg-page: color-mix(in srgb, var(--dsc-seed-page) var(--dsc-mix-page), var(--dsc-neutral-page));
   --dsc-bg-side: color-mix(in srgb, var(--dsc-seed-side) var(--dsc-mix-side), var(--dsc-neutral-side));
   --dsc-bg-card: color-mix(in srgb, var(--dsc-seed-card) var(--dsc-mix-card), var(--dsc-neutral-card));
-  /* 输入容器的填充：卡片色透出页面底色一档，比卡片轻、比页面重。 */
-  --dsc-composer-fill: color-mix(in srgb, var(--dsc-bg-card) 88%, transparent);
-  --dsc-bg-raised: color-mix(in srgb, var(--dsc-seed-card) 46%, var(--dsc-neutral-card));
-  /* 弹层底色比卡片再亮一点，浮起来的层次靠它 + --dsc-shadow-float 撑。 */
+  /* 输入容器的填充：dsh 的 layer-2，比面板亮一档。 */
+  --dsc-composer-fill: #2c2c2e;
+  /* 抬升面（浮层、菜单、按钮底座）：dsh 的 layer-2。 */
+  --dsc-bg-raised: #2c2c2e;
+  /* 弹层底色比抬升面再透一点，浮起来的层次靠它 + --dsc-shadow-float 撑。 */
   --dsc-bg-popover: color-mix(in srgb, var(--dsc-bg-raised) 96%, transparent);
 
-  /* ── 填充五级：由重到轻，从「主按钮的兄弟面」到「隔一行」── */
+
+  /* ── 填充五级：由重到轻，从「主按钮的兄弟面」到「隔一行」──
+   * 深色下品牌蓝占比为 0，剩下纯白半透明压在面板底上，就是 dsh 的交互底色。 */
   --dsc-fill-primary: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-mix-primary),
-    color-mix(in srgb, var(--dsc-base) 10%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-fill-primary-a), transparent)
   );
   --dsc-fill-secondary: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-mix-secondary),
-    color-mix(in srgb, var(--dsc-base) 7%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-fill-secondary-a), transparent)
   );
   --dsc-fill-tertiary: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-mix-tertiary),
-    color-mix(in srgb, var(--dsc-base) 5%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-fill-tertiary-a), transparent)
   );
   --dsc-fill-quaternary: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-mix-quaternary),
-    color-mix(in srgb, var(--dsc-base) 4%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-fill-quaternary-a), transparent)
   );
   --dsc-fill-quinary: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-mix-quinary),
-    color-mix(in srgb, var(--dsc-base) 3%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-fill-quinary-a), transparent)
   );
 
   /* 列表行与控件的四种交互态。行的 hover 比控件轻，因为一行是整条大面积。 */
   --dsc-row-hover-bg: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-row-hover),
-    color-mix(in srgb, var(--dsc-base) 3%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-row-hover-a), transparent)
   );
   --dsc-row-active-bg: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-row-active),
-    color-mix(in srgb, var(--dsc-base) 5%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-row-active-a), transparent)
   );
   --dsc-control-hover-bg: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-control-hover),
-    color-mix(in srgb, var(--dsc-base) 4%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-control-hover-a), transparent)
   );
   --dsc-control-active-bg: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-control-active),
-    color-mix(in srgb, var(--dsc-base) 5%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-control-active-a), transparent)
   );
 
   /* ── 文字四级 ── */
-  --dsc-text-primary: color-mix(in srgb, var(--dsc-base) 94%, transparent);
-  --dsc-text-secondary: color-mix(in srgb, var(--dsc-base) 74%, transparent);
-  --dsc-text-tertiary: color-mix(in srgb, var(--dsc-base) 54%, transparent);
-  --dsc-text-quaternary: color-mix(in srgb, var(--dsc-base) 36%, transparent);
+  --dsc-text-primary: color-mix(in srgb, var(--dsc-base) var(--dsc-text-primary-a), transparent);
+  --dsc-text-secondary: color-mix(in srgb, var(--dsc-base) var(--dsc-text-secondary-a), transparent);
+  --dsc-text-tertiary: color-mix(in srgb, var(--dsc-base) var(--dsc-text-tertiary-a), transparent);
+  --dsc-text-quaternary: color-mix(in srgb, var(--dsc-base) var(--dsc-text-quaternary-a), transparent);
   /* 脚手架行（思考标题、已定稿的工具行、状态计时）单独一级：压在 secondary
      与 tertiary 之间，让正文始终是画面里最亮的那一坨。 */
-  --dsc-text-scaffold: color-mix(in srgb, var(--dsc-base) 64%, transparent);
-  --dsc-text-scaffold-meta: color-mix(in srgb, var(--dsc-base) 44%, transparent);
-  --dsc-text-on-accent: #fcfcfc;
+  --dsc-text-scaffold: color-mix(in srgb, var(--dsc-base) var(--dsc-text-scaffold-a), transparent);
+  --dsc-text-scaffold-meta: color-mix(in srgb, var(--dsc-base) var(--dsc-text-scaffold-meta-a), transparent);
+  /* 强调面上的字：dsh 的 label-primary-foreground，是深色而不是白色——
+     品牌蓝（#5686fe）上白字对比度只有 3:1 出头，深字才读得清。 */
+  --dsc-text-on-accent: #0f1115;
 
-  /* ── 描边四级 ── */
+  /* ── 描边四级 ──
+   * 深色下不掺品牌蓝：就是纯白 20% / 16% / 12% / 6%，对应 dsh 的
+   * border-l4 / l3 / l2 / l1（它自己的默认行分隔线是 l1 那一档 6%）。 */
   --dsc-stroke-1: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-stroke-primary),
-    color-mix(in srgb, var(--dsc-base) 10%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-stroke-primary-a), transparent)
   );
   --dsc-stroke-2: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-stroke-secondary),
-    color-mix(in srgb, var(--dsc-base) 7%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-stroke-secondary-a), transparent)
   );
   /* 默认分隔线，也是聊天流里唯一允许出现的边框色。 */
   --dsc-stroke-3: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-stroke-tertiary),
-    color-mix(in srgb, var(--dsc-base) 5%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-stroke-tertiary-a), transparent)
   );
   --dsc-stroke-4: color-mix(
     in srgb,
     var(--dsc-accent) var(--dsc-stroke-quaternary),
-    color-mix(in srgb, var(--dsc-base) 3%, transparent)
+    color-mix(in srgb, var(--dsc-base) var(--dsc-stroke-quaternary-a), transparent)
   );
   /* 浮层描边：跟着元素自己的文字色走，所以任何表面都不会画出一条错色线。 */
   --dsc-stroke-float: color-mix(in srgb, currentColor 3%, transparent);
 
   /* ── 语义色：深色一档，浅色在下面各给一档 ── */
-  --dsc-red: #e75e78;
-  --dsc-orange: #db704b;
-  --dsc-yellow: #c08532;
-  --dsc-green: #55a583;
-  --dsc-cyan: #6f9ba6;
-  --dsc-purple: #9e94d5;
+  --dsc-red: #f25a5a;
+  --dsc-orange: #f59e0b;
+  --dsc-yellow: #dd8629;
+  --dsc-green: #22c55e;
+  /* dsh 的色阶里没有青与紫这两档（dsc 自己在用的扩展色），各取它现成的蓝顶上：
+     青 → blue-450，紫 → deepseek-400；这样整屏颜色仍然落在同一套色阶里。 */
+  --dsc-cyan: #4d93f8;
+  --dsc-purple: #7aaaff;
   --dsc-diff-add-bg: color-mix(in srgb, var(--dsc-green) 12%, transparent);
-  --dsc-diff-add-fg: color-mix(in srgb, var(--dsc-green) 62%, #fff);
+  --dsc-diff-add-fg: #41c977;
   --dsc-diff-remove-bg: color-mix(in srgb, var(--dsc-red) 12%, transparent);
-  --dsc-diff-remove-fg: color-mix(in srgb, var(--dsc-red) 62%, #fff);
+  --dsc-diff-remove-fg: #fa423e;
 
-  --dsc-inline-code-bg: color-mix(in srgb, #fff 7%, transparent);
-  --dsc-inline-code-fg: color-mix(in srgb, #fff 88%, transparent);
-  --dsc-selection-bg: color-mix(in srgb, #ffd24a 38%, transparent);
-  --dsc-scrollbar-thumb: color-mix(in srgb, var(--dsc-base) 14%, transparent);
-  --dsc-scrollbar-thumb-hover: color-mix(in srgb, var(--dsc-base) 24%, transparent);
+  --dsc-inline-code-bg: #292929;
+  --dsc-inline-code-fg: #ebeef2;
+  --dsc-selection-bg: color-mix(in srgb, #3b82f6 40%, transparent);
+  --dsc-scrollbar-thumb: #3c3c3d;
+  --dsc-scrollbar-thumb-hover: #545557;
 
   /* ── 圆角：贴 hermes 的近直角。控件 2.5px、徽标 3px、图标按钮 4px、
      展开块与气泡 5px、浮层里的可点行 6px；对话框这类大面积用 8px，
@@ -328,6 +373,45 @@
   --dsc-mix-side: 100%;
   --dsc-mix-card: 22%;
   --dsc-bg-raised: #ffffff;
+  /* 输入容器：卡片色透出页面底色一档（深色那边现在是 dsh 的 layer-2 实色）。 */
+  --dsc-composer-fill: color-mix(in srgb, var(--dsc-bg-card) 88%, transparent);
+
+  /* 下面这一组是「浅色主题今天实际生效的那些百分比」：以前它们继承深色块的默认值，
+     深色按 dsh 改成纯白半透明之后必须显式写全，否则浅色会跟着一起变。
+     数值就是改动前深色块里那一套（填充 10/7/5/4/3%、描边 10/7/5/3%、
+     文字 94/74/54/36、行 3/5%、控件 4/5%，品牌蓝占比照旧）。 */
+  --dsc-mix-primary: 16%;
+  --dsc-mix-secondary: 11%;
+  --dsc-mix-tertiary: 8%;
+  --dsc-mix-quaternary: 5%;
+  --dsc-mix-quinary: 3%;
+  --dsc-fill-primary-a: 10%;
+  --dsc-fill-secondary-a: 7%;
+  --dsc-fill-tertiary-a: 5%;
+  --dsc-fill-quaternary-a: 4%;
+  --dsc-fill-quinary-a: 3%;
+  --dsc-stroke-primary: 24%;
+  --dsc-stroke-secondary: 16%;
+  --dsc-stroke-tertiary: 10%;
+  --dsc-stroke-quaternary: 6%;
+  --dsc-stroke-primary-a: 10%;
+  --dsc-stroke-secondary-a: 7%;
+  --dsc-stroke-tertiary-a: 5%;
+  --dsc-stroke-quaternary-a: 3%;
+  --dsc-text-primary-a: 94%;
+  --dsc-text-secondary-a: 74%;
+  --dsc-text-tertiary-a: 54%;
+  --dsc-text-quaternary-a: 36%;
+  --dsc-text-scaffold-a: 64%;
+  --dsc-text-scaffold-meta-a: 44%;
+  --dsc-row-hover: 4%;
+  --dsc-row-active: 8%;
+  --dsc-control-hover: 6%;
+  --dsc-control-active: 8%;
+  --dsc-row-hover-a: 3%;
+  --dsc-row-active-a: 5%;
+  --dsc-control-hover-a: 4%;
+  --dsc-control-active-a: 5%;
 
   --dsc-text-on-accent: #fcfcfc;
 

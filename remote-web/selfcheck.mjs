@@ -889,6 +889,81 @@ check(
   serviceWorker.includes("addEventListener('notificationclick'") && serviceWorker.includes('openWindow'),
 )
 
+// ── 8. 视口高度（--app-h） ───────────────────────────────────────────────────
+//
+// 真机反馈：带底部工具栏的手机浏览器里输入框被推到工具栏下面（100dvh 按「工具栏收起」
+// 的大视口算，固定高度的 flex 列比可见区域高，页面又不滚）。修法是用 visualViewport
+// 实测高度写 --app-h。这里验三件：取值优先级、写出的变量字符串、装/卸不留监听器。
+
+console.log('视口高度（visualViewport → --app-h）')
+
+const { appHeight, installViewportHeight, APP_HEIGHT_VAR } = await import('./src/lib/viewport.ts')
+
+check('常量：CSS 变量名就是 --app-h', APP_HEIGHT_VAR === '--app-h')
+check('有 visualViewport 时用它的高度', appHeight({ height: 512.4 }, 799) === 512)
+check('没有 visualViewport 时退回 innerHeight', appHeight(null, 640) === 640)
+check('visualViewport 高度是 0（部分浏览器的瞬时值）时也退回 innerHeight', appHeight({ height: 0 }, 640) === 640)
+check('visualViewport 高度是 NaN 时退回 innerHeight', appHeight({ height: Number.NaN }, 700) === 700)
+check('两个来源都不可用时夹到最小高度 320', appHeight(null, 0) === 320)
+check('极端小值也夹到 320（防布局被压没）', appHeight({ height: 12 }, 799) === 320)
+check('结果取整（写进 CSS 的像素值不留小数）', appHeight({ height: 512.6 }, 799) === 513)
+
+/** 假 window：够 installViewportHeight 用，并分别记录 window 与 visualViewport 的监听器。 */
+function fakeWindow(height, innerHeight) {
+  const winListeners = new Map()
+  const vvListeners = new Map()
+  const style = new Map()
+  const track = (bag) => (type, fn) => {
+    const set = bag.get(type) ?? new Set()
+    set.add(fn)
+    bag.set(type, set)
+  }
+  const untrack = (bag) => (type, fn) => {
+    bag.get(type)?.delete(fn)
+  }
+  const total = (bag) => [...bag.values()].reduce((sum, set) => sum + set.size, 0)
+  const target = {
+    innerHeight,
+    visualViewport:
+      height === null
+        ? null
+        : { height, addEventListener: track(vvListeners), removeEventListener: untrack(vvListeners) },
+    document: { documentElement: { style: { setProperty: (name, value) => style.set(name, value) } } },
+    addEventListener: track(winListeners),
+    removeEventListener: untrack(winListeners),
+  }
+  return {
+    target,
+    style,
+    windowListeners: () => total(winListeners),
+    viewportListeners: () => total(vvListeners),
+    fireResize: () => [...(winListeners.get('resize') ?? [])].forEach((fn) => fn()),
+  }
+}
+
+const wired = fakeWindow(600, 900)
+const uninstall = installViewportHeight(wired.target)
+check('安装时立刻写一次 --app-h（不等 resize）', wired.style.get('--app-h') === '600px', String(wired.style.get('--app-h')))
+check(
+  'window 上装了 resize 与 orientationchange',
+  wired.windowListeners() === 2,
+  String(wired.windowListeners()),
+)
+check(
+  'visualViewport 上装了 resize 与 scroll（iOS 工具栏收起只动它，不发 window.resize）',
+  wired.viewportListeners() === 2,
+  String(wired.viewportListeners()),
+)
+wired.target.visualViewport.height = 480
+wired.fireResize()
+check('视口变化后跟着改写（软键盘/工具栏收起都走这条路）', wired.style.get('--app-h') === '480px', String(wired.style.get('--app-h')))
+uninstall()
+check(
+  '卸载后两边监听器一个不留（严格模式会 mount 两次，泄漏会累积）',
+  wired.windowListeners() === 0 && wired.viewportListeners() === 0,
+  `${String(wired.windowListeners())}/${String(wired.viewportListeners())}`,
+)
+
 // ── 收尾 ─────────────────────────────────────────────────────────────────────
 
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'}  ${total - failures}/${total} 条断言通过`)
