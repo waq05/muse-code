@@ -4636,6 +4636,37 @@ body.resizing iframe {
   padding: 6px 8px 2px;
 }
 
+/* 「其它会话的队友」折叠组头：长得像一行弱化的按钮，不抢主名单的戏 */
+.team-others-toggle {
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  font-size: var(--dsc-fs-label);
+  gap: 5px;
+  margin-top: var(--dsc-sp-3);
+  padding: 6px 8px;
+}
+
+.team-others-toggle:hover {
+  color: var(--dsc-text-primary);
+}
+
+.team-others-toggle svg {
+  transition: transform var(--dsc-dur) var(--dsc-ease);
+}
+
+.team-others-toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+/* 只读组里的行再压一档：不遮本会话的队伍，但点开看记录照旧 */
+.team-others .team-row {
+  opacity: 0.75;
+}
+
 /* 状态点：working 绿（还在跑，带呼吸）/ idle 灰（干完待命）/ stopped 黄 / failed 红。
    色值一律取现有令牌；中间那颗灰点就是「没在动」的本色。 */
 .tm-dot {

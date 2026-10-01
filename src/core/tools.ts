@@ -11,6 +11,11 @@ export type ToolRisk = 'read' | 'write' | 'exec'
 export interface ToolContext {
   cwd: string
   signal: AbortSignal
+  /**
+   * 发起这次调用的队友身份。子智能体插件替队友转发团队类工具（team_task）时塞进来，
+   * 工具按它署名（任务板认领人、信箱回信）；主会话的调用没有这一项，按「lead」对待。
+   */
+  caller?: { name: string; depth: number; background: boolean }
 }
 
 /** 工具输出：纯文本，或文本 + 附带图像（data URL；需端点支持视觉）。 */

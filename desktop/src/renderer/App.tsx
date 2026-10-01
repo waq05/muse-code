@@ -556,10 +556,10 @@ export function App(): JSX.Element {
                     onChanged={refreshMates}
                   />
                 )}
-                {/* 整支队伍的全量名册（含历史）：与上一颗的分工写在面板顶部 */}
+                {/* 本会话的队伍（对照 dsh 团队挂在 lead 会话之下）：与上一颗的分工写在面板顶部 */}
                 <button
                   className="team-btn"
-                  data-tip="智能体团队：全部队友（含历史），可停止 / 发话 / 看运行记录"
+                  data-tip="智能体团队：本会话派出的队伍，可停止 / 发话 / 看运行记录"
                   onClick={() => setTeamOpen(true)}
                 >
                   智能体团队
@@ -726,8 +726,8 @@ export function App(): JSX.Element {
         />
       )}
 
-      {/* 团队面板与设置面板同档浮层（都用 .settings-mask + .settings）。
-          点一行看运行记录时它自己收起来（见 openMate），别把记录挡在下面。 */}
+      {/* 团队面板与设置面板同档浮层（都用 .settings-mask + .settings）——本会话的队伍，
+          其它会话的队友在面板底部只读折叠。点一行看运行记录时它自己收起来（见 openMate）。 */}
       {teamOpen && (
         <TeamPanel
           mates={mates}

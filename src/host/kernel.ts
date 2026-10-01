@@ -19,7 +19,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { Context, type Plugin } from '@deepseek-ai/cordis'
 import type { DscCoreConfig } from '../core/config.js'
 import { DSC_CONFIG_YAML, parseTolerantYaml, type MigrationReport } from '../core/migrate.js'
-import { getPluginConfig, isPluginEnabled, registerPluginMeta, type PluginMeta } from '../core/plugin-registry.js'
+import { getPluginConfig, isPluginEnabled, migrateTeamSplit, registerPluginMeta, type PluginMeta } from '../core/plugin-registry.js'
 import { mountAllExternalPlugins, registerBuiltinMount } from '../core/plugin-loader.js'
 import { pluginManagerPlugin } from '../plugins/plugin-manager.js'
 import { desktopDockPlugin } from '../plugins/desktop-dock.js'
@@ -50,6 +50,7 @@ import { compactPlugin } from '../plugins/compact.js'
 import { agentPlugin } from '../plugins/agent.js'
 import { runtimePlugin } from '../plugins/runtime.js'
 import { subagentPlugin } from '../plugins/subagent.js'
+import { teamPlugin } from '../plugins/team.js'
 import { computerUsePlugin } from '../plugins/computer-use.js'
 import { webSearchPlugin } from '../plugins/web-search.js'
 import { approvalFloorPlugin } from '../plugins/approval-floor.js'
@@ -75,11 +76,19 @@ const err = (error: unknown): string => (error instanceof Error ? error.message 
 export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   {
     file: 'subagent',
-    name: '智能体团队',
-    description: '将任务拆分给有明确授权的队友并行执行，提供 subagent 与 team_task 工具',
+    name: '子智能体',
+    description: '把任务派给有明确授权的子智能体并行执行，设置递归层级、数量和模型',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'subagent',
+  },
+  {
+    file: 'team',
+    name: '智能体团队',
+    description: '启用团队协作、团队工具、成员列表和共享任务看板（看板按会话各一块）',
+    toggleable: true,
+    defaultDisabled: true,
+    settingsSection: 'team',
   },
   {
     file: 'computer-use',
@@ -205,6 +214,7 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
 /** 官方可开关插件的插件对象（开关键 → 对象）。 */
 const OFFICIAL_OBJECTS: Readonly<Record<string, Plugin.Object>> = {
   subagent: subagentPlugin,
+  team: teamPlugin,
   'computer-use': computerUsePlugin,
   'web-search': webSearchPlugin,
   'approval-floor': approvalFloorPlugin,
@@ -326,6 +336,7 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   await root.plugin(runtimeApiPlugin)
   // 官方可开关插件：先把插件对象登记进热挂载表（拨开关时不必找磁盘文件），
   // 再按条目树决定这次启动挂不挂（没被用户打开过的默认不挂）。
+  migrateTeamSplit()
   for (const meta of OFFICIAL_PLUGINS) {
     const plugin = OFFICIAL_OBJECTS[meta.file]
     if (plugin === undefined) continue

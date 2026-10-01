@@ -104,7 +104,7 @@ scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scrip
 
 **模式（Agent 预设）**：一根独立的旋钮，决定模型是谁、手上有什么、被叮嘱了什么（提示词 + 工具目录）。出厂四个——标准 / 极简 / 创造 / PTC，自己加的模式就是 `~/.dsc/presets/<名字>.md` 一个文件，设置页可图形编辑，输入框下方那颗旋钮或 `/preset <名字>` 切换。模式**只做减法**（工具白名单取子集、提示段只能摘掉四段），任何模式都放宽不了安全。详见 [docs/presets.md](docs/presets.md)。
 
-官方可开关插件共 **16 个**（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索、沙箱、文件更改预览；默认关：智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露、定时任务、LSP 代码智能、浏览器自动化、自我改进、dsh 兼容层），在插件中心里手动开关；长期记忆是默认开的内核插件。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
+官方可开关插件共 **17 个**（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索、沙箱、文件更改预览；默认关：子智能体、智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露、定时任务、LSP 代码智能、浏览器自动化、自我改进、dsh 兼容层），在插件中心里手动开关；长期记忆是默认开的内核插件。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
 
 **dsh 插件兼容**：启用「dsh 兼容层」后，一部分 dsh（DeepSeek Harness）外部插件可以直接挂载——`defineTool` 定义的工具、logger 日志、schemastery 配置校验都走通，依赖 dsh 会话语义（投影/agent/目标）的不支持、挂载时响亮提示。详见 [docs/plugin-development.md](docs/plugin-development.md) 第 9 节。
 

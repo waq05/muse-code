@@ -205,6 +205,20 @@ export function writePluginEnabled(file: string, enabled: boolean): boolean {
 }
 
 /**
+ * 一次性迁移（0.6.17 拆分）：原来的「智能体团队」插件拆成「子智能体」（subagent）+
+ * 「智能体团队」（team）两档。已在用团队的用户（subagent 开着、team 开关从未动过）
+ * 自动把 team 也打开，否则升级后他们的 team_task 工具会凭空消失。
+ * 用户明确关过 team（条目树里有记录）就尊重那个选择，不再多事。
+ */
+export function migrateTeamSplit(): void {
+  const entries = readPluginEntries()
+  if (entries.some((entry) => entry.file === 'team')) return
+  const subagent = entries.find((entry) => entry.file === 'subagent')
+  if (subagent === undefined || subagent.disabled) return
+  writePluginEnabled('team', true)
+}
+
+/**
  * 版本管理：检查插件声明的 apiVersion 与内核是否兼容。
  * @returns null = 兼容（或插件未声明）；字符串 = 不兼容的原因。
  */

@@ -2,7 +2,8 @@
  * 智能体团队：会话标题旁的两颗入口 + 它们共用的名册行。
  *
  *   - 「N 个子智能体」下拉：只看**本会话**派出的队友（数量为 0 时整颗不渲染）；
- *   - 「智能体团队」面板：整支队伍的**全量**名册（含历史，不按会话过滤）。
+ *   - 「智能体团队」面板：同样以**本会话**的队伍为主（对照 dsh——团队挂在 lead 会话之下，
+ *     切会话就是另一支队伍）；别的会话派出的队友收进底部折叠组，只读列出。
  *
  * 为什么从侧栏搬过来：dsh 把这两件事都放在会话区标题旁边，侧栏那一档因此撤掉。
  * 原来「队友」tab 的三件能力在这里原地复刻：点一行进只读运行记录、working/stopped 的行
@@ -11,7 +12,8 @@
  * 诚实边界：
  *   - 运行记录是只读的（点开的是 TeammatePeek，那里不给发言口）；
  *   - 「停止」是尽力而为——宿主只能拦下还肯收手的队友，已经自己跑完的它改不了结果，
- *     接口回执原样显示，界面不替宿主打包票。
+ *     接口回执原样显示，界面不替宿主打包票；
+ *   - 其它会话的行不提供停止与发话：管它请切回派出它的那个会话。
  *
  * @module desktop/renderer/TeamPanel
  */
@@ -59,12 +61,18 @@ export function TeamMateRow(props: {
   /** 团队面板里多认一列「哪来的」；下拉里不需要（本来就是本会话的）。 */
   currentSessionId: string | null
   compact: boolean
+  /**
+   * false = 只读行（其它会话派出的队友）：不给停止与发话——管它请切回派出它的
+   * 那个会话；点开运行记录不受影响。缺省 true。
+   */
+  managed?: boolean
   proxy: RuntimeProxy
   onPeek(mate: TeammateView): void
   /** 停止 / 发话之后请外面重读一次名册。 */
   onChanged(): void
 }): JSX.Element {
   const { mate } = props
+  const manageable = props.managed !== false
   /** 就地回执：宿主返回的那句话，或失败原因。 */
   const [note, setNote] = useState('')
   const [noteBad, setNoteBad] = useState(false)
@@ -176,7 +184,7 @@ export function TeamMateRow(props: {
       </span>
       <span className="tm-state">{TEAMMATE_STATE_LABEL[mate.state]}</span>
       <span className="team-acts">
-        {(mate.state === 'working' || mate.state === 'stopped') && (
+        {manageable && (mate.state === 'working' || mate.state === 'stopped') && (
           <button
             className="text-btn danger"
             disabled={busy}
@@ -189,18 +197,20 @@ export function TeamMateRow(props: {
             停止
           </button>
         )}
-        <button
-          className="text-btn"
-          aria-pressed={writing}
-          disabled={busy}
-          data-tip="给这个队友发一句话（走宿主转发）"
-          onClick={(event) => {
-            event.stopPropagation()
-            setWriting((current) => !current)
-          }}
-        >
-          发话
-        </button>
+        {manageable && (
+          <button
+            className="text-btn"
+            aria-pressed={writing}
+            disabled={busy}
+            data-tip="给这个队友发一句话（走宿主转发）"
+            onClick={(event) => {
+              event.stopPropagation()
+              setWriting((current) => !current)
+            }}
+          >
+            发话
+          </button>
+        )}
       </span>
       {/* 回执与输入口各占整行：行首那几格在窄面板里也不用为了它们让位 */}
       {(writing || note !== '') && (
@@ -290,7 +300,8 @@ export function SubagentMenu(props: {
 }
 
 /**
- * 「智能体团队」面板：整支队伍的全量名册，含历史，不按会话过滤。
+ * 「智能体团队」面板：本会话的队伍（对照 dsh 团队挂在 lead 会话之下——切会话
+ * 就是另一支队伍）；其它会话派出的队友收进底部折叠组，只读。
  *
  * 层级照设置面板那一档（.settings-mask + .settings），Esc 与点遮罩都关。
  */
@@ -303,6 +314,11 @@ export function TeamPanel(props: {
   onPeek(mate: TeammateView): void
   onChanged(): void
 }): JSX.Element {
+  // 本会话的队伍在前；其它会话（含没有出生会话记录的老名册行）收进折叠组
+  const mine = matesOf(props.mates, props.currentSessionId)
+  const others = props.mates.filter((mate) => !mine.includes(mate))
+  const [othersOpen, setOthersOpen] = useState(false)
+
   return (
     <div
       className="settings-mask"
@@ -315,7 +331,7 @@ export function TeamPanel(props: {
           <div className="settings-head">
             <div className="settings-head-text">
               <h2>智能体团队</h2>
-              <p>这里是智能体团队的全部队友；会话标题旁的下拉只看本会话派出的。</p>
+              <p>这里是本会话派出的队伍，切到别的会话就是另一支；其它会话的队友在底部只读列出。</p>
             </div>
             <button className="icon-btn" autoFocus data-tip="关闭，快捷键 Esc" onClick={props.onClose}>
               <IconClose size={16} />
@@ -323,13 +339,13 @@ export function TeamPanel(props: {
           </div>
 
           <div className="settings-body">
-            {props.mates.length === 0 ? (
+            {mine.length === 0 ? (
               <div className="settings-empty">
-                还没有队友：智能体团队插件开着时，模型用 subagent 工具派活，会在这里出现。
+                本会话还没有队友：「子智能体」插件开着时，模型用 subagent 工具派活，会在这里出现。
               </div>
             ) : (
               <div className="team-list">
-                {props.mates.map((mate) => (
+                {mine.map((mate) => (
                   <TeamMateRow
                     key={mate.file}
                     mate={mate}
@@ -342,6 +358,38 @@ export function TeamPanel(props: {
                   />
                 ))}
               </div>
+            )}
+            {others.length > 0 && (
+              <>
+                <button
+                  className="team-others-toggle"
+                  aria-expanded={othersOpen}
+                  onClick={() => setOthersOpen((open) => !open)}
+                >
+                  <IconChevronDown size={13} />
+                  其它会话的队友（{others.length}）
+                </button>
+                {othersOpen && (
+                  <div className="team-list team-others">
+                    {others.map((mate) => (
+                      <TeamMateRow
+                        key={mate.file}
+                        mate={mate}
+                        active={props.peekFile === mate.file}
+                        currentSessionId={props.currentSessionId}
+                        compact={false}
+                        managed={false}
+                        proxy={props.proxy}
+                        onPeek={props.onPeek}
+                        onChanged={props.onChanged}
+                      />
+                    ))}
+                    <p className="team-hint">
+                      这些队友是别的会话（或更早的版本）派出的：这里只读，管理请切回派出它的会话。
+                    </p>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

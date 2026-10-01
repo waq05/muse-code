@@ -1,9 +1,13 @@
 /**
- * 智能体团队（官方插件，默认关闭）。
+ * 子智能体（官方插件，默认关闭）。
  *
- * 打开后模型多出两个工具：`subagent`（派活、传话、打断）和 `team_task`（共享任务板）。
- * 关掉后这两个工具、它们注入的提示词、以及在跑的队友一起消失——本插件不提供第二套
- * agent 实现，队友就是「另一个 MiniAgent 实例 + 它自己的会话文件 + 一张冻结的工牌」。
+ * 打开后模型多出 `subagent` 工具：派活、传话、打断。关掉后这个工具、它注入的
+ * 提示词、以及在跑的队友一起消失——本插件不提供第二套 agent 实现，队友就是
+ * 「另一个 MiniAgent 实例 + 它自己的会话文件 + 一张冻结的工牌」。
+ *
+ * 队友按会话隔离（对照 dsh 的 parentSession 过滤）：每个会话各自一份在队名单与
+ * 并发额度，`subagent list` 只报本会话派出的队友；共享任务看板在「智能体团队」
+ * 插件里，那是叠在这一层之上的协作层。
  *
  * 工牌（工具白名单 / 审批意愿 / 轮次预算 / 模型）在队友开工那一刻从角色文件复制进
  * 运行时并冻结，所以中途改角色文件只影响下一个新队友，也堵住了「队友跑一半给自己提权」。
@@ -32,17 +36,9 @@ import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.
 import { MiniAgent } from '../core/loop.js'
 import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '../core/session.js'
 import { redact } from '../core/secrets.js'
-import { argsSummary, type ToolEntry } from '../core/tools.js'
+import { argsSummary, type ToolContext, type ToolEntry } from '../core/tools.js'
 import { ToolGuardRegistry, toolApprovalGuard } from '../core/tool-guards.js'
-import {
-  boardCreate,
-  boardUpdate,
-  inboxAppend,
-  isReady,
-  readBoard,
-  resetBoard,
-  type BoardAction,
-} from '../core/team-board.js'
+import { inboxAppend } from '../core/team-board.js'
 import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TranscriptEntry } from '../contract.js'
 import type { SettingsSectionSpec, TeamService } from '../services/types.js'
 
@@ -153,10 +149,6 @@ function cwdSlug(cwd: string): string {
   return cleaned.slice(-40) === '' ? 'cwd' : cleaned.slice(-40)
 }
 
-function errText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 /**
  * 把父会话切到「上一个完整回合」为止的记录行（不含 meta）。
  * 完整回合 = 一条没带工具调用的 assistant 回复；它的后面可能就是正干到一半的活，
@@ -259,8 +251,11 @@ export const subagentPlugin: Plugin.Object = {
 
     // ── 队友运行时 ──────────────────────────────────────────────────────────
     const teammates = new Map<string, Teammate>()
-    /** 正在干活的队友：并发上限只数这些，收工的不占坑（它们的记录留在名单里等着被追问）。 */
-    const busy = (): Teammate[] => [...teammates.values()].filter((entry) => entry.state === 'working')
+    /** 正在干活的队友（并发额度按会话各计各的，对照 dsh 的 per-session 团队）：收工的不占坑。 */
+    const busyFor = (sessionId: string): Teammate[] =>
+      [...teammates.values()].filter(
+        (entry) => entry.state === 'working' && entry.parentSession.meta.id === sessionId,
+      )
 
     const waitForIdle = (teammate: Teammate): Promise<void> =>
       teammate.state !== 'working'
@@ -282,16 +277,21 @@ export const subagentPlugin: Plugin.Object = {
       for (const resolve of waiters) resolve()
     }
 
-    /** 队友的工具表：按工牌白名单筛，并把两个团队工具的身份换成它自己。 */
+    /** 队友的工具表：按工牌白名单筛。subagent 换成它自己的署名；team_task（智能体团队
+     * 插件注册的）保留原实现，只把自己的身份塞进上下文，看板认领人才不会都算成 lead。 */
     const toolsFor = (teammate: Teammate): ToolEntry[] => {
       const all = ctx.tools.list()
       const allowed = teammate.badge.tools === null ? all : all.filter((entry) => teammate.badge.tools!.includes(entry.name))
       const self = (): Caller => ({ name: teammate.name, depth: teammate.depth, background: teammate.background })
-      return allowed.map((entry) =>
-        entry.name === 'subagent' || entry.name === 'team_task'
-          ? { ...entry, run: (args, runCtx) => runTeamTool(entry.name, args, runCtx, self()) }
-          : entry,
-      )
+      return allowed.map((entry) => {
+        if (entry.name === 'subagent') {
+          return { ...entry, run: (args: Record<string, unknown>, runCtx: ToolContext) => runSubagent(args, runCtx, self()) }
+        }
+        if (entry.name === 'team_task') {
+          return { ...entry, run: (args: Record<string, unknown>, runCtx: ToolContext) => entry.run(args, { ...runCtx, caller: self() }) }
+        }
+        return entry
+      })
     }
 
     /**
@@ -510,15 +510,6 @@ ${body}
     ctx.provide('team', teamService)
 
     // ── 模型侧工具 ──────────────────────────────────────────────────────────
-    async function runTeamTool(
-      tool: string,
-      args: Record<string, unknown>,
-      runCtx: { cwd: string; signal: AbortSignal },
-      caller: Caller,
-    ): Promise<string> {
-      return tool === 'subagent' ? runSubagent(args, runCtx, caller) : runTeamTask(args, caller)
-    }
-
     function uniqueName(role: string): string {
       // 收工队友的名字也占着（名册里），不然两次启动会撞名
       const remembered = new Set(readRoster().map((entry) => entry.name))
@@ -535,7 +526,7 @@ ${body}
      */
     function stopTeammate(name: string, mode: 'interrupt' | 'stop'): string {
       const teammate = teammates.get(name)
-      if (teammate === undefined) return `没有叫 ${name} 的队友（team_task list 或 subagent list 看现役名单）`
+      if (teammate === undefined) return `没有叫 ${name} 的队友（subagent list 看现役名单）`
       teammate.agent.cancel()
       if (mode === 'stop') teammates.delete(name)
       return `${name} ${mode === 'interrupt' ? '这一轮被打断了（信箱里的话还在，可以再传话叫醒它）' : '被收掉了'}`
@@ -563,15 +554,19 @@ ${body}
     ): Promise<string> {
       const action = String(args.action ?? '')
       const roster = listRoles()
+      // 名单按会话隔离（对照 dsh 的 parentSession 过滤）：本会话只能看见自己派出的队友，
+      // 别的会话的在队名单不外漏；跨会话管理请回到派出它的那个会话。
+      const currentId = ctx.session.current().meta.id
+      const mine = [...teammates.values()].filter((entry) => entry.parentSession.meta.id === currentId)
       if (action === 'list') {
-        const lines = [...teammates.values()].map(
+        const lines = mine.map(
           (entry) =>
             `- ${entry.name}（角色 ${entry.role}，${entry.state}，第 ${entry.rounds} 轮，${entry.toolCalls} 次工具调用）派给它的任务：${entry.task.slice(0, 60)}`,
         )
         const roles = roster.map((role) => `- ${role.name}${role.enabled ? '' : '（已停用）'}：${role.description || '（没写 description）'}`).join('\n')
         return lines.length === 0
-          ? `当前没有在队或收工的队友。\n\n可用角色：\n${roles}`
-          : `在队/收工的队友：\n${lines.join('\n')}\n\n可用角色：\n${roles}`
+          ? `本会话没有在队或收工的队友。\n\n可用角色：\n${roles}`
+          : `本会话在队/收工的队友：\n${lines.join('\n')}\n\n可用角色：\n${roles}`
       }
       if (action === 'interrupt' || action === 'stop') {
         return stopTeammate(String(args.name ?? ''), action)
@@ -594,9 +589,9 @@ ${body}
       }
       const task = String(args.task ?? '').trim()
       if (task.length < 8) return '任务描述太短：队友看不到你和用户的对话，请把背景、目标、交付格式写清楚'
-      const working = busy()
+      const working = busyFor(currentId)
       if (working.length >= config.maxTeammates) {
-        return `正在干活的队友已到上限 ${config.maxTeammates} 个（${working.map((entry) => entry.name).join('、')}）。等一个收工，或去设置里提高上限`
+        return `本会话正在干活的队友已到上限 ${config.maxTeammates} 个（${working.map((entry) => entry.name).join('、')}）。等一个收工，或去设置「子智能体」里提高上限`
       }
       // 收工的队友留着可以被追问，但攒太多就把最老的挤出名单（磁盘上的运行记录不动）
       const finished = [...teammates.values()].filter((entry) => entry.state !== 'working')
@@ -653,69 +648,6 @@ ${body}
       return `已派给 ${teammate.name}（角色 ${teammate.role}，${teammate.badge.tools === null ? '不限工具' : `工具 ${teammate.badge.tools.join('、')}`}）。它在后台干，不用等也不用问：干完我会把汇报接进来。你现在可以继续做别的，或者再派一个。`
     }
 
-    function runTeamTask(args: Record<string, unknown>, caller: Caller): string {
-      const action = String(args.action ?? '')
-      const board = readBoard()
-      const id = String(args.id ?? '')
-      const revision = Number(args.expected_revision ?? board.revision)
-      const ownerDefault = caller.name === LEAD ? LEAD : caller.name
-      try {
-        switch (action) {
-          case 'create': {
-            const scopes = Array.isArray(args.write_scopes) ? args.write_scopes.map(String) : []
-            const blocked = Array.isArray(args.blocked_by) ? args.blocked_by.map(String) : []
-            const created = boardCreate({
-              subject: String(args.subject ?? ''),
-              description: String(args.description ?? ''),
-              blockedBy: blocked,
-              writeScopes: scopes,
-            })
-            const warnings = created.warnings.length === 0 ? '' : `\n提醒（不拦你，最后看 diff 裁决）：\n${created.warnings.map((line) => `- ${line}`).join('\n')}`
-            if (args.claim_now !== true) return `已建 ${created.task.id}：${created.task.subject}${warnings}`
-            // 认领走正常的 claim：依赖没做完一样会被拦下，正好复用同一套校验
-            try {
-              boardUpdate(created.task.id, created.board.revision, 'claim', { owner: ownerDefault })
-            } catch (error) {
-              return `已建 ${created.task.id}：${created.task.subject}，但没能认领：${error instanceof Error ? error.message : String(error)}${warnings}`
-            }
-            return `已建 ${created.task.id}：${created.task.subject}，状态直接进 in_progress（认领人 ${ownerDefault}）${warnings}`
-          }
-          case 'list': {
-            if (board.tasks.length === 0) return '任务板是空的（team_task action=create 建第一条）'
-            const lines = board.tasks.map((task) => {
-              const ready = isReady(board, task)
-              return `- ${task.id} [${task.status}${ready ? ' · 可开工' : ''}] ${task.subject}${task.owner === null ? '' : ` @${task.owner}`}${task.blockedBy.length === 0 ? '' : ` 依赖 ${task.blockedBy.join('、')}`}${task.writeScopes.length === 0 ? '' : ` 作用域 ${task.writeScopes.join(', ')}`}`
-            })
-            return `任务板第 ${board.revision} 版：\n${lines.join('\n')}\n（改状态要带 expected_revision=${board.revision}）`
-          }
-          case 'get': {
-            const task = board.tasks.find((entry) => entry.id === id)
-            if (task === undefined) return `任务板上没有 ${id}`
-            return `第 ${board.revision} 版里的 ${task.id}：\n标题：${task.subject}\n说明：${task.description || '（空）'}\n状态：${task.status}，认领人 ${task.owner ?? '（无）'}\n依赖：${task.blockedBy.join('、') || '（无）'}\n作用域：${task.writeScopes.join(', ') || '（未声明）'}`
-          }
-          case 'claim':
-          case 'release':
-          case 'complete':
-          case 'reopen':
-          case 'delete':
-          case 'set_dependencies': {
-            const payload: { owner?: string; blockedBy?: string[] } = {}
-            if (action === 'claim') payload.owner = String(args.owner ?? ownerDefault)
-            if (action === 'set_dependencies') {
-              payload.blockedBy = Array.isArray(args.blocked_by) ? args.blocked_by.map(String) : []
-            }
-            const result = boardUpdate(id, revision, action as BoardAction, payload)
-            const ready = result.board.tasks.filter((task) => isReady(result.board, task)).map((task) => task.id)
-            return `${id} → ${result.task.status}${result.task.owner === null ? '' : `（${result.task.owner}）`}，任务板第 ${result.board.revision} 版。现在可开工：${ready.join('、') || '（无）'}`
-          }
-          default:
-            return `不认识的 action「${action}」。要用的值：create / list / get / claim / release / complete / reopen / set_dependencies / delete`
-        }
-      } catch (error) {
-        return `任务板操作没做成：${errText(error)}`
-      }
-    }
-
     const subagentTool = (): ToolEntry => ({
       name: 'subagent',
       description:
@@ -738,42 +670,13 @@ ${body}
       run: (args, runCtx) => runSubagent(args, runCtx, { name: LEAD, depth: 0, background: false }),
     })
 
-    const teamTaskTool = (): ToolEntry => ({
-      name: 'team_task',
-      description:
-        '共享任务板：登记要做的事、看谁在做什么、认领和结项。' +
-        '改状态要带 expected_revision（list 返回的那一版），别人抢先改过就会失败，重来一次即可。',
-      parameters: {
-        type: 'object',
-        properties: {
-          action: {
-            type: 'string',
-            enum: ['create', 'list', 'get', 'claim', 'release', 'complete', 'reopen', 'set_dependencies', 'delete'],
-            description: '要做什么',
-          },
-          subject: { type: 'string', description: 'create 必填：任务标题' },
-          description: { type: 'string', description: 'create：任务的详细说明（背景、验收口径）' },
-          id: { type: 'string', description: '除 create/list 外必填：任务 id，例如 t3' },
-          expected_revision: { type: 'number', description: '你看到的任务板版本号，来自上一次 list/create' },
-          owner: { type: 'string', description: 'claim 时的认领人；不填就是你自己' },
-          claim_now: { type: 'boolean', description: 'create：true = 建完直接算你认领（状态直接进 in_progress）' },
-          write_scopes: { type: 'array', items: { type: 'string' }, description: 'create：这个任务打算改的路径前缀，用于提醒别人别撞车' },
-          blocked_by: { type: 'array', items: { type: 'string' }, description: 'create/set_dependencies：依赖哪些任务 id' },
-        },
-        required: ['action'],
-      },
-      risk: 'read',
-      run: async (args) => runTeamTask(args, { name: LEAD, depth: 0, background: false }),
-    })
-
-    /** 委派开关注释：关掉时两个工具和名册提示一起撤下，模型看不到团队这件事。 */
+    /** 委派开关注释：关掉时工具和名册提示一起撤下，模型看不到子智能体这件事。 */
     let disposers: Array<() => void> = []
     const syncTools = (): void => {
       for (const off of disposers) off()
       disposers = []
       if (!config.allowDelegation) return
       disposers.push(ctx.tools.register(subagentTool()))
-      disposers.push(ctx.tools.register(teamTaskTool()))
       disposers.push(
         ctx.prompt.register('subagent', () => {
           const roles = listRoles().filter((role) => role.enabled)
@@ -781,17 +684,16 @@ ${body}
             const tools = role.tools === null ? '不限工具' : role.tools.length === 0 ? '不带工具' : role.tools.join('/')
             return `- ${role.name}：${role.description || '（没写 description）'}（${tools}，最多 ${role.maxTurns} 轮）`
           })
-          return `# 智能体团队
-你可以用 subagent 工具把能独立完成的活派给队友，用 team_task 工具在共享任务板上登记与认领。
+          return `# 子智能体
+你可以用 subagent 工具把能独立完成的活派给队友。
 可用角色（文件在 ${DSC_AGENTS_DIR}，用户可以自己加）：
 ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能体」里打开或新建）'}
 
 派活的规矩：
 1. 队友看不到你和用户的对话（context="fork" 只能带到上一个完整回合为止），所以任务描述里必须写清背景、目标、交付格式。
-2. 同时干活上限 ${config.maxTeammates} 个（收工的不占额度）。后台队友干完后汇报会自己接进你的下一轮，不要反复去问它好了没。
+2. 本会话同时干活上限 ${config.maxTeammates} 个（收工的不占额度）。后台队友干完后汇报会自己接进你的下一轮，不要反复去问它好了没。
 3. 只读角色改不了文件；要落地代码用 writer 或者你自己动手。
-4. 多人协作先上任务板：create 时写清 write_scopes（打算改哪些路径），别人 claim 时才抢不过你；改状态要带 expected_revision。
-5. 派完活自己接着干别的，别闲着等。`
+4. 派完活自己接着干别的，别闲着等。`
         }),
       )
     }
@@ -803,10 +705,10 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
         type: 'switch',
         key: 'allowDelegation',
         label: '允许模型自主分派任务给队友',
-        help: '关闭后 subagent 与 team_task 工具连同提示词一并撤下，运行中的队友会被停止。',
+        help: '关闭后 subagent 工具连同提示词一并撤下，运行中的队友会被停止。',
       },
-      { type: 'number', key: 'maxTeammates', label: '同时运行的队友上限', min: 1, max: 8, step: 1, help: '已完成的队友不占用该额度；达到上限后再派会被直接拒绝，不排队。' },
-      { type: 'number', key: 'maxDepth', label: '允许层数', min: 0, max: 2, step: 1, help: '0 = 仅主会话可派队友，Lead 不可再下派；1 = Lead 可派队友，队友不可再下派。' },
+      { type: 'number', key: 'maxTeammates', label: '并行数量', min: 1, max: 8, step: 1, help: '每个会话各自的同时干活上限；已完成的队友不占额度，满了再派会被直接拒绝，不排队。' },
+      { type: 'number', key: 'maxDepth', label: '递归层级', min: 0, max: 2, step: 1, help: '0 = 仅主会话可派队友，Lead 不可再下派；1 = Lead 可派队友，队友不可再下派。' },
       {
         type: 'select',
         key: 'approval',
@@ -830,13 +732,12 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
       { type: 'text', key: 'defaultModel', label: '队友默认模型', placeholder: '留空 = 跟随当前模型；形如 deepseek/deepseek-chat', help: '角色文件里写了 model 的角色用它自己的。' },
       { type: 'info', label: '角色目录', text: DSC_AGENTS_DIR, mono: true, copyable: true, help: `内置角色：${builtinRoleNames().join('、')}。修改文件仅影响之后创建的队友。` },
       { type: 'button', action: 'new-role', label: '新建示例角色', style: 'ghost', help: '在角色目录创建 starter.md 供参考修改。' },
-      { type: 'button', action: 'clear-board', label: '清空共享任务板', style: 'ghost', help: '仅清空任务条目，不影响队友运行记录。' },
     ]
 
     const section: SettingsSectionSpec = {
       id: 'subagent',
       title: '子智能体',
-      subtitle: '将任务拆分给有明确授权的队友并行执行',
+      subtitle: '设置子智能体的递归层级、数量和模型',
       order: 40,
       fields,
       values: (): Record<string, SettingsValue> => ({
@@ -881,7 +782,7 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
           default:
             return `这个分区没有这项：${key}`
         }
-        // 开关会影响两个工具与名册提示在不在场，改完立刻重挂一次
+        // 开关会影响工具与名册提示在不在场，改完立刻重挂一次
         syncTools()
       },
       action: (name): string => {
@@ -891,9 +792,6 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
             prompt: '把这一段改成这个角色的职责与做事步骤。它是模型看到的唯一说明书。',
           })
           return `已写好 ${file}，改完保存就能被派活`
-        }
-        if (name === 'clear-board') {
-          return `任务板清空了（去掉 ${resetBoard()} 条）`
         }
         throw new Error(`这个分区没有这个按钮：${name}`)
       },

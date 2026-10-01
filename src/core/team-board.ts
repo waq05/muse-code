@@ -4,9 +4,10 @@
  * dsh 把协调状态存在 Lead 的会话日志里（它有会话事件体系）；dsc 没有那套东西，
  * 所以这里直接落两个文件，你能用编辑器双击打开看：
  *
- * - `~/.dsc/team/board.json` —— 任务板：三态 + 单调 revision + CAS 抢单 + 依赖图 +
- *   写作用域告警。写作用域只是提醒，不是锁：两个任务的作用域重叠时照样允许开工，
- *   重叠会被记进 warnings，最后由 Lead 看 diff 裁决。
+ * - `~/.dsc/team/boards/<会话 id>.json` —— 任务板：三态 + 单调 revision + CAS 抢单 +
+ *   依赖图 + 写作用域告警。板子按会话各一块（对照 dsh 团队挂在 lead 会话之下）：
+ *   切到别的会话就是另一块板，互不见。写作用域只是提醒，不是锁：两个任务的作用域
+ *   重叠时照样允许开工，重叠会被记进 warnings，最后由 Lead 看 diff 裁决。
  * - `~/.dsc/team/inbox/<队友名>.jsonl` —— 传话台账：要给队友的话先追加一条文件，
  *   再交给它的循环。队友正在干活时，这条话排在它当前回合之后被看到。
  *
@@ -18,8 +19,8 @@ import { join } from 'node:path'
 
 /** 团队目录（任务板 + 信箱）。 */
 export const TEAM_ROOT = join(homedir(), '.dsc', 'team')
-/** 任务板文件。 */
-export const BOARD_FILE = join(TEAM_ROOT, 'board.json')
+/** 任务板目录（每个会话一块板）。 */
+export const BOARDS_DIR = join(TEAM_ROOT, 'boards')
 /** 信箱目录（每个队友一个 jsonl）。 */
 export const INBOX_DIR = join(TEAM_ROOT, 'inbox')
 
@@ -59,11 +60,18 @@ function emptyBoard(): TeamBoard {
   return { version: 1, revision: 0, tasks: [] }
 }
 
-/** 读任务板（文件缺失或损坏都退回空板，绝不因为板子坏了起不来）。 */
-export function readBoard(): TeamBoard {
+/** 一个会话的任务板文件路径（会话 id 只出现在 uuid 里，仍按文件名安全字符再滤一遍）。 */
+export function boardFile(sessionId: string): string {
+  const safe = sessionId.replace(/[^\w-]/g, '_')
+  return join(BOARDS_DIR, `${safe === '' ? 'unknown' : safe}.json`)
+}
+
+/** 读一块任务板（文件缺失或损坏都退回空板，绝不因为板子坏了起不来）。 */
+export function readBoard(sessionId: string): TeamBoard {
+  const file = boardFile(sessionId)
   try {
-    if (!existsSync(BOARD_FILE)) return emptyBoard()
-    const doc = JSON.parse(readFileSync(BOARD_FILE, 'utf8')) as { revision?: unknown; tasks?: unknown }
+    if (!existsSync(file)) return emptyBoard()
+    const doc = JSON.parse(readFileSync(file, 'utf8')) as { revision?: unknown; tasks?: unknown }
     const revision = typeof doc.revision === 'number' && doc.revision >= 0 ? Math.floor(doc.revision) : 0
     const rawTasks = Array.isArray(doc.tasks) ? doc.tasks : []
     const tasks: TeamTask[] = []
@@ -95,9 +103,9 @@ export function readBoard(): TeamBoard {
   }
 }
 
-function writeBoard(board: TeamBoard): void {
-  mkdirSync(TEAM_ROOT, { recursive: true })
-  writeFileSync(BOARD_FILE, `${JSON.stringify(board, null, 2)}\n`, 'utf8')
+function writeBoard(sessionId: string, board: TeamBoard): void {
+  mkdirSync(BOARDS_DIR, { recursive: true })
+  writeFileSync(boardFile(sessionId), `${JSON.stringify(board, null, 2)}\n`, 'utf8')
 }
 
 /** 路径前缀规范化：统一成正斜杠、去掉首尾斜杠，空串表示「整个工作目录」。 */
@@ -165,14 +173,17 @@ function nextTaskId(board: TeamBoard): string {
 }
 
 /** 新建任务（不需要 CAS：新增不会覆盖别人的改动）。带上写回后的板，紧接着要认领它才不用再读一遍。 */
-export function boardCreate(input: {
-  subject: string
-  description?: string
-  owner?: string
-  blockedBy?: readonly string[]
-  writeScopes?: readonly string[]
-}): { task: TeamTask; warnings: string[]; board: TeamBoard } {
-  const board = readBoard()
+export function boardCreate(
+  sessionId: string,
+  input: {
+    subject: string
+    description?: string
+    owner?: string
+    blockedBy?: readonly string[]
+    writeScopes?: readonly string[]
+  },
+): { task: TeamTask; warnings: string[]; board: TeamBoard } {
+  const board = readBoard(sessionId)
   if (board.tasks.length >= MAX_TASKS) {
     throw new Error(`任务板已有 ${board.tasks.length} 条，达到上限 ${MAX_TASKS}；先清掉已完成的任务`)
   }
@@ -194,7 +205,7 @@ export function boardCreate(input: {
   const warnings = scopeWarnings(board, task.writeScopes, task.id)
   board.tasks.push(task)
   board.revision += 1
-  writeBoard(board)
+  writeBoard(sessionId, board)
   return { task, warnings, board }
 }
 
@@ -208,12 +219,13 @@ export type BoardAction = 'claim' | 'release' | 'complete' | 'reopen' | 'set_dep
  * @param payload.blockedBy - set_dependencies 时填新的依赖清单。
  */
 export function boardUpdate(
+  sessionId: string,
   id: string,
   expectedRevision: number,
   action: BoardAction,
   payload?: { owner?: string; blockedBy?: readonly string[] },
 ): { board: TeamBoard; task: TeamTask } {
-  const board = readBoard()
+  const board = readBoard(sessionId)
   if (expectedRevision !== board.revision) {
     throw new Error(
       `任务板在你读它之后被别人改过了（你报的是第 ${expectedRevision} 版，现在第 ${board.revision} 版）。先 team_task list 再决定`,
@@ -267,7 +279,7 @@ export function boardUpdate(
       }
       board.tasks.splice(index, 1)
       board.revision += 1
-      writeBoard(board)
+      writeBoard(sessionId, board)
       return { board, task }
     }
     default:
@@ -277,17 +289,17 @@ export function boardUpdate(
   task.updatedAt = Date.now()
   board.tasks[index] = task
   board.revision += 1
-  writeBoard(board)
+  writeBoard(sessionId, board)
   return { board, task }
 }
 
-/** 把任务板清空（设置页「清空任务板」按钮用；不动队友的运行记录）。 */
-export function resetBoard(): number {
-  const board = readBoard()
+/** 把一块任务板清空（设置页「清空任务板」按钮用；不动队友的运行记录）。 */
+export function resetBoard(sessionId: string): number {
+  const board = readBoard(sessionId)
   const count = board.tasks.length
   board.tasks = []
   board.revision += 1
-  writeBoard(board)
+  writeBoard(sessionId, board)
   return count
 }
 

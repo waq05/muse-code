@@ -123,14 +123,15 @@ export const myPlugin: Plugin.Object = {
 | 档 | 判定 | 开关 | 现在有谁 |
 | --- | --- | --- | --- |
 | 自定义 | `source: 'external'`，文件在 `~/.dsc/plugins/*.js` | 可拨，默认开 | 用户自己的（dsh 风格的插件走兼容层，见 [plugin-development.md](plugin-development.md) 的「dsh 兼容层」章） |
-| 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 16 个 |
+| 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 17 个 |
 | 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关 | `llm`/`session`/`guards`/`surfaces`/`waiting`/`approval`/`hooks`/`tools`/`tools-default`/`transcript`/`commands`/`skills`/`prompt`/`mode`/`settings`/`compact`/`todo`/`plan`/`ask`/`agent`/`goal`/`memory`/`runtime` 共 23 个 |
 
 官方可开关插件（`src/host/kernel.ts` 的 `OFFICIAL_PLUGINS` + `OFFICIAL_OBJECTS`）：
 
 | 插件 | 默认 | 设置分区 | 干什么 |
 | --- | --- | --- | --- |
-| `subagent` 智能体团队 | 关 | `subagent` | 把任务派给有明确授权的队友，提供 `subagent` 与 `team_task` 工具 |
+| `subagent` 子智能体 | 关 | `subagent` | 把任务派给有明确授权的子智能体（`subagent` 工具），设置递归层级、数量和模型；队友按会话隔离 |
+| `team` 智能体团队 | 关 | `team` | 协作层：共享任务看板（`team_task` 工具），看板按会话各一块；已启用 `subagent` 而没动过它时自动跟着打开 |
 | `computer-use` 电脑操作 | 关 | `computer-use` | 截屏、点击、输入 Windows 桌面，每次动手都要审批 |
 | `web-search` 网页搜索 | 开 | `web-search` | 提供 `web_search` 工具，经 Tavily / 博查 / Serper 检索网页 |
 | `approval-floor` 审批灾难地板 | 开 | `approval-floor` | 守卫链 order 5 的硬闸：灾难命令、deny 黑名单、命令白名单、无人值守 |
@@ -211,7 +212,7 @@ export const myPlugin: Plugin.Object = {
 | `.trash/<工作区名>/` | 会话库（「永久删除」） | 其实是回收站：按 mtime 超过 30 天才扫掉（`src/core/session.ts:564`），删错了还能手工捞回来 |
 | `sessions/.teammates/<cwd>/<id>.jsonl` | 子智能体插件 | 队友运行记录。目录以点开头 ⇒ 会话列表扫不到 |
 | `team/roster.json` | 子智能体插件 | 队友名册（收工的队友靠它出现在侧栏） |
-| `team/board.json` | 子智能体插件 | 共享任务板 |
+| `team/boards/<会话 id>.json` | 智能体团队插件 | 共享任务板，每个会话各一块（0.6.16 及以前是全局的 `team/board.json`，不再读写） |
 | `team/inbox/<队友名>.jsonl` | 子智能体插件 | 给队友的留言（追加写，队友在回合边界读） |
 | `agents/<角色名>.md` | 用户 / 子智能体设置分区 | 队友角色文件，一个角色一个文件 |
 | `plugins/*.js` | 用户 | 自定义插件 |
