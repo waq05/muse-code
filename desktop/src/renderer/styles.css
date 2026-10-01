@@ -1820,6 +1820,17 @@
   width: 240px;
 }
 
+/* 模式弹出面板：一行一条，条上有显示名与「默认」标 */
+.model-pop.preset-pop {
+  width: 300px;
+}
+
+.model-pop.preset-pop .pop-item .name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .plugin-apiver {
   margin-left: 8px;
   padding: 0 6px;
@@ -3837,6 +3848,266 @@ body.resizing iframe {
   font-size: var(--dsc-fs-tool);
 }
 
+/* ── 设置 → 模式 ──────────────────────────────────────────────────────── */
+
+/* 开头那段说明：模式与权限模式、协作模式是三根独立旋钮，先在这里说清 */
+.preset-intro {
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-icon);
+  background: var(--dsc-fill-quinary);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-tool);
+  line-height: 1.7;
+}
+
+.preset-intro strong {
+  color: var(--dsc-text-secondary);
+  font-weight: 500;
+}
+
+.presets-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 5px 10px;
+  font-size: var(--dsc-fs-caption);
+}
+
+.preset-card {
+  padding: 12px 14px;
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-icon);
+  background: var(--dsc-fill-quinary);
+}
+
+.preset-card.on {
+  border-color: color-mix(in srgb, var(--dsc-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--dsc-accent) 7%, transparent);
+}
+
+.preset-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.preset-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.preset-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-body);
+}
+
+.preset-id {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+}
+
+.tag.dim {
+  color: var(--dsc-text-quaternary);
+  border-color: var(--dsc-stroke-4);
+}
+
+.preset-sub {
+  margin-top: 3px;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-tool);
+  line-height: 1.6;
+}
+
+.preset-badge-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.preset-badge {
+  padding: 2px 7px;
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-block);
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-label);
+}
+
+.preset-badge.warn {
+  color: var(--dsc-yellow);
+  border-color: color-mix(in srgb, var(--dsc-yellow) 35%, transparent);
+}
+
+.preset-problem {
+  margin-top: 7px;
+  color: var(--dsc-red);
+  font-size: var(--dsc-fs-tool);
+  line-height: 1.6;
+}
+
+.preset-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 46%;
+}
+
+.preset-use {
+  padding: 5px 11px;
+  font-size: var(--dsc-fs-caption);
+}
+
+/* 只读的「查看配置」：文件原文，等宽，长行折行 */
+.preset-raw {
+  padding: 12px 14px;
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-icon);
+  background: var(--dsc-inline-code-bg);
+}
+
+.preset-raw-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-tool);
+}
+
+.preset-raw-hint {
+  flex: 1;
+  color: var(--dsc-text-quaternary);
+}
+
+.preset-raw pre {
+  max-height: 280px;
+  overflow: auto;
+  margin: 0;
+  color: var(--dsc-text-secondary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 编辑表单：字段用 .preset-field，两块勾选区用 .preset-field-block */
+.preset-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.preset-field span {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-tool);
+}
+
+.preset-field-wide {
+  grid-column: 1 / -1;
+}
+
+.preset-field-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.preset-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-tool);
+}
+
+.preset-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  cursor: pointer;
+}
+
+.preset-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 6px 14px;
+}
+
+.preset-tool {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-tool);
+  cursor: pointer;
+}
+
+.preset-tool .mono {
+  color: var(--dsc-text-primary);
+}
+
+.preset-risk {
+  padding: 1px 5px;
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-block);
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-label);
+}
+
+.preset-risk.exec {
+  color: var(--dsc-yellow);
+}
+
+.preset-risk.mode {
+  color: var(--dsc-accent);
+}
+
+.preset-drop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preset-drop-label {
+  overflow: hidden;
+  color: var(--dsc-text-quaternary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preset-prompt {
+  min-height: 132px;
+  padding: 9px 11px;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  background: var(--dsc-fill-quaternary);
+  color: var(--dsc-text-primary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  line-height: 1.65;
+  resize: vertical;
+}
+
+.preset-prompt:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--dsc-accent) 55%, transparent);
+}
+
 /* ── 端点表单里的模型行与能力勾选 ──────────────────────────────────────── */
 
 .model-rows-head {
@@ -4055,6 +4326,7 @@ body.resizing iframe {
   margin-left: 6px;
   color: var(--dsc-text-quaternary);
   font-weight: 400;
+  text-align: right;
 }
 
 .settings-paths {

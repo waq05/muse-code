@@ -1,7 +1,14 @@
 /**
  * tools 插件：provide `tools` 服务（工具注册表）。
- * MiniAgent 每轮请求经 tools.list() 读取当前可用工具——外部插件在运行期
+ * MiniAgent 每轮请求经 tools.visible() 读取当前可用工具——外部插件在运行期
  * register/unregister 即可增删能力。
+ *
+ * 注册表（`list()`）与「模型面前那份目录」（`visible()`）是两件事：
+ *   - `list()` 是全量，队友按自己的工牌从它里面挑，界面、工具检索、守卫链也读它；
+ *   - `visible()` 过一遍模式投影，只有主会话的循环读它——极简模式因此只把 bash 递给模型，
+ *     而队友与界面看到的仍是完整注册表。
+ * 投影只做减法（约定，不在类型里强制）：注册者返回的那份必须是入参的子集，
+ * 别拿它凭空造一个工具出来——模型能调用的名字必须真的在注册表里。
  *
  * @module dsc/plugins/tools
  */
@@ -33,6 +40,8 @@ export const toolsPlugin: Plugin.Object = {
   provide: 'tools',
   apply(ctx) {
     const entries = new Map<string, ToolEntry>()
+    /** 主会话目录的投影表（按注册顺序应用）。 */
+    const projections = new Map<string, (tools: readonly ToolEntry[]) => readonly ToolEntry[]>()
 
     const service: ToolService = {
       register(entry) {
@@ -44,6 +53,25 @@ export const toolsPlugin: Plugin.Object = {
       },
       list() {
         return [...entries.values()]
+      },
+      project(id, fn) {
+        projections.set(id, fn)
+        return () => {
+          if (projections.get(id) === fn) projections.delete(id)
+        }
+      },
+      visible() {
+        let out: readonly ToolEntry[] = [...entries.values()]
+        for (const [id, fn] of projections) {
+          try {
+            out = fn(out)
+          } catch (error) {
+            // 一个投影崩了不该让这一轮请求整个失败：跳过它，模型这一轮看到的是未裁剪的
+            // 目录（比看不到任何工具强），同时把话写进宿主日志，别让人对着怪现象猜。
+            console.error(`工具目录投影 ${id} 这轮没跑成，已跳过：`, error)
+          }
+        }
+        return [...out]
       },
     }
 

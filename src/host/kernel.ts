@@ -32,6 +32,9 @@ import { approvalPlugin } from '../plugins/approval.js'
 import { hooksPlugin } from '../plugins/hooks.js'
 import { promptPlugin } from '../plugins/prompt.js'
 import { modePlugin } from '../plugins/mode.js'
+import { presetsPlugin } from '../plugins/presets.js'
+import { ptcPlugin } from '../plugins/ptc.js'
+import { runtimeApiPlugin } from '../plugins/runtime-api.js'
 import { todoPlugin } from '../plugins/todo.js'
 import { planPlugin } from '../plugins/plan.js'
 import { askPlugin } from '../plugins/ask.js'
@@ -251,6 +254,21 @@ export const BUILTIN_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   { file: 'skills', name: '技能', description: 'SKILL.md 发现、开关、市场与 skill 工具' },
   { file: 'prompt', name: '提示词组装', description: '系统提示词分段注册表与请求体改写链' },
   { file: 'mode', name: '协作模式', description: '执行 / 计划 / 探索 / 免打扰四档与工具闸门' },
+  {
+    file: 'presets',
+    name: '模式',
+    description: '人格、工具目录与提示词的那根旋钮：标准 / 极简 / 创造 / PTC 四个内置模式，可自己加',
+  },
+  {
+    file: 'ptc',
+    name: 'PTC 代码调用',
+    description: 'run_code 工具：模型写一段脚本批量调工具，只把结论交回上下文（只属于 PTC 模式）',
+  },
+  {
+    file: 'runtime-api',
+    name: '运行时查询',
+    description: 'runtime_api 只读工具：内核 API、插件、工具目录、提示段、守卫链（只属于创造模式）',
+  },
   { file: 'settings', name: '设置', description: '设置分区注册表、模型配置与偏好' },
   { file: 'compact', name: '压缩', description: '上下文超阈值自动压缩', settingsSection: 'compact' },
   { file: 'todo', name: '任务清单', description: '模型自己维护的清单与实时进度条' },
@@ -286,6 +304,10 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   await root.plugin(skillsPlugin)
   await root.plugin(promptPlugin, getPluginConfig('prompt'))
   await root.plugin(modePlugin)
+  // 模式（预设）排在协作模式之后：它要往提示词、工具目录、快照三个扩展点上登记自己那一块。
+  await root.plugin(presetsPlugin)
+  // PTC 的 run_code 与创造模式的 runtime_api：两个都只在自己那一档模式下露面
+  await root.plugin(ptcPlugin)
   await root.plugin(settingsPlugin, options.config)
   // 安全钩子排在设置之后：它既要往设置里挂自己的分区，又要把闸门挂到守卫链上。
   await root.plugin(hooksPlugin)
@@ -300,6 +322,8 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   await root.plugin(runtimePlugin)
   await root.plugin(desktopDockPlugin, { cwd: process.cwd() })
   await root.plugin(pluginManagerPlugin)
+  // 运行时查询要等工具、插件表、模式都就位，所以排在最后
+  await root.plugin(runtimeApiPlugin)
   // 官方可开关插件：先把插件对象登记进热挂载表（拨开关时不必找磁盘文件），
   // 再按条目树决定这次启动挂不挂（没被用户打开过的默认不挂）。
   for (const meta of OFFICIAL_PLUGINS) {

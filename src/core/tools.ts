@@ -25,6 +25,14 @@ export interface ToolEntry {
   /** JSON Schema（OpenAI 协议的 function 参数）。 */
   parameters: Record<string, unknown>
   risk: ToolRisk
+  /**
+   * 这个工具属于哪些模式（模式名清单）。不写 = 所有模式都能看见它。
+   *
+   * 用途：模式专属的工具不该在标准模式里冒出来——`run_code` 只属于 PTC 模式，
+   * `runtime_api` 只属于创造模式。它不是权限声明：模式白名单里显式写了这个工具名
+   * 也能看见它；真正的安全边界在守卫链与审批卡，跟这个字段无关。
+   */
+  presets?: readonly string[]
   /** 执行并返回给模型的结果；失败时抛错（loop 转成 error 结果）。 */
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<string | ToolOutput>
 }

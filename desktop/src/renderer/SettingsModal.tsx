@@ -6,8 +6,8 @@
  * - 通用表单：把宿主声明的 `SettingsField`（text/number/select/switch/info/button）
  *   画成控件——内置「通用」「关于」走这里；插件贡献的分区不进设置，它们的
  *   配置就地画在插件中心的详情页里（复用的就是下面这个 GenericFields）；
- * - 特殊分区：`custom: true` 的「模型」「技能」由本文件与 SkillsView 自己画，
- *   数据走 getModelConfig / listSkills。
+ * - 特殊分区：`custom: true` 的「模型」「模式」「技能」由本文件、PresetsPanel 与
+ *   SkillsView 自己画，数据走 getModelConfig / listPresets / listSkills。
  *
  * @module desktop/renderer/SettingsModal
  */
@@ -56,6 +56,7 @@ import {
 import { confirmAction } from './components/confirm.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { SkillsView } from './SkillsView.js'
+import { PresetsPanel } from './PresetsPanel.js'
 import { UsagePanel } from './UsagePanel.js'
 import {
   IconArchive,
@@ -66,6 +67,7 @@ import {
   IconGear,
   IconInfo,
   IconKey,
+  IconLayers,
   IconPlus,
   IconSpark,
   IconSwap,
@@ -76,6 +78,7 @@ import {
 function sectionIcon(id: string): JSX.Element {
   const size = 15
   if (id === 'models') return <IconSpark size={size} />
+  if (id === 'presets') return <IconLayers size={size} />
   if (id === 'skills') return <IconBolt size={size} />
   if (id === 'archive') return <IconArchive size={size} />
   if (id === 'usage') return <IconChart size={size} />
@@ -181,6 +184,8 @@ export function SettingsModal(props: {
               <div className="settings-empty">{loadError === '' ? '正在加载…' : `分区加载失败：${loadError}`}</div>
             ) : section.custom && section.id === 'models' ? (
               <ModelsPanel proxy={props.proxy} />
+            ) : section.custom && section.id === 'presets' ? (
+              <PresetsPanel proxy={props.proxy} />
             ) : section.custom && section.id === 'skills' ? (
               <SkillsView proxy={props.proxy} embedded />
             ) : section.custom && section.id === 'archive' ? (

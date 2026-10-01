@@ -195,6 +195,15 @@ export interface SystemPromptOptions {
   instructionBudget?: number
   /** 插件贡献段（模式条款、模型信息等）；顺序由各段自己声明。 */
   contributions?: readonly PromptContribution[]
+  /**
+   * 骨架取舍：拿到全部候选段的 id（内置段 + 贡献段），返回要留下的那些。
+   * 模式（`core/presets.ts`）就是靠它去掉「做事方式」「工具规范」这类叮嘱段，
+   * 让极简档只剩一段固定提示词。缺省 = 一段不去（输出与没有这个参数时逐字节一致）。
+   *
+   * 注意它只管**提示词文本**：审批硬地板、命令策略、路径策略都在代码里，
+   * 去掉多少段提示词都不会让它们松一格。
+   */
+  keep?: (ids: readonly string[]) => readonly string[]
 }
 
 /**
@@ -204,13 +213,22 @@ export interface SystemPromptOptions {
  */
 export function buildSystemPrompt(cwd: string, options: SystemPromptOptions = {}): string {
   const budget = options.instructionBudget ?? DEFAULT_INSTRUCTION_BUDGET
-  return composePrompt([
-    { id: 'identity', order: 0, text: IDENTITY },
-    { id: 'behavior', order: 10, text: BEHAVIOR },
-    { id: 'tool-rules', order: 20, text: TOOL_RULES },
-    ...(options.contributions ?? []),
-    { id: 'instructions', order: 200, text: instructionsText(cwd, budget) },
-    { id: 'skills', order: 210, text: (options.skills ?? '').trim() },
-    { id: 'environment', order: 900, text: environmentText(cwd) },
-  ])
+  const contributions = options.contributions ?? []
+  // 段的候选清单先摆出来，再交给 keep 决定留哪些；keep 一个都不去时下面走的
+  // 就是原先那条路（同样的段、同样的顺序），所以默认档的提示词逐字节不变。
+  const ids = ['identity', 'behavior', 'tool-rules', ...contributions.map((section) => section.id), 'instructions', 'skills', 'environment']
+  const keep = options.keep
+  const kept = keep === undefined ? null : new Set(keep(ids))
+  const wants = (id: string): boolean => kept === null || kept.has(id)
+
+  const sections: PromptContribution[] = []
+  if (wants('identity')) sections.push({ id: 'identity', order: 0, text: IDENTITY })
+  if (wants('behavior')) sections.push({ id: 'behavior', order: 10, text: BEHAVIOR })
+  if (wants('tool-rules')) sections.push({ id: 'tool-rules', order: 20, text: TOOL_RULES })
+  for (const section of contributions) if (wants(section.id)) sections.push(section)
+  // 指令文件与技能目录要现算（读盘 + git），被去掉时连算都不算
+  if (wants('instructions')) sections.push({ id: 'instructions', order: 200, text: instructionsText(cwd, budget) })
+  if (wants('skills')) sections.push({ id: 'skills', order: 210, text: (options.skills ?? '').trim() })
+  if (wants('environment')) sections.push({ id: 'environment', order: 900, text: environmentText(cwd) })
+  return composePrompt(sections)
 }

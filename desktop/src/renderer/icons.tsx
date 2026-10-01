@@ -219,6 +219,18 @@ export function IconBolt(props: IconProps): JSX.Element {
   return base(<path d="M13.2 2.8 5.4 13.4h5l-1.2 7.8 7.8-10.6h-5Z" />, props)
 }
 
+/** 模式（预设）：三层叠片 —— 人格、工具目录、提示词是叠在一起的三件事。 */
+export function IconLayers(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M12 3.2 3.4 8 12 12.8 20.6 8Z" />
+      <path d="M3.4 12.6 12 17.4l8.6-4.8" />
+      <path d="M3.4 16.9 12 21.7l8.6-4.8" />
+    </>,
+    props,
+  )
+}
+
 export function IconInfo(props: IconProps): JSX.Element {
   return base(
     <>

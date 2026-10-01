@@ -243,6 +243,17 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       values: () => ({}),
     }
 
+    // ── 内置分区：模式（卡片列表与编辑弹窗由桌面端画，数据走 listPresets 等方法） ──
+    const presetsSection: SettingsSectionSpec = {
+      id: 'presets',
+      title: '模式',
+      subtitle: '模型是谁、手上有什么、被叮嘱了什么',
+      order: 15,
+      custom: true,
+      fields: () => [],
+      values: () => ({}),
+    }
+
     // ── 内置分区：技能（同上，数据走 SkillService） ────────────────────────────
     const skillsSection: SettingsSectionSpec = {
       id: 'skills',
@@ -306,7 +317,9 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       }
     }
 
-    for (const section of [general, models, skillsSection, archiveSection, usageSection, about]) register(section, true)
+    for (const section of [general, models, presetsSection, skillsSection, archiveSection, usageSection, about]) {
+      register(section, true)
+    }
 
     const service: SettingsService = {
       kernelApiVersion: KERNEL_API_VERSION,

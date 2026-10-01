@@ -28,6 +28,11 @@ export const DEFAULT_MARKET_SOURCES: readonly MarketSource[] = [
 export interface DscPrefs {
   defaultPolicy: ApprovalPolicy | null
   defaultEffort: EffortLevel | null
+  /**
+   * 新会话默认用哪个模式（`~/.dsc/presets/<名字>.md`）。
+   * 空串 = 出厂标准档；写了不存在的名字时启动也回落标准档（模式文件可能被删了）。
+   */
+  defaultPreset: string
   marketSources: MarketSource[]
   /** 点窗口右上角 X 时缩到系统托盘而不是退出（桌面端主进程读这个值）。 */
   closeToTray: boolean
@@ -175,11 +180,15 @@ function readNotifyWebhook(value: unknown): string {
   return isHttpUrl(trimmed) ? trimmed : ''
 }
 
+/** 模式名形状，与 core/presets.ts 的 PRESET_NAME 同一张表（改这里要两边一起改）。 */
+const PRESET_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
+
 /** 读偏好（文件缺失或损坏按默认处理，绝不因为偏好坏掉起不来）。 */
 export function readPrefs(): DscPrefs {
   const prefs: DscPrefs = {
     defaultPolicy: null,
     defaultEffort: null,
+    defaultPreset: '',
     marketSources: [...DEFAULT_MARKET_SOURCES],
     closeToTray: true,
     ui: {
@@ -258,6 +267,11 @@ export function readPrefs(): DscPrefs {
     }
     if (typeof doc.defaultEffort === 'string' && EFFORTS.includes(doc.defaultEffort as EffortLevel)) {
       prefs.defaultEffort = doc.defaultEffort as EffortLevel
+    }
+    // 默认模式：认不出的值（手改坏的中文、超长、带斜杠）一律回落出厂标准档，
+    // 名字合法但文件不在了也由 presets 插件在启动时回落，不让一个坏偏好把会话卡住。
+    if (typeof doc.defaultPreset === 'string' && PRESET_NAME.test(doc.defaultPreset.trim())) {
+      prefs.defaultPreset = doc.defaultPreset.trim()
     }
     if (Array.isArray(doc.marketSources)) {
       const sources = doc.marketSources

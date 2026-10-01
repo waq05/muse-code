@@ -50,6 +50,9 @@ import type {
   PlanDecision,
   PlanView,
   PolicySurface,
+  PresetDraft,
+  PresetFileView,
+  PresetSurface,
   ProviderDraft,
   RuntimeSnapshot,
   RuntimeSurfaces,
@@ -230,6 +233,36 @@ export interface ModeService {
   setMode(mode: CollaborationMode): void
 }
 
+// ── presets（模式）────────────────────────────────────────────────────────────
+
+/**
+ * 模式服务（presets 插件）：一个模式就是 `~/.dsc/presets/<名字>.md` 一个文件，
+ * 管「模型是谁、手上有什么、被叮嘱了什么」。
+ *
+ * 与协作模式是两根独立旋钮：协作模式决定这一轮允许把手伸多远（工具闸门），
+ * 模式决定模型看见什么（提示词 + 工具目录 + 骨架取舍）。模式只做减法，
+ * 任何模式都放宽不了安全——审批硬地板与守卫链不看模式。
+ */
+export interface PresetService {
+  /** 当前会话用的模式名。 */
+  readonly name: string
+  /** 新会话默认用的模式名（读偏好，认不出就回落标准档）。 */
+  readonly defaultName: string
+  /** 模式投影（当前 + 默认 + 全部可选），界面画卡片与旋钮的数据源。 */
+  surface(): PresetSurface
+  /** 切换当前会话的模式：写会话记录（恢复会话时能还原）并广播快照失效。
+   * 返回给用户看的一句话；名字不存在就抛错。 */
+  use(name: string): string
+  /** 读一个模式的原文（「查看配置」只读用）；不存在就抛错。 */
+  read(name: string): string
+  /** 新建或覆盖一个模式，返回给用户看的一句话。 */
+  save(draft: PresetDraft): string
+  /** 删掉一个自定义模式（内置四个删不掉），返回给用户看的一句话。 */
+  remove(name: string): string
+  /** 设为新会话默认模式，返回给用户看的一句话。 */
+  setDefault(name: string): string
+}
+
 // ── tasks（任务清单 / 计划 / 目标 / 提问）────────────────────────────────────────
 
 /**
@@ -341,7 +374,22 @@ export interface WaitingService {
 export interface ToolService {
   /** 注册一个工具；返回退订函数。 */
   register(entry: ToolEntry): () => void
+  /** 全量目录（队友按工牌从它里面挑；界面、工具检索、守卫链也读它）。 */
   list(): ToolEntry[]
+  /**
+   * 注册一个「主会话目录投影」（内核 API v5）：入参是当前目录，返回要递给模型的那份。
+   *
+   * 只做减法——返回的必须是入参的子集，别用它凭空造工具：模型能调用的名字必须真的
+   * 在注册表里，否则守卫链按名字找不到它，审计也就无从谈起。
+   * @param id - 投影名（宿主日志与诊断用）。
+   * @returns 退订函数。
+   */
+  project(id: string, fn: (tools: readonly ToolEntry[]) => readonly ToolEntry[]): () => void
+  /**
+   * 主会话要发给模型的那份目录（过一遍全部投影，按注册顺序）。
+   * 只有 agent 循环读它；队友、界面、工具检索一律走 {@link list}。
+   */
+  visible(): ToolEntry[]
 }
 
 // ── commands ─────────────────────────────────────────────────────────────────
@@ -464,6 +512,18 @@ export interface PromptService {
    *   易变的内容请往大数值放，前面的稳定段才能一直命中服务端提示缓存。
    */
   register(id: string, text: () => string, options?: { order?: number }): () => void
+  /**
+   * 注册一个「骨架取舍」（内核 API v5）：拼系统提示时按登记顺序应用，拿到全部候选段的
+   * id，返回要留下的那些。模式（presets 插件）用它把「做事方式」这类叮嘱段整段摘掉，
+   * 极简档因此只剩一段固定提示词。
+   *
+   * 一个都不注册时，提示词的段清单与顺序与没有这个扩展点时逐字节一致（默认档的承诺）。
+   * 它只影响提示词文本：审批硬地板、命令策略这些代码里的守卫不受它影响。
+   *
+   * @param id - 过滤器名（诊断与文档用）。
+   * @returns 退订函数。
+   */
+  registerSkeletonFilter(id: string, fn: (ids: readonly string[]) => readonly string[]): () => void
   /**
    * 注册一个「模型可见投影」：对发给模型的消息做一次**纯函数**改写——同一输入永远
    * 同一输出、不读不改注册表之外的任何状态。
@@ -825,6 +885,8 @@ declare module '@deepseek-ai/cordis' {
     approval: ApprovalService
     /** 协作模式（执行 / 计划 / 探索 / 免打扰）与它注册的那道守卫。 */
     mode: ModeService
+    /** 模式（预设）：人格、工具目录与提示词的那根旋钮。 */
+    presets: PresetService
     /** 任务清单（todo_write）。 */
     todo: TodoService
     /** 计划交付与评审卡（exit_plan_mode）。 */
@@ -901,6 +963,11 @@ declare module '@deepseek-ai/cordis' {
      */
     'dsc/mode-changed'(mode: CollaborationMode): void
     /**
+     * 模式（预设）换了一个（presets 插件发出）。
+     * 想知道「模型的工具目录刚变了」的功能点听这个，不必反过来依赖模式服务。
+     */
+    'dsc/preset-changed'(name: string): void
+    /**
      * 一轮对话结束（agent 发出，reason 与 CoreEvent 的 turn/end 一致）。
      * 目标续跑听这个；循环因此不认识「目标」这个功能。
      */
@@ -933,6 +1000,10 @@ export type {
   ModelConfigView,
   Modality,
   PairShareData,
+  PresetDraft,
+  PresetFileView,
+  PresetSurface,
+  PresetView,
   ProviderDraft,
   ProviderModelView,
   ProviderView,
@@ -952,6 +1023,7 @@ export type {
   StatusView,
   TokenUsageView,
   ToolCallView,
+  ToolEntryView,
   ToolStatus,
   TranscriptEntry,
 } from '../contract.js'

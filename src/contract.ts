@@ -362,6 +362,69 @@ export interface PolicySurface {
 }
 
 /**
+ * 一个模式（预设）的投影：`~/.dsc/presets/<名字>.md` 一个文件读出来的那份声明。
+ * 界面上「查看配置」看的是文件原文（`readPreset`），这份投影只给卡片要用的字段。
+ */
+export interface PresetView {
+  /** 模式标识（小写字母数字连字符）。 */
+  name: string
+  /** 界面上的显示名。 */
+  label: string
+  description: string
+  /** 工具白名单；null = 全量，空数组 = 一个工具都不给。 */
+  tools: string[] | null
+  /** 要去掉的骨架提示段 id。 */
+  drop: string[]
+  /** 正文 = 这个模式追加给模型的提示词（编辑表单要拿它当初始值）。 */
+  prompt: string
+  /** 出厂自带的四个之一（界面标「内置」，删不掉）。 */
+  builtin: boolean
+  /** 文件有问题时的说明（例如 frontmatter 坏了、drop 里写了不认识的段）。 */
+  problem?: string
+}
+
+/**
+ * 模式投影：当前会话用的 + 新会话默认用的 + 全部可选。
+ * 清单由 presets 插件给出，界面因此不必自己抄一份四个模式的名字。
+ */
+export interface PresetSurface {
+  /** 当前会话用的模式名。 */
+  current: string
+  /** 新会话默认用的模式名。 */
+  defaultName: string
+  options: PresetView[]
+  /** 允许模式去掉的骨架提示段（界面画勾选框）：名单只在 core/presets.ts 里有一份。 */
+  droppable: Array<{ id: string; label: string }>
+}
+
+/** 一个工具在界面上的投影（设置 → 模式 的工具多选；只读，不带 run）。 */
+export interface ToolEntryView {
+  name: string
+  /** 风险档：read 自动放行，write / exec 要过审批。 */
+  risk: 'read' | 'write' | 'exec'
+  description: string
+  /** 只在列出的模式里露面；不写 = 所有模式都能看见它。 */
+  presets?: string[]
+}
+
+/** 读一个模式文件原文的结果（「查看配置」用；失败时 error 是给用户看的一句话）。 */
+export type PresetFileView = { ok: true; name: string; text: string } | { ok: false; error: string }
+
+/** 新建或编辑一个模式的入参。 */
+export interface PresetDraft {
+  /** null = 新建；否则是被编辑模式的原名（支持改名）。 */
+  oldName: string | null
+  name: string
+  label: string
+  description: string
+  /** 工具白名单；null = 全量。 */
+  tools: string[] | null
+  drop: string[]
+  /** 正文 = 这个模式追加给模型的提示词。 */
+  prompt: string
+}
+
+/**
  * 快照里由各功能点贡献的界面片段。
  *
  * 内置那几项由对应插件自己登记（`ctx.surfaces.register`），组装快照的那一层不认识任何具体功能。
@@ -375,6 +438,8 @@ export interface RuntimeSurfaces {
   policy: PolicySurface
   /** 协作模式与可切档位（mode 贡献）。 */
   mode: ModeSurface
+  /** 模式（预设）与可切清单（presets 贡献）。 */
+  preset: PresetSurface
   /** 任务清单（todo 贡献）；没有任务时 items 为空数组。 */
   todos: TodoView
   /** 挂着等用户批的计划（plan 贡献）；null = 无。 */
@@ -929,6 +994,26 @@ export interface DscRuntime {
   answerPlan(decision: PlanDecision): void
   /** 切换协作模式（执行 / 计划 / 探索 / 免打扰），写进会话记录。 */
   setMode(mode: CollaborationMode): void
+  /**
+   * 模式（预设）投影：当前会话用的、新会话默认用的、全部可选。
+   * 输入框那颗模式旋钮与设置页「模式」分区都读它。
+   */
+  listPresets(): PresetSurface
+  /** 读一个模式的原文（「查看配置」只读用）；不存在时 ok:false 带一句话。 */
+  readPreset(name: string): Promise<PresetFileView>
+  /** 切换当前会话的模式（写会话记录，恢复会话时一起恢复）。 */
+  usePreset(name: string): SettingsMutation
+  /** 新建或覆盖一个模式（写 `~/.dsc/presets/<名字>.md`）。 */
+  savePreset(draft: PresetDraft): SettingsMutation
+  /** 删掉一个自定义模式（内置四个删不掉）。 */
+  removePreset(name: string): SettingsMutation
+  /** 设为新会话默认模式（写 `~/.dsc/settings.json`）。 */
+  setDefaultPreset(name: string): SettingsMutation
+  /**
+   * 全部已注册工具（名字 / 风险 / 一行说明 / 归属模式）。
+   * 设置 → 模式 的工具多选读它；这也是界面第一次能看见完整工具目录。
+   */
+  listTools(): ToolEntryView[]
   /** 用户侧目标动作：暂停 / 继续 / 清空 / 放宽轮次上限。 */
   goalAction(action: 'pause' | 'resume' | 'clear' | 'extend'): SettingsMutation
   /** 手动清空任务清单（清单条上的小按钮）。 */

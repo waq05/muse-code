@@ -44,6 +44,14 @@ export const INVOKABLE_METHODS = [
   'answerApproval',
   // 协作模式、任务清单、计划评审、目标、模型提问
   'setMode',
+  // 模式（预设）：人格 + 工具集 + 提示词那根旋钮（设置页「模式」分区与输入框旋钮走这几条）
+  'listPresets',
+  'readPreset',
+  'usePreset',
+  'savePreset',
+  'removePreset',
+  'setDefaultPreset',
+  'listTools',
   'clearTodos',
   'goalAction',
   'answerQuestion',

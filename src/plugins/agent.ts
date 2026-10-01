@@ -44,7 +44,9 @@ export const agentPlugin: Plugin.Object = {
           noteSystemPrompt(ctx, text)
           return text
         },
-        tools: () => ctx.tools.list(),
+        // 模型面前那份目录走 visible()：模式（预设）在这里做减法，极简档因此只看到 bash。
+        // 队友不走这条路——它们按自己的工牌从全量注册表里挑（见 plugins/subagent.ts）。
+        tools: () => ctx.tools.visible(),
         guards: ctx.guards,
         emit: (event) => {
           // 用量落一条到 ~/.dsc/usage/usage.jsonl（设置「用量统计」的数据源）。

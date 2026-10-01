@@ -54,6 +54,12 @@ export const promptPlugin: Plugin.Object = {
     /** 附加提示段：id → {顺序, 取文本}。同名后注册者顶掉先注册的，退订只撤自己那一份。 */
     const sections = new Map<string, { order: number; text: () => string }>()
     /**
+     * 骨架过滤器表：id → 取舍函数。按登记顺序串起来应用（前一个的输出是后一个的输入）。
+     * 模式（presets 插件）登记的那一位把「做事方式」「工具规范」这类段摘掉，
+     * 极简档因此只剩一段固定提示词；一个都不登记时提示词逐字节不变。
+     */
+    const skeletonFilters = new Map<string, (ids: readonly string[]) => readonly string[]>()
+    /**
      * 命名投影表：id → {次序, 改写函数}。内核两条内置投影也在表里，与插件投影
      * 走同一条按次序应用的管道——「日志原文 + 这条链」就是模型看见的内容
      * （dsh Model-visible ⟺ logged 的个人版）。
@@ -105,8 +111,31 @@ export const promptPlugin: Plugin.Object = {
         }
         return out
       },
+      registerSkeletonFilter(id, fn) {
+        skeletonFilters.set(id, fn)
+        return () => {
+          if (skeletonFilters.get(id) === fn) skeletonFilters.delete(id)
+        }
+      },
       systemPrompt(cwd) {
         budget = readBudget(passed)
+        // 没有过滤器时走 keep=undefined 的那条路：段的清单与顺序与以前完全一样
+        const filters = [...skeletonFilters.entries()]
+        const keep =
+          filters.length === 0
+            ? undefined
+            : (ids: readonly string[]): readonly string[] => {
+                let out = ids
+                for (const [id, fn] of filters) {
+                  try {
+                    out = fn(out)
+                  } catch (error) {
+                    // 取舍崩了就当这一位不存在（提示词多一段总比整轮请求失败强）
+                    ctx.emit('dsc/notice', `提示词段取舍 ${id} 这轮没跑成，已跳过：${errText(error)}`)
+                  }
+                }
+                return out
+              }
         return buildSystemPrompt(cwd, {
           skills: ctx.skills.catalogText(),
           instructionBudget: budget,
@@ -114,6 +143,7 @@ export const promptPlugin: Plugin.Object = {
             ...service.sections(),
             { id: 'model', order: 890, text: `当前模型：${ctx.llm.model}（provider ${ctx.llm.provider}）` },
           ],
+          ...(keep === undefined ? {} : { keep }),
         })
       },
       rewrite(messages) {

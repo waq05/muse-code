@@ -375,6 +375,17 @@ export function App(): JSX.Element {
     })
   }
 
+  /** 切当前会话的模式（输入框那颗旋钮）；成功/失败都给一句回执。 */
+  const handlePresetChange = (name: string): void => {
+    void proxy.usePreset(name).then((result) => {
+      if (!result.ok) {
+        toastErr(`切换模式失败：${result.error}`)
+        return
+      }
+      if (result.notice !== undefined) toastOk(result.notice)
+    })
+  }
+
   const handleSubmit = (text: string, images?: string[]): void => {
     setTab('chat')
     if (text.startsWith('/') && images === undefined) {
@@ -665,12 +676,14 @@ export function App(): JSX.Element {
                     model={snapshot.status.model}
                     effort={snapshot.status.effort}
                     policy={snapshot.surfaces.policy}
+                    preset={snapshot.surfaces.preset}
                     working={snapshot.status.turnState !== 'idle'}
                     onSubmit={handleSubmit}
                     onInterrupt={() => proxy.interrupt()}
                     onModelChange={(value) => void proxy.setModel(value)}
                     onEffortChange={(value) => void proxy.setEffort(value)}
                     onPolicyChange={(value) => proxy.setPolicy(value)}
+                    onPresetChange={(value) => handlePresetChange(value)}
                   />
                 ) : (
                   <div className="peek-lock">

@@ -11,7 +11,7 @@ import { errText } from '../adapter/transcript.js'
 import { listPluginInfos, writePluginEnabled } from '../core/plugin-registry.js'
 import { setPluginEnabledHot } from '../core/plugin-loader.js'
 import { buildUsageStats } from '../core/usage-log.js'
-import type { DscRuntime } from '../contract.js'
+import type { DscRuntime, SettingsMutation } from '../contract.js'
 
 export const runtimePlugin: Plugin.Object = {
   name: 'ui-runtime',
@@ -26,8 +26,11 @@ export const runtimePlugin: Plugin.Object = {
     'skills',
     'settings',
     'compact',
+    // 设置 → 模式 的工具多选要读完整工具目录（listTools）
+    'tools',
     // 界面上那几块卡片的操作要落到各自的功能点：档位切换、清单、计划卡、提问卡、目标。
     'mode',
+    'presets',
     'todo',
     'plan',
     'ask',
@@ -35,6 +38,18 @@ export const runtimePlugin: Plugin.Object = {
   ],
   provide: 'ui',
   apply(ctx) {
+    /**
+     * 同步写动作的统一包装：功能点那边抛错是有意义的（名字非法、内置删不掉、
+     * 文件写不进去），契约要求把失败原因原样交给界面显示，而不是让 IPC 那头收到一个异常。
+     */
+    function mutateWith(work: () => string): SettingsMutation {
+      try {
+        return { ok: true, notice: work() }
+      } catch (error) {
+        return { ok: false, error: errText(error) }
+      }
+    }
+
     const runtime: DscRuntime = {
       subscribe(listener) {
         return ctx.transcript.subscribe(listener)
@@ -144,6 +159,44 @@ export const runtimePlugin: Plugin.Object = {
 
       setMode(mode) {
         ctx.mode.setMode(mode)
+      },
+
+      // ── 模式（预设）──
+      listPresets() {
+        return ctx.presets.surface()
+      },
+
+      async readPreset(name) {
+        try {
+          return { ok: true, name, text: ctx.presets.read(name) }
+        } catch (error) {
+          return { ok: false, error: errText(error) }
+        }
+      },
+
+      usePreset(name) {
+        return mutateWith(() => ctx.presets.use(name))
+      },
+
+      savePreset(draft) {
+        return mutateWith(() => ctx.presets.save(draft))
+      },
+
+      removePreset(name) {
+        return mutateWith(() => ctx.presets.remove(name))
+      },
+
+      setDefaultPreset(name) {
+        return mutateWith(() => ctx.presets.setDefault(name))
+      },
+
+      listTools() {
+        return ctx.tools.list().map((entry) => ({
+          name: entry.name,
+          risk: entry.risk,
+          description: entry.description,
+          ...(entry.presets !== undefined ? { presets: [...entry.presets] } : {}),
+        }))
       },
 
       answerQuestion(answer) {

@@ -87,6 +87,11 @@ type SessionRecord =
 export interface SessionStateMap {
   /** 协作模式（mode 插件写）。 */
   mode: CollaborationMode
+  /**
+   * 模式（presets 插件写）：这一轮模型是谁、手上有什么。
+   * 存的只是模式名，具体规格每次现读文件——所以改完模式文件不用重开会话。
+   */
+  preset: string
   /** 任务清单整表，最后一条生效（todo 插件写）。 */
   todos: TodoItemView[]
   /** 最近一份计划及其评审结果（plan 插件写）。 */
