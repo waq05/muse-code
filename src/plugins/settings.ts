@@ -38,6 +38,7 @@ import {
   writeTemperature,
 } from '../core/config-store.js'
 import { DSC_SKILLS_DIR } from '../core/skills.js'
+import { checkForUpdate, UPDATE_CHECK_URL } from '../core/update-check.js'
 import { DEFAULT_MARKET_SOURCES, readPrefs, writePrefs, type DscPrefs } from '../core/prefs.js'
 import { KERNEL_API_VERSION } from '../core/plugin-registry.js'
 import { DSC_PLUGINS_DIR } from '../core/plugin-loader.js'
@@ -296,6 +297,20 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       fields(): SettingsField[] {
         return [
           { type: 'info', label: 'Muse Code 版本', text: packageVersion() },
+          {
+            type: 'button',
+            label: '检查更新',
+            help: '对比更新源上的最新版本；发现新版会打开发布页',
+            action: 'check-update',
+          },
+          {
+            type: 'info',
+            label: '更新源',
+            text: UPDATE_CHECK_URL === '' ? '未配置' : UPDATE_CHECK_URL,
+            mono: true,
+            copyable: UPDATE_CHECK_URL !== '',
+            help: '在 src/core/update-check.ts 里填 Releases 地址即启用检查',
+          },
           { type: 'info', label: '内核 API 版本', text: String(KERNEL_API_VERSION), help: '外部插件声明的 apiVersion 高于此值时会被自动停用' },
           { type: 'info', label: '配置目录', text: DSC_HOME, mono: true, copyable: true },
           { type: 'info', label: '模型配置', text: CONFIG_FILE, mono: true, copyable: true },
@@ -305,6 +320,13 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
         ]
       },
       values: () => ({}),
+      async action(name) {
+        // 口径照其它分区：失败抛错（mutate 接住变成 { ok:false, error }），成功返回文案 + 可选载荷。
+        if (name !== 'check-update') throw new Error(`关于分区没有动作 ${name}`)
+        const result = await checkForUpdate()
+        if (!result.ok) throw new Error(result.error)
+        return { notice: result.notice, data: result.data }
+      },
     }
 
     function register(section: SettingsSectionSpec, builtin: boolean): () => void {

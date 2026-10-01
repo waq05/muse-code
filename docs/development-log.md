@@ -872,3 +872,20 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 诚实边界：① 名册是全局台账，`TeamService.list()` 仍返回全部（UI 负责按会话分——契约没动）；② 旧全局 `board.json` 的历史任务不迁移；③ team 插件的设置分区只有「清空本会话任务板」，看板容量仍是硬编码 256（dsh 的 maxTasks 也只是 profile 常量）；④ 手机端（remote-web）没有团队面板，不受影响。
 
 发布：`desktop/dist` 重建（快捷方式吃到 0.6.17）。
+
+## 阶段 36：主题跟随修复、选项改下拉、开始页对齐 dsh、检查更新（0.6.18）
+
+需求原文四条：① 添加检查更新；② 修正部分界面没有跟随主题颜色；③ 选项改成下拉框，不要全部平铺；④ 侧边栏的设计对齐 dsh（截图 = dsh 的「开始」主页：居中 logo + 三张入口卡）。
+
+根因与决策：
+
+| 项 | 根因 / 决策 | 理由 |
+| --- | --- | --- |
+| 主题跟随 | `tokens.css` 早就有 `color-scheme: dark/light`，但 select 的**下拉选项列表**这类原生弹出层不看页面 CSS，只认主进程 `nativeTheme.themeSource`——它从没被设过，OS 浅色时弹层画白底、深色主题的白色选项文字直接隐形。修法 = `applyAppearance` 把请求的模式（dark/light/system 原样）经新 IPC `dsc:theme-source` 报给主进程设 `nativeTheme.themeSource` | 右键菜单等一切原生层一并修好；「跟随系统」透传给 OS 自己翻面 |
+| 选项改下拉 | 外观区五处（主题/密度/过程折叠程度/定稿的思考行/工具卡）`Segments` 组件整体退役，换成宿主 select 字段同款的 `.setting-select` 下拉 | 用户点名「不要全部平铺」；用量面板里的范围切换是视图切换不是表单选项，保持分段不动（`.dsc-segmented` 样式因此保留） |
+| 开始页 | `Welcome` 改对照 dsh：居中 app logo + 三张入口卡（工作区文件 Ctrl+P / 新建终端 Ctrl+\` / 浏览器 Ctrl+T），点击定向打开 dock 对应面板；dock 的 tab 从组件内 state 提升到 App（`dockTab`） | dock 本来就有这四个面板，缺的只是「对话前的入口」；快捷键 Ctrl+P / Ctrl+\` / Ctrl+T 在浏览器里没有默认行为可抢（已 grep 无冲突），角标即真键位 |
+| 检查更新 | 新 `src/core/update-check.ts`：`UPDATE_CHECK_URL` 占位空串 + `compareVersions` 纯函数 + `checkForUpdate`（认 GitHub Releases API 的 `tag_name`/`html_url` 与简化 `{version,url}` 两种回包，10s 超时）；关于页加「检查更新」按钮与「更新源」info 行；发现新版经 `data:{kind:'url'}` 回执，桌面端新增 `dsc:open-external`（只放行 http/https）用系统浏览器打开发布页 | 仓库还没有发布渠道——没配源时按钮如实提示「还没配置」，发布后填一个常量即启用；下载安装（electron-updater）要签名与 channel，等真发布再说 |
+
+验收：桌面端 typecheck 0 错；`scripts/settings-sections-check.mjs`、`shots/integration-check.mjs`、`shots/team-check.mjs` 全绿；update-check 冒烟（六个版本比较用例 + 本地 HTTP 服务的 GitHub 回包解析）全过；实机截图 `shots/r618-home-light/home-dark/general-dark/general-light/about-dark`——开始页三卡、下拉框、关于页按钮逐张目检；selfcheck 日志出现「原生主题源 dark」（新 IPC 生效）。
+
+诚实边界：① 更新源未配置时「检查更新」只会提示还没配置，不会瞎报「已是最新」；② 快捷键在终端面板聚焦时同样生效（xterm 不吞 Ctrl 组合键，dsh 同款行为）；③ 手机端 remote-web 不受这轮影响（开始页与设置都是桌面端界面）。
