@@ -272,7 +272,13 @@ export function GenericFields(props: {
         const share = pairShare(result)
         // 配对码是「要一直看得见」的东西：回执带结构化数据就开弹窗，不再走一闪就没的 Toast
         if (share !== null) setPair({ action, data: share })
-        else apply(result)
+        // 链接载荷（检查更新发现新版）：提示照走 Toast，再把发布页交给系统浏览器
+        else if (result.ok && result.data?.kind === 'url') {
+          apply({ ...result, data: undefined })
+          void dsc
+            .openExternal(result.data.url)
+            .catch((error: unknown) => toastErr(`打开发布页失败：${text(error)}`))
+        } else apply(result)
         // 按钮也可能改值（批准状态、启停），跟保存一样回读一次
         void props.proxy.getSectionValues(props.section.id).then(setValues).catch(() => {})
         // 按钮可能改动了控件清单本身（加了一条规则、删了一条脚本），让外层重取整份分区
@@ -495,7 +501,7 @@ function AppearanceRows(props: {
           <div className="setting-help">「跟随系统」随系统深浅自动切换。</div>
         </div>
         <div className="setting-control">
-          <Segments
+          <Dropdown
             value={props.uiPrefs.themeMode}
             options={[
               { value: 'dark', label: '深色' },
@@ -536,7 +542,7 @@ function AppearanceRows(props: {
           <div className="setting-help">调整行高与间距，一屏可见的会话数随之变化。</div>
         </div>
         <div className="setting-control">
-          <Segments
+          <Dropdown
             value={props.uiPrefs.density}
             options={[
               { value: 'compact', label: '紧凑' },
@@ -556,7 +562,7 @@ function AppearanceRows(props: {
           </div>
         </div>
         <div className="setting-control">
-          <Segments
+          <Dropdown
             value={props.uiPrefs.processFold}
             options={[
               { value: 'compact', label: '紧凑' },
@@ -577,7 +583,7 @@ function AppearanceRows(props: {
           </div>
         </div>
         <div className="setting-control">
-          <Segments
+          <Dropdown
             value={props.uiPrefs.reasoningDefaultOpen ? 'open' : 'closed'}
             options={[
               { value: 'closed', label: '默认收起' },
@@ -595,7 +601,7 @@ function AppearanceRows(props: {
           </div>
         </div>
         <div className="setting-control">
-          <Segments
+          <Dropdown
             value={props.uiPrefs.toolDefaultOpen ? 'open' : 'closed'}
             options={[
               { value: 'closed', label: '默认收起' },
@@ -710,26 +716,24 @@ function ButtonScaleRow(props: { value: number; onPick(value: number): void }): 
   )
 }
 
-/** 一小排互斥选项。选中态用 aria-selected，样式在原语的 .dsc-segmented 里。 */
-function Segments<T extends string>(props: {
+/** 下拉选择：外观区的选项一律用它与宿主 select 字段同款（收成一项，不再平铺）。 */
+function Dropdown<T extends string>(props: {
   value: T
   options: { value: T; label: string }[]
   onPick(value: T): void
 }): JSX.Element {
   return (
-    <div className="dsc-segmented" role="group">
+    <select
+      className="setting-select"
+      value={props.value}
+      onChange={(event) => props.onPick(event.target.value as T)}
+    >
       {props.options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          className="dsc-segmented__btn"
-          aria-selected={option.value === props.value}
-          onClick={() => props.onPick(option.value)}
-        >
+        <option key={option.value} value={option.value}>
           {option.label}
-        </button>
+        </option>
       ))}
-    </div>
+    </select>
   )
 }
 

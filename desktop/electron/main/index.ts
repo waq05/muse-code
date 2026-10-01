@@ -10,7 +10,7 @@
 import { spawn } from 'node:child_process'
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
-import { BrowserWindow, Menu, Tray, WebContentsView, app, desktopCapturer, dialog, ipcMain, nativeImage, screen, shell, utilityProcess, type UtilityProcess } from 'electron'
+import { BrowserWindow, Menu, Tray, WebContentsView, app, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, screen, shell, utilityProcess, type UtilityProcess } from 'electron'
 import type { NativeImage } from 'electron'
 import { HostProtocol } from './protocol.js'
 import { registerDockIpc } from './dock.js'
@@ -332,6 +332,25 @@ function registerIpc(): void {
   ipcMain.handle('dsc:open-path', (_event, path: string) => {
     if (typeof path !== 'string' || !isAbsolute(path)) return '只允许打开绝对路径'
     return shell.openPath(path)
+  })
+
+  // 用系统浏览器打开链接（检查更新的「打开发布页」）；只放行 http/https，
+  // 免得 file:/自定义协议被渲染层来的字符串拿着 shell 去开。
+  ipcMain.handle('dsc:open-external', (_event, url: string) => {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return
+    void shell.openExternal(url)
+  })
+
+  // 原生弹出层（select 的下拉选项列表、右键菜单）的深浅只认 nativeTheme，
+  // 页面 CSS 够不着：renderer 在主题生效时把模式报上来。跟随系统就原样透传，
+  // 让 OS 自己翻面；值不对就拒收，保持上一次的主题。
+  ipcMain.on('dsc:theme-source', (event, mode: unknown) => {
+    if (event.sender !== mainWindow?.webContents) return
+    if (mode !== 'dark' && mode !== 'light' && mode !== 'system') return
+    if (process.env.DSC_DESKTOP_SHOT !== undefined && process.env.DSC_DESKTOP_SHOT !== '') {
+      process.stderr.write(`[selfcheck] 原生主题源 ${mode}\n`)
+    }
+    nativeTheme.themeSource = mode
   })
 
   // 用多种方式打开当前工作区（顶栏文件夹按钮的下拉；对照 dsh）。

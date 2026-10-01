@@ -172,6 +172,11 @@ export function applyAppearance(appearance: Appearance): void {
   // 会留一块深色的控件条。
   pushWindowChrome()
 
+  // 原生弹出层（select 的下拉选项列表、右键菜单）不吃页面 CSS，只认主进程的
+  // nativeTheme.themeSource——不报的话 OS 是浅色时这些弹层就画成白底，深色主题
+  // 里的白色选项文字直接隐形。传「请求的」模式：跟随系统时让主进程也跟着系统翻。
+  dsc?.setThemeSource?.(requested)
+
   // 只有跟随系统时才需要挂监听；系统翻脸就按 current 重画一次。
   if (!media) return
   if (requested === 'system' && !systemWatcher) {

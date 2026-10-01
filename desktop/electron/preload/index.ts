@@ -97,6 +97,16 @@ const api = {
     ipcRenderer.send('dsc:set-window-chrome', bar, symbol)
   },
 
+  /** 主题切换时把模式报给主进程设 nativeTheme.themeSource（原生弹出层的深浅跟它走）。 */
+  setThemeSource(mode: 'dark' | 'light' | 'system'): void {
+    ipcRenderer.send('dsc:theme-source', mode)
+  },
+
+  /** 用系统浏览器打开 http/https 链接（检查更新的「打开发布页」）；主进程校验协议。 */
+  openExternal(url: string): Promise<void> {
+    return ipcRenderer.invoke('dsc:open-external', url)
+  },
+
   // ── dock：内置终端（宿主 desktop-dock 服务，管道模式）/ 内置浏览器 ──
 
   /** dock 终端输出流（term-spawn 会话 id 维度）。 */

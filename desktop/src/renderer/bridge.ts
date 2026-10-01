@@ -81,6 +81,10 @@ export interface DscBridge {
   onBrowserState(listener: (state: { url: string }) => void): () => void
   /** 主题切换时同步窗口底色与原生控件区颜色（两个 #rrggbb，不带 alpha）。 */
   setWindowChrome(bar: string, symbol: string): void
+  /** 主题切换时同步原生弹出层（select 下拉、右键菜单）的深浅；传 dark / light / system。 */
+  setThemeSource(mode: 'dark' | 'light' | 'system'): void
+  /** 用系统浏览器打开一个 http/https 链接（检查更新的「打开发布页」）。 */
+  openExternal(url: string): Promise<void>
   quit(): void
 }
 

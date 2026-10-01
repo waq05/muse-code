@@ -793,10 +793,20 @@ export interface PairShareData {
   expiresAt: number
 }
 
+/**
+ * 「用系统浏览器打开一个链接」的载荷：检查更新发现新版时随回执带给桌面端，
+ * 界面据此打开发布页（宿主自己够不着 shell）。
+ */
+export interface LinkShareData {
+  kind: 'url'
+  /** 要打开的地址；桌面端只放行 http/https。 */
+  url: string
+}
+
 /** 写入或动作成功时的载荷：提示条文案之外，还可以带一份结构化数据给界面画弹窗。 */
 export interface SettingsMutationOk {
   notice?: string
-  data?: PairShareData
+  data?: PairShareData | LinkShareData
 }
 
 /** 写入或动作的结果：失败原因直接显示在控件下方。 */
