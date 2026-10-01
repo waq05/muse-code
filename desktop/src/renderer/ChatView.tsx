@@ -63,7 +63,7 @@
  *
  * @module desktop/renderer/ChatView
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
+import { cloneElement, isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX, type ReactElement, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { ChangedFileView, StatusView, TranscriptEntry, TurnEndReason, UiProcessFold } from '@dsc/runtime/contract.js'
@@ -76,7 +76,7 @@ import { ThinkingBlock } from './ThinkingBlock.js'
 import { ToolCard } from './ToolCard.js'
 import { TurnFooter } from './TurnFooter.js'
 import { TurnStatusLine } from './TurnStatusLine.js'
-import { ChangedFilesCard, sumChanges } from './ChangedFiles.js'
+import { ChangedFilesCard, mergeChangesByPath } from './ChangedFiles.js'
 import { isSessionMarker } from './session-marker.js'
 import { TURN_PROCESS_INDEPENDENT, groupSteps, type StepGroup, type StepGrouping } from './process-groups.js'
 import { readFold, stepGroupFoldKey, turnFoldKey, writeFold } from './fold-state.js'
@@ -84,6 +84,7 @@ import { formatDuration, liveActivity, roundDuration, roundInfos, turnStartedAt,
 import { toastErr, toastOk } from './components/toast.js'
 import { IconChevronDown, IconEdit } from './icons.js'
 import { estimateTextTokens } from './token-estimate.js'
+import { FileIcon } from './file-icons.js'
 
 /**
  * 「用户真的离开底部了」的门槛（px）：比贴底判定 AT_BOTTOM_EPS（32px）宽一档。
@@ -152,12 +153,82 @@ interface RoundSeatPlan {
    * 不参与整轮折叠。
    */
   changes: ChangedFileView[]
+  /**
+   * 回合聚合的改动（`turnDiff` 条目，同文件多刀一份准确差异）。有它优先用——
+   * 没有（轮中途 / 重启后重放）才回退把 changes 逐刀合并（mergeChangesByPath）。
+   */
+  turnDiff: ChangedFileView[] | undefined
   /** 页脚画在这一轮末尾吗（还没回复的轮次不画）。 */
   withFoot: boolean
 }
 
 /** 渲染序列里的一项：不属于任何轮的条目，或者一整轮的座位。 */
 type ChatPlanItem = { kind: 'loose'; index: number } | { kind: 'seat'; seat: RoundSeatPlan }
+
+/**
+ * inline code 文本 ↔ 本轮改动文件的提及匹配（dsh producedFileMentions 的思路）：
+ * 精确相等，或命中路径以分隔符结尾的后缀（`fs-tools.ts` 命中 `…/core/fs-tools.ts`）。
+ * 带 `\n` 的不是 inline（fenced 块），短得像扩展名的（`md`）不会越过分隔符边界误命中。
+ */
+function matchMentionPath(text: string, paths: ReadonlySet<string>): string | undefined {
+  const trimmed = text.trim()
+  if (trimmed === '' || trimmed.includes('\n')) return undefined
+  if (paths.has(trimmed)) return trimmed
+  for (const path of paths) {
+    if (path.endsWith(`/${trimmed}`) || path.endsWith(`\\${trimmed}`)) return path
+  }
+  return undefined
+}
+
+/**
+ * 一条助手正文的 markdown 渲染（会话流同款 remark-gfm），外加文件提及 chip：
+ * inline code 命中本轮改动文件时变成可点的文件徽章，点击进预览页签。
+ * 块级 code 用 `pre` 覆盖给子元素打 `data-block` 标记来区分——fenced 块没有
+ * language- 类名时不能靠 className 判定，误判会把整块代码变成一颗 chip。
+ */
+function MarkdownText({
+  text,
+  mentionPaths,
+  onOpenFile,
+}: {
+  text: string
+  mentionPaths: ReadonlySet<string>
+  onOpenFile?: (path: string) => void
+}): JSX.Element {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        pre(props) {
+          const { children, ...rest } = props
+          const child = Array.isArray(children) ? children[0] : children
+          return (
+            <pre {...rest}>
+              {isValidElement(child)
+                ? cloneElement(child as ReactElement<Record<string, unknown>>, { 'data-block': true })
+                : child}
+            </pre>
+          )
+        },
+        code(props) {
+          const { className, children, node: _node, ...rest } = props
+          const block = (rest as Record<string, unknown>)['data-block'] === true
+          if (block || className !== undefined) return <code className={className} {...rest}>{children}</code>
+          const hit = matchMentionPath(String(children ?? ''), mentionPaths)
+          if (hit === undefined || onOpenFile === undefined) return <code {...rest}>{children}</code>
+          return (
+            <button type="button" className="mention-chip" title={hit} onClick={() => onOpenFile(hit)}>
+              <FileIcon name={hit} size={13} />
+              {hit.split(/[\\/]/).pop() ?? hit}
+            </button>
+          )
+        },
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  )
+}
 
 /** 本机评价的存档键（localStorage）。 */
 const FEEDBACK_KEY = 'dsc.messageFeedback'
@@ -555,6 +626,18 @@ export function ChatView(props: {
 
   // 每一轮的起止与时间（见 turn-timing.ts）；entries 变了才重算
   const rounds = useMemo(() => roundInfos(props.entries), [props.entries])
+  /**
+   * 会话里出现过的改动文件路径（逐刀 + 回合聚合）：markdown 正文里的 inline code
+   * 命中其中之一就渲染成可点 chip（dsh producedFileMentions 的同位能力）。
+   */
+  const mentionPaths = useMemo(() => {
+    const paths = new Set<string>()
+    for (const entry of props.entries) {
+      if (entry.kind === 'changes') paths.add(entry.file.path)
+      else if (entry.kind === 'turnDiff') for (const file of entry.files) paths.add(file.path)
+    }
+    return paths
+  }, [props.entries])
   /**
    * 从第几轮开始画（更早的轮先不进 DOM）。
    *
@@ -995,8 +1078,10 @@ export function ChatView(props: {
       const fold = roundFold.get(round.index)
       const process: ChatBlock[] = []
       const after: ChatBlock[] = []
-      // 这一轮的文件改动单独收走：条目不进过程区也不进 after，轮尾一张聚合卡代它出场
+      // 这一轮的文件改动单独收走：条目不进过程区也不进 after，轮尾一张聚合卡代它出场。
+      // turnDiff（回合聚合）是整轮一份；changes 是逐刀快照，聚合条目缺席时回退合并它们。
       const changes: ChangedFileView[] = []
+      let turnDiff: ChangedFileView[] | undefined
       let withFoldRow = false
       // 总开关画在过程区第一条之前。没有过程内容时（hasContent 为假）改画在用户消息之后——
       // dsh 的整轮控件位置就是「该轮所有起始输入之后、最终答案之前」，那种轮那一行照样出现，
@@ -1011,6 +1096,10 @@ export function ChatView(props: {
           changes.push(entry.file)
           continue
         }
+        if (entry.kind === 'turnDiff') {
+          turnDiff = entry.files
+          continue
+        }
         if (at === foldRowAt) withFoldRow = true
         const head = stepGrouping.headAt.get(at)
         if (head !== undefined) {
@@ -1019,6 +1108,7 @@ export function ChatView(props: {
             members.push(member)
             const memberEntry = props.entries[member]
             if (memberEntry?.kind === 'changes') changes.push(memberEntry.file)
+            else if (memberEntry?.kind === 'turnDiff') turnDiff = memberEntry.files
           }
           process.push({ kind: 'group', group: head, members })
           // 组里那几条已经收进组体，跳过（组头只画一次，画在这个块上）
@@ -1041,6 +1131,7 @@ export function ChatView(props: {
         process,
         after,
         changes,
+        turnDiff,
         withFoot: round.answered,
       })
     }
@@ -1172,7 +1263,7 @@ export function ChatView(props: {
           return (
             <div className="entry-text live">
               <div className="markdown">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.text}</ReactMarkdown>
+                <MarkdownText text={entry.text} mentionPaths={mentionPaths} onOpenFile={props.onOpenFile} />
               </div>
             </div>
           )
@@ -1180,7 +1271,7 @@ export function ChatView(props: {
         return (
           <div className="entry-text">
             <div className="markdown">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.text}</ReactMarkdown>
+              <MarkdownText text={entry.text} mentionPaths={mentionPaths} onOpenFile={props.onOpenFile} />
             </div>
           </div>
         )
@@ -1242,7 +1333,9 @@ export function ChatView(props: {
           </div>
         )
       case 'changes':
-        // 文件改动条目不在这里单独上屏：轮尾一张聚合卡代它们出场（见 renderSeat 的 seat.changes）。
+      case 'turnDiff':
+        // 文件改动条目（逐刀 / 回合聚合）不在这里单独上屏：轮尾一张聚合卡代它们出场
+        // （见 renderSeat 的 seat.turnDiff / seat.changes）。
         return null
       default:
         return null
@@ -1347,19 +1440,25 @@ export function ChatView(props: {
         )))}
         {/* 过程区之后那几条（最终回答、计划卡）：永远可见，不参与整轮折叠 */}
         {seat.after.map((block) => (block.kind === 'row' ? seatRow(block.index, false, reveal) : null))}
-        {/* 轮尾「文件已更改」卡（dsh 的 turn-tail 位置）：聚合这一轮成功 write / edit 的
-            实际改动，不参与整轮折叠。只读视图不传两个回调，卡退化成纯展示。 */}
-        {seat.changes.length > 0 && (
-          <ChangedFilesCard
-            total={sumChanges(seat.changes)}
-            onReview={
-              props.onReviewChanges === undefined
-                ? undefined
-                : (index) => props.onReviewChanges?.(seat.changes, index)
-            }
-            onOpen={props.onOpenFile}
-          />
-        )}
+        {/* 轮尾「文件已更改」卡（dsh 的 turn-tail 位置）：聚合这一轮成功落盘的实际改动，
+            不参与整轮折叠。有回合聚合条目（turnDiff）优先用——同文件多刀一份准确差异；
+            没有（轮中途 / 老日志重放）就回退逐刀合并。只读视图不传回调，卡退化成纯展示。 */}
+        {(() => {
+          const changed = seat.turnDiff ?? mergeChangesByPath(seat.changes)
+          if (changed.length === 0) return null
+          return (
+            <ChangedFilesCard
+              files={changed}
+              onReview={
+                props.onReviewChanges === undefined
+                  ? undefined
+                  : (index) => props.onReviewChanges?.(changed, index)
+              }
+              onOpen={props.onOpenFile}
+              proxy={props.proxy}
+            />
+          )
+        })()}
         {seat.withFoot && (
           <TurnFooter
             round={seat.round}

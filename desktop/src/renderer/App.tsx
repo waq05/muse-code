@@ -825,6 +825,11 @@ export function App(): JSX.Element {
                   index={review.index}
                   onSelect={(index) => setReview((current) => (current === null ? current : { ...current, index }))}
                   onOpen={(path) => dockActions.openPreview(path)}
+                  onOpenSystem={(path) => {
+                    void dsc.openPath(path).then((error) => {
+                      if (error !== '') toastErr(`系统打开失败：${error}`)
+                    })
+                  }}
                   onClose={() => setReview(null)}
                 />
               )}

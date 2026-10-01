@@ -21,6 +21,22 @@ export interface FileChangeSummary {
   hunks: DiffHunk[]
   /** true = hunks 超出行数上限被砍过（界面据此提示「只显示前一部分」）。 */
   truncated?: boolean
+  /** `added` = 新建文件（改前不存在）；`modified` = 改已有文件。 */
+  status: 'added' | 'modified'
+  /**
+   * 改之前的全文，**只活在内存**：循环拿它给回合基线记账（见 Session.recordTurnChange），
+   * 落盘与 `tool/changes` 事件都会剥掉——jsonl 和快照里只留 hunks。
+   */
+  baseline?: string
+}
+
+/**
+ * 剥掉 `baseline` 内存字段，得到可落盘 / 可进事件的干净摘要。
+ * 事件与 jsonl 里只该有 hunks（改前全文是回合基线记账专用的，带着走会把快照撑爆）。
+ */
+export function stripBaseline(change: FileChangeSummary): FileChangeSummary {
+  const { baseline: _baseline, ...rest } = change
+  return rest
 }
 
 export interface ToolContext {

@@ -452,6 +452,12 @@ export class Transcript {
         this.list.push(this.stamp({ kind: 'changes', id: this.seq++, file: event.change }))
         return true
       }
+      case 'turn/diff': {
+        // 回合收尾的聚合改动（同文件多刀合一）：也是独立条目，渲染层优先拿它画轮尾卡。
+        // 恢复会话的重放不重建它（纯内存条目不落盘），轮尾卡回退逐刀合并显示。
+        this.list.push(this.stamp({ kind: 'turnDiff', id: this.seq++, files: event.files }))
+        return true
+      }
       case 'usage':
         this.usage = {
           inputTokens: this.usage.inputTokens + event.inputTokens,

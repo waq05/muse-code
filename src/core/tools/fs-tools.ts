@@ -34,8 +34,11 @@ const str = (v: unknown, name: string): string => {
  * 什么时候没有摘要：新旧内容完全相同（覆盖写了个寂寞）——界面上没有可展示的改动，
  * 事件与日志都不带。diff 段超过 {@link CHANGE_DIFF_LINE_LIMIT} 行时从前往后保留、
  * 砍掉的部分标 `truncated`（整篇重写大文件的场景，面板会提示只显示了前一部分）。
+ *
+ * 导出给 Session.takeTurnChanges 复用：回合聚合的 diff 就是「回合基线 vs 盘上现值」
+ * 走同一套算法，两处的口径（上下文行数、砍尾阈值、status 判定）天然一致。
  */
-function summarizeChange(file: string, before: string, after: string): ToolOutput['changes'] {
+export function summarizeChange(file: string, before: string, after: string): ToolOutput['changes'] {
   const result = diffLines(before, after, 3)
   if (result.identical || !result.ok || result.hunks.length === 0) return undefined
   const kept: DiffHunk[] = []
@@ -52,6 +55,8 @@ function summarizeChange(file: string, before: string, after: string): ToolOutpu
     removed: result.removed,
     hunks: kept,
     ...(kept.length < result.hunks.length ? { truncated: true } : {}),
+    status: before === '' ? 'added' : 'modified',
+    baseline: before,
   }
 }
 

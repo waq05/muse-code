@@ -17,7 +17,7 @@ import { LlmError } from './llm.js'
 import type { CoreEvent } from './events.js'
 import type { Session } from './session.js'
 import type { ToolGuardChain } from './tool-guards.js'
-import { callFacts, type FileChangeSummary, type ToolEntry } from './tools.js'
+import { callFacts, stripBaseline, type FileChangeSummary, type ToolEntry } from './tools.js'
 
 export interface AgentDeps {
   /** 每次请求时动态读取（支持 /model 热切换）。 */
@@ -146,6 +146,9 @@ export class MiniAgent {
   private async runTurn(): Promise<void> {
     const abort = new AbortController()
     this.abort = abort
+    // 回合内可能切会话（/new、/resume 会 abort 当前轮）：收尾聚合必须用「开跑时」的那个
+    // 会话的基线，而且会话已切走就不再发聚合事件（发了会污染新会话的转录）。
+    const session = this.session
     this.deps.emit({ type: 'turn/start' })
     try {
       await this.deps.beforeRequest?.()
@@ -180,6 +183,16 @@ export class MiniAgent {
       }
     } finally {
       this.abort = null
+      // 收尾聚合（成功/中断/出错一样算——改了的文件如实展示）。条目按「下一条用户消息
+      // 之前归当前轮」的口径落位，晚于 turn/end 也能进这一轮的轮尾卡区间。
+      if (this.session === session) {
+        try {
+          const files = await session.takeTurnChanges()
+          if (files.length > 0) this.deps.emit({ type: 'turn/diff', files })
+        } catch {
+          // 聚合失败不遮回合本身的结果
+        }
+      }
     }
   }
 
@@ -327,14 +340,22 @@ export class MiniAgent {
       const text = this.deps.guards.observe(call.name, rawText)
       const images = typeof output === 'string' ? undefined : output.images
       const changes = typeof output === 'string' ? undefined : output.changes
+      // baseline 是回合基线记账的内存字段：单独摘到 outcome 上，事件与落盘形状里不留它。
+      const baseline = changes?.baseline
+      const clean = changes !== undefined ? stripBaseline(changes) : undefined
       const stored: string | { text: string; images?: string[]; changes?: FileChangeSummary } =
-        text === rawText && changes === undefined
+        text === rawText && clean === undefined
           ? output
           : images !== undefined && images.length > 0
-            ? { text, images, ...(changes === undefined ? {} : { changes }) }
-            : { text, ...(changes === undefined ? {} : { changes }) }
+            ? { text, images, ...(clean === undefined ? {} : { changes: clean }) }
+            : { text, ...(clean === undefined ? {} : { changes: clean }) }
       const imageNote = images !== undefined && images.length > 0 ? `\n[附 ${images.length} 张截图]` : ''
-      return { text: text + imageNote, stored, ...(changes === undefined ? {} : { changes }) }
+      return {
+        text: text + imageNote,
+        stored,
+        ...(baseline !== undefined ? { baseline } : {}),
+        ...(clean === undefined ? {} : { changes: clean }),
+      }
     } catch (error) {
       const message = errText(error)
       return { text: message, stored: message, error: 'tool-error' }
@@ -352,6 +373,8 @@ export class MiniAgent {
     })
     // 成功的落盘类调用随带真实改动：界面聚合成轮尾「文件已更改」卡
     if (outcome.error === undefined && outcome.changes !== undefined) {
+      // 改前全文记进回合基线：轮尾聚合 diff = 回合起点 vs 盘上终态（同文件多刀合一）
+      if (outcome.baseline !== undefined) this.session.recordTurnChange(outcome.changes.path, outcome.baseline)
       this.deps.emit({ type: 'tool/changes', callId: call.id, change: outcome.changes })
     }
   }
@@ -367,6 +390,8 @@ type ToolOutcome = {
   stored: string | { text: string; images?: string[]; changes?: FileChangeSummary }
   /** undefined = 成功；tool-error = 执行失败；rejected = 被守卫拒绝。 */
   error?: 'tool-error' | 'rejected'
-  /** 成功的 write / edit 附带的真实改动（发 `tool/changes` 事件用）。 */
+  /** 成功的 write / edit 附带的真实改动（发 `tool/changes` 事件用，不带 baseline）。 */
   changes?: FileChangeSummary
+  /** 这次落盘前的文件全文（回合基线记账用，纯内存；不进事件与日志）。 */
+  baseline?: string
 }

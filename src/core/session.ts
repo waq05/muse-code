@@ -6,14 +6,15 @@
  *
  * @module dsc/core/session
  */
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, promises as fsp } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ChatContentPart, ChatMessage, ToolCall } from './llm.js'
 import type { CollaborationMode, PlanView, TodoItemView } from '../contract.js'
 import type { GoalSnapshot } from './goal.js'
-import type { FileChangeSummary } from './tools.js'
+import { stripBaseline, type FileChangeSummary } from './tools.js'
+import { summarizeChange } from './tools/fs-tools.js'
 import { dropSessionMeta, patchSessionMeta, readSessionMeta } from './session-meta.js'
 import type { SessionMetaRecord } from './session-meta.js'
 
@@ -169,6 +170,15 @@ export class Session {
    * tool 记录里存一份，重放历史时单独交给 transcript 折成 `kind: 'changes'` 条目。
    */
   readonly fileChanges = new Map<string, FileChangeSummary>()
+  /**
+   * 回合内文件基线（codex `TurnDiffTracker` 的同款思路）：本回合第一次动某个文件时
+   * 记下「动之前的全文」，回合收尾用它和盘上现值重算一份聚合 diff——同一文件改
+   * 多刀时，界面只出一份「回合开始 vs 终态」的准确差异，而不是各刀差异的拼盘。
+   * 不落盘：回合结束即清，重启后轮尾卡回退逐刀合并显示。
+   */
+  private turnBaselines = new Map<string, string>()
+  /** 本回合动过的文件（按首次触碰顺序，轮尾聚合 diff 按这个顺序显示）。 */
+  private turnTouched: string[] = []
   /**
    * 会话状态条目（见 {@link SessionStateMap}）。
    * 不发进请求体，恢复历史会话时由 {@link Session.load} 逐行填回来。
@@ -404,7 +414,10 @@ export class Session {
         : text
     this.messages.push({ role: 'tool', content, tool_call_id: callId, ts })
     if (error !== undefined) this.toolErrors.set(callId, error)
-    if (changes !== undefined) this.fileChanges.set(callId, changes)
+    // baseline（改前全文）是循环回合基线记账的内存字段，进不了日志与旁路：
+    // 两处都在入口剥掉，上游忘了剥也漏不出去。
+    const clean = changes !== undefined ? stripBaseline(changes) : undefined
+    if (clean !== undefined) this.fileChanges.set(callId, clean)
     this.write({
       type: 'tool',
       callId,
@@ -413,10 +426,41 @@ export class Session {
       ...(images !== undefined && images.length > 0 ? { images } : {}),
       // 内存消息不带 changes（协议消息透传给端点，多字段可能被挑剔的网关判 400）；
       // 它只活在日志里，恢复会话时经 fileChanges 旁路还原成轮尾卡。
-      ...(changes !== undefined ? { changes } : {}),
+      ...(clean !== undefined ? { changes: clean } : {}),
       ...(error !== undefined ? { error } : {}),
       ts,
     })
+  }
+
+  /**
+   * 循环在每次成功的 write / edit 落库时调：本回合首次触碰这个文件就记下「动之前的全文」
+   * 当基线，之后同文件的再改不动它（要的正是回合起点，不是各刀起点）。
+   */
+  recordTurnChange(path: string, baseline: string): void {
+    if (this.turnBaselines.has(path)) return
+    this.turnBaselines.set(path, baseline)
+    this.turnTouched.push(path)
+  }
+
+  /**
+   * 回合收尾的聚合改动：逐个「本回合动过的文件」读盘上现值，与基线重算一份 diff。
+   * 读不到（被删/被挪）或算不出差异（改了又改回去）的文件跳过；取完基线即清空。
+   * 产物不带 baseline（剥干净才进事件），落盘也由调用方自理——聚合 diff 不落 jsonl。
+   */
+  async takeTurnChanges(): Promise<FileChangeSummary[]> {
+    const touched = this.turnTouched
+    this.turnTouched = []
+    const baselines = this.turnBaselines
+    this.turnBaselines = new Map()
+    const files: FileChangeSummary[] = []
+    for (const path of touched) {
+      const baseline = baselines.get(path) ?? ''
+      const current = await fsp.readFile(path, 'utf8').catch(() => null)
+      if (current === null) continue
+      const change = summarizeChange(path, baseline, current)
+      if (change !== undefined) files.push(stripBaseline(change))
+    }
+    return files
   }
 
   /**
@@ -482,6 +526,9 @@ export class Session {
   close(): void {
     this.stream?.end()
     this.stream = null
+    // 回合基线是纯内存的回合内状态：会话关掉（/new、/resume 切走）就没有意义了
+    this.turnBaselines = new Map()
+    this.turnTouched = []
   }
 
   /** 日志有没有落盘：新建但还没发过消息的会话为 false（磁盘上没有它的文件）。 */

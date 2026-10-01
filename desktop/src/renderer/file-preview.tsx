@@ -104,7 +104,7 @@ let highlighterPromise: Promise<HighlighterCoreLike> | null = null
 const loadedLangs = new Set<string>()
 
 /** 单例 highlighter：JS regex 引擎（免 oniguruma WASM），主题先空载、语言按需装。 */
-function getHighlighter(): Promise<HighlighterCoreLike> {
+export function getHighlighter(): Promise<HighlighterCoreLike> {
   highlighterPromise ??= import('shiki/core').then(async (core) =>
     core.createHighlighterCore({
       themes: [
@@ -119,7 +119,7 @@ function getHighlighter(): Promise<HighlighterCoreLike> {
 }
 
 /** 装一门语法（幂等；表里没有的 id 原样返回——调用方回落纯文本）。 */
-async function loadLang(id: string): Promise<void> {
+export async function loadLang(id: string): Promise<void> {
   if (loadedLangs.has(id)) return
   const loader = LANG_IMPORTS[id]
   if (loader === undefined) return

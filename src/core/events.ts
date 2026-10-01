@@ -38,6 +38,13 @@ export type CoreEvent =
    * adapter 折成 `kind: 'changes'` 条目，界面聚合成轮尾「文件已更改」卡。
    */
   | { type: 'tool/changes'; callId: string; change: FileChangeSummary }
+  /**
+   * 回合收尾的聚合改动（codex TurnDiffUpdatedNotification 的同位事件）：本回合动过的
+   * 每个文件出一份「回合基线 vs 盘上终态」的差异，同文件多刀合并成一条。紧跟在
+   * `turn/end` 之后发；adapter 折成 `kind: 'turnDiff'` 条目，界面优先拿它画轮尾卡。
+   * 不落盘——重启恢复后界面回退逐刀合并显示。
+   */
+  | { type: 'turn/diff'; files: FileChangeSummary[] }
   /** 这次模型请求失败、正要重试（对照 dsh 的 `model-retry` 节点）。 */
   | { type: 'model/retry'; attempt: number; reason: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number }

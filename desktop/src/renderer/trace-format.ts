@@ -95,7 +95,7 @@ export interface TraceModel {
 }
 
 /** 步骤种类的中文名（检查器标题与时间条提示用）。 */
-export const KIND_LABEL: Record<TraceStepKind | 'user' | 'changes', string> = {
+export const KIND_LABEL: Record<TraceStepKind | 'user' | 'changes' | 'turnDiff', string> = {
   tool: '工具调用',
   thinking: '思考',
   system: '系统事件',
@@ -106,6 +106,7 @@ export const KIND_LABEL: Record<TraceStepKind | 'user' | 'changes', string> = {
   user: '用户消息',
   // 对话页轮尾卡的组成数据，轨迹页不渲染它；标签留给检查器兜底（类型上仍可能碰到）
   changes: '文件已更改',
+  turnDiff: '回合文件更改',
 }
 
 /**
@@ -239,7 +240,7 @@ export function buildTraceModel(entries: readonly TranscriptEntry[]): TraceModel
     }
     if (entry.kind === 'text') continue
     // 文件改动条目同样不进轨迹：它是对话页轮尾卡的组成数据，本身不是一步执行。
-    if (entry.kind === 'changes') continue
+    if (entry.kind === 'changes' || entry.kind === 'turnDiff') continue
     const round = current ?? openRound(null)
     round.steps.push(entry)
     const ts = entryTs(entry)

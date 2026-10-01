@@ -8967,10 +8967,47 @@ body.resizing iframe {
   background: var(--dsc-neutral-page);
   border-left: 1px solid var(--dsc-stroke-2);
   display: flex;
-  flex: 0 0 clamp(380px, 42%, 720px);
+  flex: 0 0 var(--dsc-diff-pane-w, clamp(380px, 42%, 720px));
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  position: relative;
+}
+
+/* 左缘拖拽热区：贴着边框一条，hover / 拖拽中亮起（复用侧栏分界线的交互口径）。 */
+.diff-resizer {
+  bottom: 0;
+  cursor: col-resize;
+  left: -3px;
+  position: absolute;
+  top: 0;
+  width: 6px;
+  z-index: 2;
+}
+
+.diff-resizer:hover,
+.diff-resizer[data-dragging] {
+  background: color-mix(in srgb, var(--dsc-accent) 35%, transparent);
+}
+
+.diff-tool[aria-pressed='true'] {
+  background: var(--dsc-fill-quaternary);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-accent);
+}
+
+/* 「新增」徽标：卡行与面板头部共用。 */
+.diff-badge,
+.changes-badge {
+  background: var(--dsc-diff-add-bg);
+  border-radius: 4px;
+  color: var(--dsc-green);
+  flex: none;
+  font-family: var(--dsc-font-ui);
+  font-size: 11px;
+  line-height: 1;
+  margin-right: 6px;
+  padding: 2px 5px;
 }
 
 .diff-head {
@@ -9098,4 +9135,170 @@ body.resizing iframe {
 
 .diff-ctx .diff-text {
   color: var(--dsc-text-secondary);
+}
+
+/* ── split 分栏视图：一行两半（左 = 旧文件，右 = 新文件），增删只着各自半边 ── */
+.diff-split-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  line-height: 1.55;
+  min-height: 22px;
+  min-width: 100%;
+  width: max-content;
+}
+
+.diff-half {
+  display: grid;
+  grid-template-columns: 3.2em 1.2em minmax(0, 1fr);
+  min-height: 22px;
+  white-space: pre;
+}
+
+.diff-half + .diff-half {
+  border-left: 1px solid var(--dsc-stroke-2);
+}
+
+.diff-half-empty {
+  opacity: 0.4;
+}
+
+.diff-half-del {
+  background: var(--dsc-diff-remove-bg);
+}
+
+.diff-half-del .diff-no,
+.diff-half-del .diff-sign {
+  color: var(--dsc-red);
+}
+
+.diff-half-add {
+  background: var(--dsc-diff-add-bg);
+}
+
+.diff-half-add .diff-no,
+.diff-half-add .diff-sign {
+  color: var(--dsc-green);
+}
+
+.diff-half-ctx .diff-text,
+.diff-half-empty .diff-text {
+  color: var(--dsc-text-secondary);
+}
+
+/* ── 换行开关（面板头「换行」）：长行折回来而不是横向滚 ── */
+.diff-pane[data-wrap] .diff-line,
+.diff-pane[data-wrap] .diff-split-row {
+  width: auto;
+}
+
+.diff-pane[data-wrap] .diff-line,
+.diff-pane[data-wrap] .diff-half {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* ── markdown 正文里的文件提及 chip：AI 正文 inline code 提到本轮改过的文件时 ──
+   变成可点徽章（点击进预览页签；dsh producedFileMentions 的同位能力）。 */
+.mention-chip {
+  align-items: center;
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: 6px;
+  color: var(--dsc-text-primary);
+  cursor: pointer;
+  display: inline-flex;
+  font-family: var(--dsc-font-mono);
+  font-size: 0.9em;
+  gap: 4px;
+  line-height: 1.4;
+  margin: 0 1px;
+  padding: 0 6px;
+  vertical-align: baseline;
+}
+
+.mention-chip:hover {
+  border-color: var(--dsc-accent);
+  color: var(--dsc-accent);
+}
+
+/* ── 轮尾卡文件行的悬停预览卡：停 500ms 出现在行旁边（body 直挂的浮层） ── */
+.hover-preview {
+  background: var(--dsc-neutral-bg);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-panel);
+  box-shadow: var(--dsc-shadow-float);
+  color: var(--dsc-text-primary);
+  display: flex;
+  flex-direction: column;
+  max-height: min(420px, 60vh);
+  overflow: hidden;
+  position: fixed;
+  z-index: var(--dsc-z-tip);
+}
+
+.hover-preview-head {
+  align-items: center;
+  border-bottom: 1px solid var(--dsc-stroke-2);
+  display: flex;
+  flex: none;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.hover-preview-name {
+  flex: 1;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hover-preview-stat {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-size: 11px;
+}
+
+.hover-preview-body {
+  font-family: var(--dsc-font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  margin: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0;
+}
+
+.hover-preview-line {
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.hover-preview-more {
+  color: var(--dsc-text-quaternary);
+  padding: 2px 10px 0;
+}
+
+.hover-preview-open {
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--dsc-stroke-2);
+  color: var(--dsc-accent);
+  cursor: pointer;
+  flex: none;
+  font-size: var(--dsc-fs-caption);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.hover-preview-open:hover {
+  background: var(--dsc-row-hover-bg);
+}
+
+.hover-preview-loading {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  margin: 0;
+  padding: 10px 12px;
 }

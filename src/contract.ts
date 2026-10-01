@@ -269,6 +269,12 @@ export type TranscriptEntry =
    * unified 差异段（结构见 {@link DiffHunkView}），审查面板直接渲染。
    */
   | { kind: 'changes'; id: number; file: ChangedFileView; ts?: number }
+  /**
+   * 回合收尾的聚合改动（codex `turn/diff/updated` 的同位条目）：本回合动过的每个文件
+   * 一份「回合基线 vs 盘上终态」的差异，同文件多刀合一。纯内存条目——不落 jsonl，
+   * 重启恢复后界面回退逐刀合并显示（`kind: 'changes'` 照常重放）。
+   */
+  | { kind: 'turnDiff'; id: number; files: ChangedFileView[]; ts?: number }
 
 /**
  * 一轮对话为什么结束（口径就是宿主 `turn/end` 事件的 reason，见 core/events.ts）。
@@ -311,6 +317,8 @@ export interface ChangedFileView {
   hunks: DiffHunkView[]
   /** true = hunks 超过行数上限被砍过（面板据此提示「只显示前一部分」）。 */
   truncated?: boolean
+  /** `added` = 新建文件（改前不存在）；`modified` = 改已有文件。 */
+  status: 'added' | 'modified'
 }
 
 /** 会话累计 token 用量。 */

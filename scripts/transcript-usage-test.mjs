@@ -152,6 +152,68 @@ check(
   JSON.stringify(aborted.entries),
 )
 
+// ── 7. 回合聚合改动（turn/diff 事件）折成 kind:turnDiff 条目；重放不重建它 ──
+const aggregate = new Transcript()
+aggregate.reduce({ type: 'user', text: '改文件' })
+aggregate.reduce({ type: 'tool/call', callId: 'c1', name: 'edit', args: '{}' })
+aggregate.reduce({ type: 'tool/result', callId: 'c1', text: '已编辑' })
+aggregate.reduce({
+  type: 'turn/diff',
+  files: [
+    {
+      path: 'D:/demo/a.ts',
+      added: 2,
+      removed: 1,
+      status: 'modified',
+      hunks: [
+        {
+          oldStart: 1,
+          oldCount: 3,
+          newStart: 1,
+          newCount: 4,
+          lines: [
+            { kind: 'context', text: 'const a = 1', oldLine: 1, newLine: 1 },
+            { kind: 'remove', text: 'const b = 2', oldLine: 2, newLine: null },
+            { kind: 'add', text: 'const b = 20', oldLine: null, newLine: 2 },
+            { kind: 'add', text: 'const c = 3', oldLine: null, newLine: 3 },
+            { kind: 'context', text: 'export {}', oldLine: 3, newLine: 4 },
+          ],
+        },
+      ],
+    },
+  ],
+})
+aggregate.reduce({ type: 'turn/end', reason: 'completed' })
+const turnEntry = lastOf(aggregate, 'turnDiff')
+check(
+  'turn/diff 折成 kind:turnDiff 条目，files 事实完整',
+  turnEntry !== undefined
+    && turnEntry.files.length === 1
+    && turnEntry.files[0].path === 'D:/demo/a.ts'
+    && turnEntry.files[0].added === 2
+    && turnEntry.files[0].removed === 1
+    && turnEntry.files[0].status === 'modified'
+    && turnEntry.files[0].hunks[0].lines.length === 5
+    && !Object.hasOwn(turnEntry.files[0], 'baseline'),
+  JSON.stringify(turnEntry),
+)
+const replayed = new Transcript()
+replayed.replayHistory([
+  { role: 'user', content: '改文件' },
+  {
+    role: 'assistant',
+    content: '',
+    tool_calls: [{ id: 'c1', type: 'function', function: { name: 'edit', arguments: '{}' } }],
+  },
+  { role: 'tool', tool_call_id: 'c1', content: '已编辑' },
+  { role: 'assistant', content: '完成' },
+])
+check(
+  '重放历史不重建 turnDiff 条目（重启后回退逐刀合并）',
+  replayed.entries.every((entry) => entry.kind !== 'turnDiff'),
+  JSON.stringify(replayed.entries.map((entry) => entry.kind)),
+)
+
 // ── 7. 文件改动（tool/changes 事件）：实时折叠成条目，重放经 fileChanges 还原 ──
 const changes = new Transcript()
 const changeSample = {

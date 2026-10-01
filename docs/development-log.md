@@ -1017,3 +1017,17 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 验收：根 build + desktop typecheck 0 错；回归七脚本全绿（transcript-usage 含新断言、compact 53、llm-adapter 18、llm-retry 10、integration、team、settings-sections、dock-model）；宿主落盘链路 node 直测（jsonl 带 changes / load 回读 fileChanges / 内存消息不带 hunks）；实机探针（构造含 changes 的会话 jsonl 从磁盘恢复——同时验证重启恢复路径）：`card=1 counts="+2 -1" pane=open diffLines=5 add=2 del=1`，截图目检轮尾卡与右栏 diff 与 dsh 形态一致；探针数据（构造会话、临时文件）已清理。
 
 诚实边界：① 探针轮次恰逢平台限流未恢复，实时「模型真改文件」路径由宿主单测（工具 diff 计算）+ 构造会话重放（事件折叠/落盘/恢复）两段覆盖，未走端到端真模型；② 只认 write/edit 第一方调用（bash 改文件不算，与 dsh 口径一致）；③ v1 不做 split 双栏 diff、wrap 切换、原生系统打开、500ms 悬停预览、正文内联文件提及；④ 面板宽固定 clamp 不拖宽；⑤ 审查的是「那一刀」的快照——文件后来又变了面板不知道（dsh 的 turn-start/turn-end 双快照对比没搬）。
+
+## 阶段 43：diff 审查能力补齐——回合聚合、分栏/换行/高亮、悬停预览与文件提及（0.6.25）
+
+补齐 0.6.24 披露的全部边界项，并借鉴 openai/codex 的核心能力（回合级基线聚合、语法高亮降级防护）。
+
+**回合聚合（codex TurnDiffTracker 的同款思路，本轮最大增强）**：同一文件一回合改多刀，0.6.24 的卡会出多行、审查面板各刀 hunks 各自为政；现在宿主在 Session 上维护回合内基线（`turnBaselines`/`turnTouched`，首次触碰某文件记「改之前全文」），轮尾 finally 里逐文件读盘上现值与基线重算一份「回合起点 vs 终态」的聚合 diff，emit `turn/diff` 事件折成 `kind:'turnDiff'` 条目（纯内存不落盘，重启后渲染层回退逐刀合并）。三个防污染细节：baseline 挂在 `FileChangeSummary` 的内存字段上，runTool 摘给 ToolOutcome、appendTool 入口再 strip 一次（jsonl 与事件都漏不出去）；runTurn 开头捕获 session、finally 里 `this.session === session` 才发（切会话不打进新 transcript）；聚合 emit 在 turn/end 之后，靠 roundInfos「下一条 user 之前归当前轮」的口径落进本轮轮尾卡区间。改了又改回去（终态=基线）不出条目。
+
+**渲染层四件套**：① DiffPane 加 unified ⇄ split 切换（hunk 行按 remove/add run zip 配对成左右两列，缺侧补空）与换行开关（pre ⇄ pre-wrap），视图与宽度都记忆 localStorage；② diff 行语法高亮——复用 file-preview 的 shiki 单例（codeToTokens 双主题出 CSS 变量），按 hunk 整块高亮保跨行语法状态，超 2000 行/512KB 降级纯文本（抄 codex 防护线），新建 diff-highlight.ts；③ 面板左缘拖宽（复用 panels.ts 的 useWidthDrag 轮子，`--dsc-diff-pane-w` clamp 320-900）；④ 轮尾卡行悬停 500ms 出预览卡（fs-read 读文件头 24 行 + shiki 高亮 + 「打开文件」，portal 到 body；读取中/读失败都出卡不无声）。另有「新增」徽标（status: added/modified，新建文件聚合 diff 呈全加行）、审查面板「系统打开」按钮（dsc.openPath → shell.openPath）、快照语义提示（「打开」的 tip 注明审查的是修改当时快照）。
+
+**markdown 内联文件提及（dsh producedFileMentions 同位）**：助手正文 inline code 命中会话内改过的文件路径（精确或分隔符边界的后缀匹配，带 `\n` 的 fenced 块排除）渲染成可点文件徽章，点击进预览页签；块级 code 用 pre 覆盖 cloneElement 打 data-block 标记区分——无 language- 的 fence 不能靠 className 判，误判会把整块代码变 chip。
+
+验收：根 build + desktop typecheck 0 错；transcript-usage 12/12（新增 turn/diff 折条目、重放不重建 turnDiff 两断言）；新增 `scripts/turn-changes-test.mjs` 14/14（基线幂等/终态回退不出条目/close 清空/jsonl 不带 baseline/**MiniAgent 整轮集成**——假 stream 吐同文件两刀，验证 finishCall 记基线、逐刀事件照发、turn/diff 在 turn/end 后到达且两刀合一）；实机探针（构造会话回退路径 + 渲染层全链）：`rows=2 counts="+6 -1" badges=2 preview=open（文件名+行数+内容）pane=open diffLines=7 add=4 del=1 split=6 wrap=y basis="560px"`，截图目检分栏两列/新增徽标/换行高亮/系统打开按钮全部就位；探针数据（构造会话、探针文件、udata 视图偏好）已清理。顺带修了 HoverPreview 的容错：读取中/读失败都渲染提示卡，不再无声无息。
+
+诚实边界：① 探针期间 deepseek 限流未恢复，「模型真改文件走 turnDiff 聚合」的端到端由 MiniAgent 假模型直测（14 断言）+ 实机回退路径探针两段覆盖；② bash 改文件仍不归因（codex 同口径：无法精确归因时宁可缺失）；③ skill_write 不并入聚合卡（技能库有 ledger + /skills-ledger rollback 专门台账）；④ 审批弹窗内嵌 diff 预览、git 工作区 diff 模式、review 子代理、会话 fork 留后续轮次；⑤ 重启恢复后无聚合条目，卡回退逐刀合并（同文件 hunks 顺序拼接，行号以各刀为准，如实降级）。
