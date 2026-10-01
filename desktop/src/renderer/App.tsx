@@ -683,13 +683,18 @@ export function App(): JSX.Element {
                     </>
                   )}
                 </div>
-                <button
-                  className={`icon-btn dock-toggle${surface.expanded ? ' on' : ''}`}
-                  data-tip="工作区面板：开始、终端、浏览器、文件、Git"
-                  onClick={() => dockActions.setExpanded(!surface.expanded)}
-                >
-                  <IconSidebar size={15} />
-                </button>
+                {/* 侧栏开关（对照 dsh 的 ExpandButton）：只在收起时渲染。展开后右上角
+                    由 dock 页签条尾的收起钮接管同一个角落——两颗钮不同时在场，视觉上
+                    「开关永远在原位」，面板打开也不会把顶栏这颗挤得左移。 */}
+                {!surface.expanded && (
+                  <button
+                    className="icon-btn dock-toggle"
+                    data-tip="工作区面板：开始、终端、浏览器、文件、Git"
+                    onClick={() => dockActions.setExpanded(true)}
+                  >
+                    <IconSidebar size={15} />
+                  </button>
+                )}
               </div>
               {peek === null && (
                 <nav className="tabs">

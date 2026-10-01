@@ -913,3 +913,20 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 诚实边界：① 非活动**会话**的终端在切走时随之关闭（同会话内切页签/窗格不关）；② 浏览器 WebContentsView 仍是主进程单例，跨会话共用一个视图；③ 浮动页签不做；④ 分栏宽度比在两格间拖拽调，不支持更多格。
 
 发布：`desktop/dist` 重建（快捷方式吃到 0.6.19）。
+
+## 阶段 38：dock 修四件——caption 条避让原生控件 / 开关钮原位 / 收起收掉浏览器 / 图片预览（0.6.20）
+
+用户实测 0.6.19 报了四件事：① 开关钮摆放要照 dsh（展开时按钮仍在原处）；② 收起侧栏时浏览器收不掉（bug）；③ 看不到全屏按钮；④ 侧边栏要能预览不同类型的文件。
+
+根因与修法：
+
+| 问题 | 根因 | 修法 |
+| --- | --- | --- |
+| ③ 全屏钮看不见 | dock 整高顶到窗口顶，页签条（含条尾 chrome 两钮）正好骑在 caption 行高度——打包件的 `titleBarOverlay` 原生控件画在窗口右上角同一位置，两颗钮被盖住（开发模式不画原生控件，所以 0.6.19 自检截图没暴露） | dock 非全屏时自带一条 `.caption-bar`（拖拽区 + chrome-bar 底色），页签条下移一行；`.dock-strip` 行高从 `--dsc-row-h` 改对齐 `--dsc-titlebar-h`，条尾 chrome 与顶栏「新会话」行同高 |
+| ① 开关钮移动 | dock 展开（push）时 `.main` 变窄，顶栏开关钮被挤得左移一个 dock 宽度 | 照 dsh `ExpandButton` 语义：展开时顶栏那颗**不渲染**，右上角由 dock 条尾的收起钮接管同一角落；收起后 dock 滑走，顶栏钮原位回来——两个状态各一颗钮，位置相同 |
+| ② 浏览器收不掉 | dock 收起是 `translateX(100%)` 且常驻挂载；位移不改尺寸，ResizeObserver 不触发，原生 WebContentsView 浮在原地盖住正文（CSS 的 transform/visibility 管不到原生层） | 单例页签体挂载条件加 `surface.expanded`——收起即卸载 BrowserPane，cleanup 里既有的 `dsc.dockBrowser(false)` 自动收掉原生视图；再展开重挂并按新位置回报 bounds（URL 记忆在 localStorage，无感）。文件/Git 跟同规则 |
+| ④ 文件预览单一 | `fs-read` 只回 `{text}`，图片读成乱码文本 | 宿主按扩展名分流：图片（png/jpg/jpeg/gif/webp/bmp/ico/svg）回 `{kind:'image', mime, base64}`（≤5MB），其余维持 `{kind:'text'}`（≤512KB）；FilesPane 按 kind 渲染 `<img>`（格底棋盘衬托透明区、等比缩放）或 `<pre>` |
+
+验收：typecheck 0 错；宿主 + 渲染层 build 通过；`shots/integration-check.mjs`、`shots/team-check.mjs`、`scripts/settings-sections-check.mjs`、`shots/dock-model-check.mjs` 全绿；实机截图四张——`open-dark`（chrome 两钮与顶栏行同高、顶栏钮已让位）、`collapsed`（探针 `toggle-visible=true dock-collapsed=true`，顶栏钮原位回来）、`browser-cycle`（探针 `holder-when-collapsed=0 holder-reopen=1 url=https://cn.bing.com/`——收起卸载、重开回填记忆地址）、`img-preview`（`desktop/build/icon.png` 真图渲染，棋盘格底 + 预览头）。
+
+诚实边界：① 富文档（PDF/Office）与音视频仍不预览，只加了图片类；② 文件/Git 页签在收起时会随之卸载（再展开重取，目录位置不保留）——和浏览器一个规则；③ `file-row` 的图片上限 5MB、文本 512KB 不变。

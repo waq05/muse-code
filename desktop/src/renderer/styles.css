@@ -2427,15 +2427,17 @@ body.resizing iframe {
   background: color-mix(in srgb, var(--dsc-accent) 35%, transparent);
 }
 
-/* 页签条：chip（图标 + 标题 + hover 关闭点）+ 加号 + 条尾 chrome 两钮 */
+/* 页签条：chip（图标 + 标题 + hover 关闭点）+ 加号 + 条尾 chrome 两钮。
+   行高对齐顶栏标题行（--dsc-titlebar-h）：dock 自带 caption 条之后，页签条正好
+   落在顶栏「新会话」那一行的高度上，条尾收起钮与顶栏开关钮是同一个角落。 */
 .dock-strip {
   align-items: center;
   border-bottom: 1px solid var(--dsc-stroke-4);
   display: flex;
   flex-shrink: 0;
   gap: 2px;
-  min-height: var(--dsc-row-h);
-  padding: 4px 6px;
+  min-height: var(--dsc-titlebar-h);
+  padding: 3px 6px;
 }
 
 .dock-chip {
@@ -2849,6 +2851,38 @@ body.resizing iframe {
   overflow-wrap: anywhere;
 }
 
+/* 图片预览：格底衬托透明区，图片等比缩到预览框内，不撑破面板 */
+.file-preview-img {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 10px;
+  background:
+    conic-gradient(var(--dsc-stroke-4) 25%, transparent 0 50%, var(--dsc-stroke-4) 0 75%, transparent 0) 0 0 / 16px 16px;
+}
+
+.file-preview-img img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-block);
+  background: var(--dsc-bg-body);
+}
+
+.file-preview-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+}
+
 /* Git */
 .git-pane {
   flex: 1;
@@ -2964,14 +2998,9 @@ body.resizing iframe {
   font-size: var(--dsc-fs-tool);
 }
 
-/* 顶栏 dock 开关 */
+/* 顶栏 dock 开关（只在侧栏收起时渲染，展开态由 dock 条尾收起钮接管右上角） */
 .topbar .dock-toggle {
   -webkit-app-region: no-drag; /* topbar 整体是窗口拖拽区，按钮必须豁免，否则点击无效 */
-}
-
-.dock-toggle.on {
-  background: var(--dsc-control-active-bg);
-  color: var(--dsc-text-primary);
 }
 
 /* ══════════ 状态栏 ══════════ */

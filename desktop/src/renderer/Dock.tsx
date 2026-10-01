@@ -63,6 +63,16 @@ interface FsEntry {
   size: number
 }
 
+/** fs-read 的回包：kind 分流——图片走 base64 画 <img>，其余当文本画 <pre>。 */
+interface FilePreview {
+  path: string
+  kind: 'text' | 'image'
+  mime?: string
+  base64?: string
+  text?: string
+  tooLarge: boolean
+}
+
 interface GitStatus {
   branch: string
   staged: string[]
@@ -164,6 +174,10 @@ export function Dock(props: {
           onDoubleClick={() => props.onResize(420)}
         />
       )}
+      {/* 非全屏时自带的窗口控件条：贴边模式的 dock 整高顶到窗口顶，没有这条的话
+          页签条会骑进原生最小化/最大化/关闭的高度里（titleBarOverlay 画在右上角），
+          条尾 chrome 两钮在打包件里被盖住。有了它页签条正好落到顶栏行高。 */}
+      {!fullscreen && <div className="caption-bar" aria-hidden="true" />}
       <div className="dock-panes" ref={panesRef}>
         {surface.panes.map((item, index) => (
           <Pane
@@ -310,8 +324,11 @@ function Pane(props: {
               </div>
             )
           }
-          // 单例页签只在激活时挂载：浏览器是主进程单例 WebContentsView，卸载即收起
-          return visible ? (
+          // 单例页签只在「激活且面板展开」时挂载：浏览器是主进程单例 WebContentsView，
+          // 卸载即收起——dock 收起是整块滑出（常驻挂载、尺寸不变），原生层不吃 CSS 的
+          // transform/visibility，不卸载它会浮在原地盖住正文；URL 记忆在 localStorage，
+          // 再展开时重挂并按新位置回报 bounds。文件/Git 跟着同规则，省一份监听。
+          return visible && surface.expanded ? (
             <div key={tab.id} className="dock-tab-body">
               {tab.kind === 'browser' && <BrowserPane />}
               {tab.kind === 'files' && <FilesPane cwd={props.cwd} proxy={props.proxy} />}
@@ -654,7 +671,8 @@ function BrowserPane(): JSX.Element {
 function FilesPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX.Element {
   const [dir, setDir] = useState('')
   const [entries, setEntries] = useState<FsEntry[]>([])
-  const [preview, setPreview] = useState<{ path: string; text: string; tooLarge: boolean } | null>(null)
+  // kind 来自宿主 fs-read：图片（png/jpg/gif/webp/bmp/ico/svg）回 base64 画 <img>，其余当文本
+  const [preview, setPreview] = useState<FilePreview | null>(null)
   const [error, setError] = useState('')
   const root = dir === '' ? cwd : dir
 
@@ -680,7 +698,7 @@ function FilesPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX.El
   const openFile = (entry: FsEntry): void => {
     void proxy
       .dock('fs-read', { file: `${dir}\\${entry.name}` })
-      .then((data) => setPreview(data as { path: string; text: string; tooLarge: boolean }))
+      .then((data) => setPreview(data as FilePreview))
       .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
   }
 
@@ -725,7 +743,17 @@ function FilesPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX.El
             <span>{preview.path.slice(cwd.length)}</span>
             <button className="icon-btn" onClick={() => setPreview(null)}>✕</button>
           </div>
-          <pre>{preview.tooLarge ? '文件过大，仅支持预览 512KB 以内的文件' : preview.text.slice(0, 20000)}</pre>
+          {preview.kind === 'image' ? (
+            preview.tooLarge ? (
+              <div className="file-preview-empty">图片过大，仅支持预览 5MB 以内的文件</div>
+            ) : (
+              <div className="file-preview-img">
+                <img src={`data:${preview.mime};base64,${preview.base64}`} alt={preview.path} />
+              </div>
+            )
+          ) : (
+            <pre>{preview.tooLarge ? '文件过大，仅支持预览 512KB 以内的文件' : (preview.text ?? '').slice(0, 20000)}</pre>
+          )}
         </div>
       )}
     </div>

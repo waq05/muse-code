@@ -2,7 +2,7 @@
  * desktop-dock 插件：为桌面端 dock 面板提供工作区文件系统与 git 能力
  * （renderer 经 DscRuntime.dock(op, payload) 透传调用）。
  *
- * 安全边界：路径限定在宿主 cwd 内（fs-read 仅文本预览 ≤512KB）；git 全部
+ * 安全边界：路径限定在宿主 cwd 内（fs-read 文本预览 ≤512KB、图片 ≤5MB）；git 全部
  * execFile 固定子命令 + safeArg 参数净化（拒绝选项注入），无 shell。
  *
  * @module dsc/plugins/desktop-dock
@@ -40,6 +40,18 @@ function safeArg(value: unknown, allowNewline = false): string {
   if (!allowNewline && text.includes('\n')) throw new Error('非法参数：含换行')
   if (text.startsWith('-')) throw new Error('非法参数：以 - 开头')
   return text
+}
+
+/** 文件面板可直接预览的图片扩展名 → MIME（fs-read 按 kind:'image' 回 base64）。 */
+const IMAGE_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  svg: 'image/svg+xml',
 }
 
 /** 支持的终端 shell（payload.shell 白名单；spawn 首参必须是字面量——安全扫描静态规则）。 */
@@ -128,8 +140,15 @@ export const desktopDockPlugin: Plugin.Object = {
           const file = resolve(cwd, safeArg(payload.file ?? '.'))
           if (!inside(file, cwd)) throw new Error('路径超出工作目录')
           const stat = statSync(file)
-          if (stat.size > 512 * 1024) return { path: file, tooLarge: true, text: '' }
-          return { path: file, tooLarge: false, text: readFileSync(file, 'utf8') }
+          const ext = file.slice(file.lastIndexOf('.') + 1).toLowerCase()
+          const mime = IMAGE_MIME[ext]
+          if (mime !== undefined) {
+            // 图片按 base64 回给 renderer 画 <img>（SVG 也是图片路，免得当文本读成 XML）
+            if (stat.size > 5 * 1024 * 1024) return { path: file, kind: 'image', tooLarge: true, mime, base64: '' }
+            return { path: file, kind: 'image', tooLarge: false, mime, base64: readFileSync(file).toString('base64') }
+          }
+          if (stat.size > 512 * 1024) return { path: file, kind: 'text', tooLarge: true, text: '' }
+          return { path: file, kind: 'text', tooLarge: false, text: readFileSync(file, 'utf8') }
         }
 
         // ---- git（execFile 固定子命令） ----
