@@ -5,6 +5,8 @@
  * 覆盖：
  *   - 静态页与 Host 检查（占位页 200 / 域名 Host 403 / 端口不符 403）
  *   - 配对：错码 5 次锁 1 小时（429）→ 重新生成 → 换到 token + deviceId；64KB 请求体上限
+ *   - 「连接手机」动作：返回 { kind:'pair-code', code, url, expiresAt }（半小时 TTL），
+ *     返回 string 的老动作照旧只给 notice
  *   - 票据：无 token 401 / 假票据 401 / 域名 Host 升级 403 / 一次性
  *   - WS v3：hello（protocolVersion 3 + pushPublicKey）+ 首发全量；submit 之后推增量帧
  *     （新条目在 added 里），客户端按 id 合并之后能看到
@@ -436,9 +438,47 @@ try {
   console.log('宿主启动与静态页')
   await waitMessage(host, (item) => item.type === 'hello', 'hello 握手')
   const action = await hostInvoke(host, 'runSettingAction', ['remote', 'regenerate-code'])
-  check('宿主挂载了「远程控制」设置分区，能生成配对码', action.ok === true, JSON.stringify(action))
-  const codeMatch = /配对码：([A-Z2-9]{8})/.exec(action.ok === true ? String(action.value?.notice ?? '') : '')
-  check('分区动作把 8 位配对码放在提示里（码只从设置页出去）', codeMatch !== null, JSON.stringify(action.value))
+  const pairData = action.ok === true ? action.value?.data : undefined
+  check(
+    '「连接手机」动作返回结构化配对载荷（kind / code / url / expiresAt）',
+    action.ok === true && action.value?.ok === true && pairData?.kind === 'pair-code',
+    JSON.stringify(action.value),
+  )
+  // 字符表就是 pairing.ts 的 CODE_ALPHABET（大写去掉 I、O，数字 2-9），这里写死免得为一句
+  // 断言把 core 模块 import 进探针进程（那个模块一 import 就会碰到 homedir）。
+  check(
+    '载荷里的码是 8 位、字符表内，且码本体不再出现在提示条文案里',
+    typeof pairData?.code === 'string' &&
+      /^[A-HJ-NP-Z2-9]{8}$/.test(pairData.code) &&
+      !String(action.value?.notice ?? '').includes(pairData.code),
+    JSON.stringify(pairData?.code),
+  )
+  check(
+    '载荷里的 url 是带 ?code= 的完整访问地址（手机扫码打开即带码）',
+    typeof pairData?.url === 'string' && pairData.url === `http://127.0.0.1:${String(remotePort)}/?code=${String(pairData?.code)}`,
+    String(pairData?.url),
+  )
+  check(
+    '载荷里的 expiresAt 与「半小时」对齐（30 分钟，容差 10 秒）',
+    typeof pairData?.expiresAt === 'number' && Math.abs(pairData.expiresAt - Date.now() - 1_800_000) < 10_000,
+    `${String(pairData?.expiresAt)} vs ${String(Date.now() + 1_800_000)}`,
+  )
+  check(
+    '提示条文案改成「半小时内有效」',
+    String(action.value?.notice ?? '') === '配对码已生成（半小时内有效）',
+    String(action.value?.notice),
+  )
+  // 老路回归：动作返回 string 时照旧只给 notice，ok 分支不许凭空多出 data
+  const revokeAllEarly = await hostInvoke(host, 'runSettingAction', ['remote', 'revoke-all'])
+  check(
+    '动作返回 string 的老路不受影响（revoke-all 只有 notice，没有 data 字段）',
+    revokeAllEarly.ok === true &&
+      revokeAllEarly.value?.ok === true &&
+      typeof revokeAllEarly.value?.notice === 'string' &&
+      revokeAllEarly.value.notice !== '' &&
+      !('data' in revokeAllEarly.value),
+    JSON.stringify(revokeAllEarly.value),
+  )
 
   const values = await hostInvoke(host, 'getSectionValues', ['remote'])
   check(
@@ -497,13 +537,17 @@ try {
   const locked = await httpCall('/api/pair', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ code: codeMatch?.[1] ?? '', name: '我的手机' }),
+    body: JSON.stringify({ code: pairData?.code ?? '', name: '我的手机' }),
   })
   check('连错 5 次之后连对的码也被锁（429）', locked.status === 429, `${String(locked.status)} ${locked.body}`)
 
   const again = await hostInvoke(host, 'runSettingAction', ['remote', 'regenerate-code'])
-  const freshCode = /配对码：([A-Z2-9]{8})/.exec(again.ok === true ? String(again.value?.notice ?? '') : '')?.[1] ?? ''
-  check('被锁之后还能重新生成一张码', freshCode !== '' && freshCode !== codeMatch?.[1], freshCode)
+  const freshCode = String(again.ok === true ? again.value?.data?.code ?? '' : '')
+  check(
+    '被锁之后还能重新生成一张码（新码从 data.code 走，不再从文案里抠）',
+    freshCode !== '' && freshCode !== pairData?.code,
+    freshCode,
+  )
 
   const pair = await httpCall('/api/pair', {
     method: 'POST',
@@ -795,8 +839,8 @@ try {
   )
   const sessionText = collectText(join(home, '.dsc', 'sessions'))
   check(
-    '配对码没有落进会话记录（码只在设置页那张卡上出现）',
-    sessionText !== '' && freshCode !== '' && !sessionText.includes(freshCode),
+    '配对码与带码的地址都没落进会话记录（只在桌面「连接手机」弹窗里）',
+    sessionText !== '' && freshCode !== '' && !sessionText.includes(freshCode) && !sessionText.includes(`?code=${freshCode}`),
   )
   const turnHit = await waitWebhook(
     (hit) => hit.method === 'POST' && hit.body.includes('轮完成'),
@@ -857,7 +901,7 @@ try {
   // ── 12. 设备清单：每台两行 + 单独吊销 ──────────────────────────────────────
   console.log('设备清单与单独吊销')
   const third = await hostInvoke(host, 'runSettingAction', ['remote', 'regenerate-code'])
-  const thirdCode = /配对码：([A-Z2-9]{8})/.exec(third.ok === true ? String(third.value?.notice ?? '') : '')?.[1] ?? ''
+  const thirdCode = String(third.ok === true ? third.value?.data?.code ?? '' : '')
   const pair2 = await httpCall('/api/pair', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -974,7 +1018,7 @@ try {
   // ── 15. 重新配对一台设备，用它验启停 ───────────────────────────────────────
   console.log('重新配对与开关变化')
   const fourth = await hostInvoke(host, 'runSettingAction', ['remote', 'regenerate-code'])
-  const fourthCode = /配对码：([A-Z2-9]{8})/.exec(fourth.ok === true ? String(fourth.value?.notice ?? '') : '')?.[1] ?? ''
+  const fourthCode = String(fourth.ok === true ? fourth.value?.data?.code ?? '' : '')
   const pair3 = await httpCall('/api/pair', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

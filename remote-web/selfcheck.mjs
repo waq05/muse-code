@@ -9,7 +9,9 @@
  *     全量帧 → 增量帧 → 更旧的帧丢弃 → lastSeq 落盘与重连时带上 &lastSeq= →
  *     断线退避与手动重试重新取票 → invoke 参数编码与结果落地 → submit 带图片 →
  *     上传（URL 与 Bearer 头）→ 推送登记/注销 → 票据 401 触发退回登录页
- *   - storage.ts：lastSeq 记录、非法值识别、配对后清零
+ *   - storage.ts：lastSeq 记录、非法值识别、配对后清零、设备名记忆
+ *   - pairlink.ts：扫码直达（?code= 的合法/非法/缺省三态、擦地址栏、不自动提交、已配对手机那条兜底）
+ *   - 登录页（LoginPage.tsx）：文案在场、焦点与默认设备名的接线；App.tsx 只在有凭据时擦码
  *   - push.ts：urlBase64ToUint8Array 与 Buffer 交叉核对、环境判定文案、订阅流程（假 SW）
  *   - attachments.ts：附件行拼装、体积估算与格式化、缩放尺寸、压缩（假 canvas）
  *   - 产物文件：manifest.json 的关键字段、sw.js 里 push / notificationclick 两条路都在
@@ -21,8 +23,9 @@
  * @module dsc/remote-web/selfcheck
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // ── 让 node 认 .js 说明符 → .ts 源文件 ────────────────────────────────────────
@@ -170,7 +173,11 @@ const {
   loadPushEndpoint,
   savePushEndpoint,
   clearPushEndpoint,
+  loadDeviceName,
+  saveCreds,
+  clearCreds,
 } = await import('./src/lib/storage.ts')
+const { sanitizePairCode, isValidPairCode, takePairCodeFromUrl, stripPairCodeFromUrl } = await import('./src/lib/pairlink.ts')
 const { RemoteClient } = await import('./src/lib/client.ts')
 const {
   urlBase64ToUint8Array,
@@ -723,7 +730,140 @@ const hugeError = await compressImage({ type: 'image/jpeg' }, 'image/jpeg', huge
 )
 check('压缩：压完还超单张 4MB → 抛错并说清上限', typeof hugeError === 'string' && hugeError.includes('4.0 MB'), String(hugeError))
 
-// ── 6. PWA 产物文件 ──────────────────────────────────────────────────────────
+// ── 6. 登录页（扫码直达 + 设备记忆） ─────────────────────────────────────────
+
+console.log('登录页（扫码直达 + 设备记忆）')
+
+/** 假的 history：把 replaceState 的实参记下来，用来断言地址栏被擦成了什么。 */
+function fakeHistory() {
+  const calls = []
+  return {
+    calls,
+    replaceState: (data, unused, url) => {
+      calls.push({ data, unused, url })
+    },
+  }
+}
+
+check(
+  '清洗：只留字母数字、转大写、截到 8 位（手输与扫码走同一条路）',
+  sanitizePairCode(' ab-cd 12_34 ') === 'ABCD1234' && sanitizePairCode('abcdefghij') === 'ABCDEFGH',
+  `${sanitizePairCode(' ab-cd 12_34 ')} / ${sanitizePairCode('abcdefghij')}`,
+)
+check(
+  '合规判定：只有 8 位字母数字才算（少一位、多一位、带符号都不算）',
+  isValidPairCode('ABCD1234') === true &&
+    isValidPairCode('ABCD123') === false &&
+    isValidPairCode('ABCD12345') === false &&
+    isValidPairCode('ABCD-123') === false,
+)
+
+const legalHistory = fakeHistory()
+const prefilled = takePairCodeFromUrl('https://host.example:17321/?code=ABCD1234', legalHistory)
+check('合法 code：取出来就是预填值', prefilled === 'ABCD1234', String(prefilled))
+check(
+  '合法 code：地址栏的 code 被 replaceState 擦掉（截屏/分享都不带走这张码）',
+  legalHistory.calls.length === 1 && legalHistory.calls[0]?.url === '/',
+  JSON.stringify(legalHistory.calls.map((call) => call.url)),
+)
+
+const mixedHistory = fakeHistory()
+const mixed = takePairCodeFromUrl('https://h/?code=abcd1234&from=qr#top', mixedHistory)
+check('小写码照样收，预填前统一成大写', mixed === 'ABCD1234', String(mixed))
+check(
+  '擦码只删 code：其余查询串与 hash 原样保留',
+  mixedHistory.calls[0]?.url === '/?from=qr#top',
+  String(mixedHistory.calls[0]?.url),
+)
+
+for (const bad of ['ABCD123', 'ABCD12345', 'ABCD-123', '<img src=x>', '']) {
+  const badHistory = fakeHistory()
+  const got = takePairCodeFromUrl(`https://h/?code=${encodeURIComponent(bad)}`, badHistory)
+  check(
+    `非法 code「${bad}」：静默忽略（不预填），但照样从地址栏擦掉`,
+    got === null && badHistory.calls.length === 1 && String(badHistory.calls[0]?.url).includes('code') === false,
+    `got=${String(got)} url=${String(badHistory.calls[0]?.url)}`,
+  )
+}
+
+const noCodeHistory = fakeHistory()
+check(
+  'URL 里没有 code：返回 null，且不碰历史记录',
+  takePairCodeFromUrl('https://h/?from=qr', noCodeHistory) === null && noCodeHistory.calls.length === 0,
+)
+check('URL 解析不出来（不是绝对地址）：安静返回 null', takePairCodeFromUrl(':::不是地址', fakeHistory()) === null)
+
+const stripHistory = fakeHistory()
+stripPairCodeFromUrl('https://h/?code=ABCD1234&from=qr#top', stripHistory)
+check(
+  '已配对手机走的那条路：stripPairCodeFromUrl 只擦码、其余原样（登录页不挂载也有人擦）',
+  stripHistory.calls.length === 1 && stripHistory.calls[0]?.url === '/?from=qr#top',
+  String(stripHistory.calls[0]?.url),
+)
+const stripNoneHistory = fakeHistory()
+stripPairCodeFromUrl('https://h/?from=qr', stripNoneHistory)
+check('stripPairCodeFromUrl：没有 code 时不动历史记录', stripNoneHistory.calls.length === 0)
+
+/*
+ * 下面这几条读 LoginPage.tsx 的源码来断言「接线」：selfcheck 里没有 DOM，
+ * 起不了 React 组件，所以文案与调用点按源码核对（和本文件核对 sw.js 的做法一致）。
+ * 纯逻辑（取码、擦码、清洗）上面已经用真函数跑过了，这里只补「页面确实用了它」。
+ */
+const loginSource = readFileSync(fileURLToPath(new URL('./src/pages/LoginPage.tsx', import.meta.url)), 'utf8')
+check('登录页：挂载时调 takePairCodeFromUrl 取码（扫码直达接线到位）', loginSource.includes('takePairCodeFromUrl(window.location.href, window.history)'))
+check('登录页：手输也走同一个清洗函数 sanitizePairCode', loginSource.includes('sanitizePairCode(event.target.value)'))
+
+/** 抠出扫码直达那段效果的函数体（从调用点切到 `}, [])`），用它证明「只设状态、不发请求」。 */
+const effectStart = loginSource.indexOf('takePairCodeFromUrl(')
+const effectEnd = effectStart < 0 ? -1 : loginSource.indexOf('}, [])', effectStart)
+const effectBody = effectStart < 0 || effectEnd < 0 ? null : loginSource.slice(effectStart, effectEnd)
+const autoSubmitHit = effectBody === null ? '没抠到效果块' : (effectBody.match(/\bpair\(|handleSubmit\(/) ?? [''])[0]
+check('扫码到达不自动提交（这段效果里没有 pair( / handleSubmit(）', effectBody !== null && autoSubmitHit === '', autoSubmitHit)
+check('扫码到达停一步：焦点给到设备名输入框', (effectBody ?? '').includes('deviceNameRef.current?.focus()'))
+check(
+  '设备名默认值来自记忆（loadDeviceName 优先，空才用「我的手机」）',
+  loginSource.includes("useState(() => loadDeviceName() || '我的手机')"),
+)
+check('被踢回来的 notice 仍然照原样渲染（最显眼那条）', loginSource.includes('<p className="login-notice">{notice}</p>'))
+
+const appSource = readFileSync(fileURLToPath(new URL('./src/App.tsx', import.meta.url)), 'utf8')
+check(
+  'App 兜一道：有凭据（登录页不挂载）时擦掉地址栏的码，没凭据时留给登录页预填',
+  appSource.includes('stripPairCodeFromUrl(window.location.href, window.history)') &&
+    appSource.includes('if (creds !== null)'),
+)
+
+store.clear()
+saveCreds({ token: 'tok-memory', deviceId: 'dev-1', deviceName: '书房的手机' })
+check('设备记忆：配对过的设备名被记住（下次进登录页当默认值）', loadDeviceName() === '书房的手机', loadDeviceName())
+clearCreds()
+check('清凭据不动设备名（重新配对时默认值还在）', loadDeviceName() === '书房的手机', loadDeviceName())
+store.clear()
+
+check('登录页文案：说清「配对一次，这台设备以后打开即直连」', loginSource.includes('配对一次，这台设备以后打开即直连，不用重复输码'))
+check(
+  '登录页文案：配对码有效期与批 A 对齐（半小时），没有「1 小时」',
+  loginSource.includes('半小时内有效') && loginSource.includes('1 小时') === false,
+)
+
+/** remote-web 下所有源文件（含 .tsx）：配对码相关文案不许再写「1 小时」。 */
+function sourceFiles(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = join(dir, entry.name)
+    return entry.isDirectory() ? sourceFiles(full) : [full]
+  })
+}
+
+const hourHits = sourceFiles(fileURLToPath(new URL('./src', import.meta.url))).filter((file) =>
+  /1\s*小时/.test(readFileSync(file, 'utf8')),
+)
+check(
+  'remote-web 全量源文件里没有「1 小时」（锁码那 1 小时是锁，文案在宿主 src/ 那侧）',
+  hourHits.length === 0,
+  hourHits.join(', '),
+)
+
+// ── 7. PWA 产物文件 ──────────────────────────────────────────────────────────
 
 console.log('PWA 产物（manifest / service worker）')
 

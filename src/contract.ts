@@ -710,8 +710,32 @@ export interface SettingsSectionView {
 /** 分区控件的值表。 */
 export type SettingsValues = Record<string, SettingsValue>
 
+/**
+ * 配对数据的结构化载荷：桌面端据此弹「连接手机」弹窗（画码与二维码），
+ * 手机端也可以扫 {@link PairShareData.url} 直接把码带进登录框。
+ *
+ * 为什么不是只给一句 notice 文案：文案里的码一闪就没了，用户错过就得重新生成；
+ * 弹窗要一直挂在屏幕上，界面就必须拿到「码 + 可扫地址 + 过期时刻」这三个字段。
+ */
+export interface PairShareData {
+  /** 载荷种类；今天只有配对码这一种，将来加别的一起收在这条判别位上。 */
+  kind: 'pair-code'
+  /** 8 位配对码。明文只在宿主内存与这条载荷里出现，绝不落盘、不进日志。 */
+  code: string
+  /** 带 `?code=` 的完整访问地址：手机扫码打开即带上码，也可以整串复制。 */
+  url: string
+  /** 过期时刻（epoch 毫秒）；到点这张码就用不了了。 */
+  expiresAt: number
+}
+
+/** 写入或动作成功时的载荷：提示条文案之外，还可以带一份结构化数据给界面画弹窗。 */
+export interface SettingsMutationOk {
+  notice?: string
+  data?: PairShareData
+}
+
 /** 写入或动作的结果：失败原因直接显示在控件下方。 */
-export type SettingsMutation = { ok: true; notice?: string } | { ok: false; error: string }
+export type SettingsMutation = ({ ok: true } & SettingsMutationOk) | { ok: false; error: string }
 
 // ── 模型配置（设置「模型」分区的数据源） ──────────────────────────────────────
 

@@ -3,8 +3,8 @@
  *
  * 覆盖：
  *   - 偏好：合法值 / 非法值（回落或夹取）/ 未知键（不搬进来）/ writePrefs 深合并
- *   - 配对：正确码换 token、错码 5 次锁 1 小时、过期码、明文码与明文 token 都不落盘、
- *           码一次性、吊销以后 token 不认
+ *   - 配对：正确码换 token、码有效期半小时、错码 5 次锁 1 小时、过期码、明文码与明文 token
+ *           都不落盘、码一次性、吊销以后 token 不认
  *   - 票据：一次性、过期、认不出的票
  *   - 主控位：第二进程拿不到、让出后可再拿、主人死掉的锁能接管（真起子进程验的）
  *   - Host 头：IP 字面量 / localhost 放行，域名与端口不符拒绝
@@ -33,7 +33,7 @@ process.env.USERPROFILE = home
 const { readPrefs, writePrefs, REMOTE_PORT_DEFAULT, REMOTE_PORT_MIN, REMOTE_PORT_MAX } = await import(
   '../lib/core/prefs.js'
 )
-const { RemotePairing, CODE_ALPHABET, CODE_LENGTH, CODE_TTL_MS, MAX_CODE_ATTEMPTS } = await import(
+const { RemotePairing, CODE_ALPHABET, CODE_LENGTH, CODE_TTL_MS, CODE_LOCK_MS, MAX_CODE_ATTEMPTS } = await import(
   '../lib/core/remote/pairing.js'
 )
 const { TicketStore, TICKET_TTL_MS } = await import('../lib/core/remote/tickets.js')
@@ -169,18 +169,34 @@ check(
 )
 check('已经有一张没用的码时不再签发第二张', pairing.issueCode() === null)
 
+// replace：桌面「连接手机」弹窗与它的「重新生成」走这条。旧码的明文只在上一张弹窗上、
+// 宿主重画不出来，所以界面上要一直看得见一张有效码就只能换新的，且旧码必须当场作废。
+const replaced = pairing.issueCode({ replace: true })
+check('replace:true 时已有活码也照发新码', replaced !== null && replaced.code !== issued?.code, JSON.stringify(replaced))
+check('replace 之后旧码当场作废（401）', pairing.verifyCode(issued?.code ?? '', '我的手机').ok === false)
+
 const pendingText = readFileSync(join(pairDir, 'pending.json'), 'utf8')
 check('pending.json 里没有明文码（只有盐与哈希）', issued !== null && !pendingText.includes(issued.code))
 check('pending.json 里存的是 sha256（64 位十六进制）', /"hash": "[0-9a-f]{64}"/.test(pendingText))
 
 const wrong = pairing.verifyCode('ZZZZZZZZ', '我的手机')
 check('错码返回 401', wrong.ok === false && wrong.status === 401, JSON.stringify(wrong))
+check(
+  '配对失败的文案里没有「1 小时有效」这种码时效口径（码已改半小时）',
+  wrong.ok === false && !wrong.error.includes('1 小时'),
+  wrong.ok === false ? wrong.error : '',
+)
 for (let i = 1; i < MAX_CODE_ATTEMPTS; i += 1) pairing.verifyCode('ZZZZZZZZ', '我的手机')
 const locked = pairing.verifyCode(issued?.code ?? '', '我的手机')
 check(
   `连错 ${String(MAX_CODE_ATTEMPTS)} 次之后锁 1 小时：连对的码也进不来（429）`,
   locked.ok === false && locked.status === 429,
   JSON.stringify(locked),
+)
+check(
+  '锁码的 429 文案仍写「已锁 1 小时」（锁的时长没变）',
+  locked.ok === false && locked.error.includes('已锁 1 小时'),
+  locked.ok === false ? locked.error : '',
 )
 const relock = pairing.issueCode()
 check('被锁的码不算「没用过」：还能再发一张新的', relock !== null && relock.code !== issued?.code)
@@ -242,10 +258,20 @@ check('吊销一个不认识的 token 给 null', pairing.revoke('不存在的 to
   )
 }
 
-// 过期：注入假钟，码有效 1 小时
+// 过期：注入假钟，码有效半小时
 let clock = 1_000_000
 const timeMachine = new RemotePairing({ dir: join(home, 'pairing-expire'), now: () => clock })
 const expiring = timeMachine.issueCode()
+check(
+  '码的有效期是半小时（CODE_TTL_MS = 1800000）',
+  CODE_TTL_MS === 1_800_000 && expiring !== null && expiring.expiresAt - clock === CODE_TTL_MS,
+  JSON.stringify({ ttl: CODE_TTL_MS, expiresAt: expiring?.expiresAt, clock }),
+)
+check(
+  '锁码时长没跟着码改：连错超限照旧锁 1 小时（CODE_LOCK_MS = 3600000）',
+  CODE_LOCK_MS === 3_600_000,
+  String(CODE_LOCK_MS),
+)
 clock += CODE_TTL_MS + 1
 const expired = timeMachine.verifyCode(expiring?.code ?? '', '旧手机')
 check('过期的码换不到 token（401）', expired.ok === false && expired.status === 401, JSON.stringify(expired))

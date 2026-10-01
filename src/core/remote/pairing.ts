@@ -1,5 +1,5 @@
 /**
- * 配对：桌面端给一张 8 位码，手机输码换一个设备 token，之后凭 token 换 WS 票据。
+ * 配对：桌面端给一张 8 位码（半小时内有效），手机输码换一个设备 token，之后凭 token 换 WS 票据。
  *
  * 三条硬规矩：
  *   1. **明文码永不落盘、不进日志**。落盘的是 `sha256(盐 + 码)` 与随机盐；界面上那张卡
@@ -25,13 +25,13 @@ export const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 /** 码长度（与 remote-web 的输入框长度一致，改这里要两边一起改）。 */
 export const CODE_LENGTH = 8
 
-/** 码有效期 1 小时。 */
-export const CODE_TTL_MS = 3_600_000
+/** 码有效期半小时（30 分钟）。 */
+export const CODE_TTL_MS = 1_800_000
 
 /** 同一张码允许连错几次。 */
 export const MAX_CODE_ATTEMPTS = 5
 
-/** 连错超限后锁多久。 */
+/** 连错超限后锁多久（与码的有效期无关，锁就是 1 小时）。 */
 export const CODE_LOCK_MS = 3_600_000
 
 /** pending.json 里最多留几条记录（过期的会被清掉，正常只有一张活的）。 */
@@ -138,15 +138,21 @@ export class RemotePairing {
 
   /**
    * 发一张新码。
-   * @returns 新码与过期时刻；已经有一张没用过且没被锁的码时返回 null
-   *          ——同一个屏幕上同时飘着两张有效码只会让人输错，节奏上就该一次一张。
+   *
+   * @param options.replace - true = 先作废还没用掉的活码再发新的（「连接手机」弹窗与它
+   *   里面的「重新生成」走这条：明文码不落盘，旧码也重画不出来，界面要一直看得见一张码，
+   *   就只能换一张新的）。不传时保持一次一张的老语义——已经有一张没用过且没被锁的码时
+   *   返回 null，同一个屏幕上同时飘着两张有效码只会让人输错。
+   * @returns 新码与过期时刻；不传 replace 且已有活码时返回 null。
    *          被锁的码不算「没用过」：它已经废了，用户当然可以再要一张。
    */
-  issueCode(): { code: string; expiresAt: number } | null {
+  issueCode(options?: { replace?: boolean }): { code: string; expiresAt: number } | null {
     const now = this.now()
     // 顺手清掉过期与锁上的记录（锁上的永远用不了了，留着只会让状态显示看不懂）
     const kept = this.loadCodes().filter((code) => code.expiresAt > now && (code.lockedUntil ?? 0) <= now)
-    if (kept.length > 0) return null
+    if (kept.length > 0 && options?.replace !== true) return null
+    // replace：活码一条不留（它们对应的明文只在那张已经关掉的弹窗上，留着也验证不了）
+    if (options?.replace === true) kept.length = 0
     const code = Array.from({ length: CODE_LENGTH }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)] ?? 'A').join('')
     const salt = randomBytes(16).toString('hex')
     const expiresAt = now + CODE_TTL_MS

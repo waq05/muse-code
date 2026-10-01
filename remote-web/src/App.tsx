@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { ConnBar } from './components/ConnBar.js'
 import { RemoteClient } from './lib/client.js'
 import { useClientState } from './lib/hooks.js'
+import { stripPairCodeFromUrl } from './lib/pairlink.js'
 import { clearCreds, loadCreds, type DeviceCreds } from './lib/storage.js'
 import { ChatPage } from './pages/ChatPage.js'
 import { LoginPage } from './pages/LoginPage.js'
@@ -17,6 +18,18 @@ import { SessionsPage } from './pages/SessionsPage.js'
 export function App(): ReactNode {
   const [creds, setCreds] = useState<DeviceCreds | null>(() => loadCreds())
   const [notice, setNotice] = useState<string | null>(null)
+
+  /**
+   * 已经配对过的手机扫到带 `?code=` 的二维码时，不会走到登录页（上面这一层判断直接进外壳），
+   * 也就没人去擦地址栏里的那张码了。码在宿主那边半小时内有效，留在地址栏会被截屏、分享顺手带出去，
+   * 所以这里兜一道。
+   *
+   * 为什么只在有凭据时擦：没凭据时登录页自己要拿这个码预填，别抢在它前面把码擦掉。
+   * 两个条件互斥（有凭据才进外壳，没凭据才进登录页），所以不依赖 React 的效果执行顺序。
+   */
+  useEffect(() => {
+    if (creds !== null) stripPairCodeFromUrl(window.location.href, window.history)
+  }, [creds])
 
   if (creds === null) {
     return (

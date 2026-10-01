@@ -60,6 +60,7 @@ import type {
   SessionSummary,
   SettingsField,
   SettingsMutation,
+  SettingsMutationOk,
   SettingsSectionView,
   SettingsValue,
   SettingsValues,
@@ -598,8 +599,12 @@ export interface SettingsSectionSpec {
   values(): MaybePromise<SettingsValues>
   /** 控件写入；抛错或返回字符串 = 失败原因。 */
   save?(key: string, value: SettingsValue): MaybePromise<string | void>
-  /** 按钮动作；返回字符串 = 完成后的提示文案。 */
-  action?(name: string): MaybePromise<string | void>
+  /**
+   * 按钮动作；返回字符串 = 完成后的提示文案（变成长在控件下面的一行字），
+   * 返回 {@link SettingsMutationOk} = 文案之外再带一份结构化数据给界面（如「连接手机」的
+   * 配对码与二维码地址，界面据此弹窗而不是闪一条通知）。
+   */
+  action?(name: string): MaybePromise<string | void | SettingsMutationOk>
 }
 
 /** 设置服务：分区注册表 + 模型配置读写 + 偏好持久化。 */
@@ -927,6 +932,7 @@ export type {
   ModelChoiceView,
   ModelConfigView,
   Modality,
+  PairShareData,
   ProviderDraft,
   ProviderModelView,
   ProviderView,
@@ -935,6 +941,7 @@ export type {
   SessionSummary,
   SettingsField,
   SettingsMutation,
+  SettingsMutationOk,
   SettingsOption,
   SettingsSectionView,
   SettingsValue,

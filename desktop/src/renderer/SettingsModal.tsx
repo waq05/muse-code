@@ -24,6 +24,7 @@ import {
 import type {
   Modality,
   ModelConfigView,
+  PairShareData,
   ProviderDraft,
   ProviderModelView,
   ProviderView,
@@ -41,6 +42,7 @@ import type {
 } from '@dsc/runtime/contract.js'
 import { dsc, type RuntimeProxy } from './bridge.js'
 import { ArchivedView } from './ArchivedView.js'
+import { PairModal, type PairRegenerateResult } from './PairModal.js'
 import {
   BUTTON_SCALE_MAX,
   BUTTON_SCALE_MIN,
@@ -90,6 +92,11 @@ export function SettingsModal(props: {
   uiPrefs: UiPrefsView
   onUiPrefs(patch: Partial<UiPrefsView>): void
   onClose(): void
+  /**
+   * 自检截图钩子：进面板自动点一次的按钮动作（`?pair=1` → `regenerate-code`，
+   * 好把「手机连接」弹窗拉起来）。正常运行不传。
+   */
+  autoAction?: string
 }): JSX.Element | null {
   const [sections, setSections] = useState<SettingsSectionView[]>([])
   const [active, setActive] = useState('')
@@ -184,6 +191,7 @@ export function SettingsModal(props: {
               <GenericFields
                 section={section}
                 proxy={props.proxy}
+                autoAction={props.autoAction}
                 extra={
                   section.id === 'general' ? (
                     <AppearanceRows uiPrefs={props.uiPrefs} onUiPrefs={props.onUiPrefs} />
@@ -212,9 +220,19 @@ export function GenericFields(props: {
    * 加了一条规则，下拉里就多一项。光回读值不够，得让外层把整份分区重取一次。
    */
   onAction?: () => void
+  /**
+   * 进面板就自动点一次的按钮动作（自检截图钩子用，`?pair=1` 走它把「手机连接」弹窗拉起来）。
+   * 正常运行时不传，界面上没有任何自动点击。
+   */
+  autoAction?: string
 }): JSX.Element {
   const [values, setValues] = useState<SettingsValues>({})
   const [draft, setDraft] = useState<Record<string, string>>({})
+  /**
+   * 挂着的「手机连接」弹窗：宿主动作带回配对数据时打开，关掉置空。
+   * 连触发它的动作名一起记下来——弹窗里的「重新生成」要再调一次同一个动作。
+   */
+  const [pair, setPair] = useState<{ action: string; data: PairShareData } | null>(null)
 
   useEffect(() => {
     setDraft({})
@@ -244,13 +262,53 @@ export function GenericFields(props: {
     void props.proxy
       .runSettingAction(props.section.id, action)
       .then((result) => {
-        apply(result)
+        const share = pairShare(result)
+        // 配对码是「要一直看得见」的东西：回执带结构化数据就开弹窗，不再走一闪就没的 Toast
+        if (share !== null) setPair({ action, data: share })
+        else apply(result)
         // 按钮也可能改值（批准状态、启停），跟保存一样回读一次
         void props.proxy.getSectionValues(props.section.id).then(setValues).catch(() => {})
         // 按钮可能改动了控件清单本身（加了一条规则、删了一条脚本），让外层重取整份分区
         if (result.ok) props.onAction?.()
       })
       .catch((error: unknown) => toastErr(`操作失败：${text(error)}`))
+  }
+
+  // 自检钩子（`?pair=1`）：进面板后自动点一次指定动作，把「手机连接」弹窗拉起来给截图用。
+  // 只跑一次（autoAction 变了才重跑），正常运行时不传这个 prop，界面上没有自动点击。
+  const autoFired = useRef('')
+  useEffect(() => {
+    const action = props.autoAction
+    if (action === undefined || action === '' || autoFired.current === action) return
+    autoFired.current = action
+    const timer = window.setTimeout(() => act(action), 400)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.autoAction])
+
+
+  /**
+   * 弹窗里再点一次「重新生成」：调同一个宿主动作，把新码交给弹窗原地换上去。
+   *
+   * 失败有两种：宿主明确说不（还没开放、上一张码没用掉），或者宿主这一版根本不返回
+   * 结构化数据（老回执只有一句 notice）。后者退回老行为——把那句话用 Toast 报出来，
+   * 弹窗留在原地不关，用户还能再试。
+   */
+  const regeneratePair = async (action: string): Promise<PairRegenerateResult> => {
+    try {
+      const result = await props.proxy.runSettingAction(props.section.id, action)
+      if (!result.ok) return { ok: false, error: result.error }
+      const share = pairShare(result)
+      if (share === null) {
+        toastOk(result.notice ?? '已重新生成配对码')
+        return { ok: false, error: '这一版宿主没有返回配对码内容，请升级后再试' }
+      }
+      void props.proxy.getSectionValues(props.section.id).then(setValues).catch(() => {})
+      props.onAction?.()
+      return { ok: true, data: share }
+    } catch (error: unknown) {
+      return { ok: false, error: `操作失败：${text(error)}` }
+    }
   }
 
   const render = (field: SettingsField, index: number): JSX.Element => {
@@ -384,6 +442,15 @@ export function GenericFields(props: {
       )}
       {props.section.fields.map(render)}
       {props.extra}
+      {/* 弹窗自己走 portal 挂到 body 上（设置面板有 overflow 与 backdrop-filter），
+          所以它长在 JSX 的哪一层都不影响画面。 */}
+      {pair !== null && (
+        <PairModal
+          data={pair.data}
+          onRegenerate={() => regeneratePair(pair.action)}
+          onClose={() => setPair(null)}
+        />
+      )}
     </div>
   )
 }
@@ -645,6 +712,25 @@ function apply(result: SettingsMutation): void {
     return
   }
   if (result.notice !== undefined) toastOk(result.notice)
+}
+
+/**
+ * 宿主回执里的配对数据，认不出来就返回 null。
+ *
+ * 三条不认的路都要走到 null（调用方据此走老路：一句 Toast）：
+ *   - 老宿主（契约里还没有 `data` 的那一版）回执里根本没有这个字段；
+ *   - 以后 `kind` 多了别的种类，今天这个弹窗只画得了配对码；
+ *   - 字段缺失或空值（理论上新宿主不会发半截数据，但渲染层不该因为一个字段就白屏）。
+ *
+ * @param result 宿主动作的原始回执
+ * @returns 可以直接交给 PairModal 的数据；认不出时 null
+ */
+function pairShare(result: SettingsMutation): PairShareData | null {
+  if (!result.ok) return null
+  const data = result.data
+  if (data === undefined || data.kind !== 'pair-code') return null
+  if (data.code === '' || data.url === '' || Number.isFinite(data.expiresAt) === false) return null
+  return data
 }
 
 /** 把抛出来的东西压成一句话。 */

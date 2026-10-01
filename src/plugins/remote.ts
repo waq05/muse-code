@@ -8,7 +8,7 @@
  *    指纹，写法与调度锁同款）。抢不到的进程**完全休眠**：不监听、不起服务，每 30 秒回头
  *    看一眼主控位空出来没有。
  *
- * 2. 谁能进来：配对码（8 位、1 小时、错 5 次锁 1 小时）换设备 token，token 换一次性 WS
+ * 2. 谁能进来：配对码（8 位、半小时、错 5 次锁 1 小时）换设备 token，token 换一次性 WS
  *    票据，票据换连接。明文码与 token 都不落盘（只落 sha256），码也绝不进 transcript——
  *    会话 jsonl 是会被翻出来的。所有路由都查 Host 头（必须是 IP 字面量或 localhost 且端口
  *    对得上），挡 DNS rebinding：恶意网页把自己的域名解析到 127.0.0.1 也照打不进来。
@@ -1229,9 +1229,9 @@ export const remotePlugin: Plugin.Object = {
           {
             type: 'button',
             action: 'regenerate-code',
-            label: '生成配对码',
+            label: '连接手机',
             style: 'primary',
-            help: '生成一张 8 位配对码，1 小时内有效；只显示在这里，手机输错 5 次会锁 1 小时',
+            help: '点开连接弹窗：显示配对码与二维码，手机扫码或输码，半小时内有效；每次点开（或弹窗里点「重新生成」）都会换一张新码，旧码立刻作废',
           },
           { type: 'button', action: 'revoke-all', label: '吊销全部设备', style: 'ghost', help: '所有手机立刻失效，需要重新配对' },
           {
@@ -1290,13 +1290,26 @@ export const remotePlugin: Plugin.Object = {
       },
       async action(name) {
         if (name === 'regenerate-code') {
-          const issued = pairing.issueCode()
+          // replace：每次点「连接手机」（以及弹窗里的「重新生成」）都换一张新码，旧码当场作废。
+          // 为什么要作废而不是复用：明文码不落盘，旧码的明文只在上一张弹窗上，宿主重画不出来；
+          // 而这张弹窗本来就该「一直看得见一张有效码」，所以只能换新的（界面上的 help 写明了这点）。
+          const issued = pairing.issueCode({ replace: true })
           if (issued === null) {
-            return '桌面上已经有一张没用过的配对码，先去手机上把它用掉（或者等它 1 小时过期）'
+            // 理论到不了这里（replace 一定发得出来），留着当兜底
+            return '配对码签发失败，请稍后重试'
           }
-          // 码只从这里出去（设置页那张卡）：绝不写进 transcript，会话 jsonl 是会被翻出来的
-          const until = new Date(issued.expiresAt).toLocaleTimeString('zh-CN')
-          return `配对码：${issued.code}（${until} 之前有效，输错 5 次锁 1 小时）`
+          // 码只从这里出去（桌面的「连接手机」弹窗）：绝不写进 transcript，会话 jsonl 是会被翻出来的。
+          // 所以 notice 只说「生成了、半小时内有效」，码本体与可扫地址放 data，由界面画在弹窗里。
+          // addressText() 已经给的是带协议的完整地址（末尾一个斜杠），直接接查询串即可。
+          return {
+            notice: '配对码已生成（半小时内有效）',
+            data: {
+              kind: 'pair-code',
+              code: issued.code,
+              url: `${addressText()}?code=${issued.code}`,
+              expiresAt: issued.expiresAt,
+            },
+          }
         }
         if (name === 'revoke-all') {
           const count = pairing.revokeAll()

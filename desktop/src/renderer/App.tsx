@@ -206,6 +206,9 @@ export function App(): JSX.Element {
     if (page === 'plugins' || page === 'skills') setView(page)
     const section = shotParams.get('settings')
     if (section !== null && section !== '') setSettings({ open: true, section })
+    // ?pair=1 直接开设置到「远程控制」并自动点一次「连接手机」——「手机连接」弹窗
+    // （二维码 + 配对码）只有这条钩子能自动拉起来，其余入口都要人点两下
+    if (shotParams.has('pair')) setSettings({ open: true, section: 'remote' })
     // ?team=1 直接开「智能体团队」面板、?subagents=1 直接展开会话标题旁的下拉（截图钩子；
     // 侧栏那档队友清单撤掉后，原来 ?teammates=1 的位置由 ?team=1 接上）
     if (shotParams.has('team')) setTeamOpen(true)
@@ -728,6 +731,7 @@ export function App(): JSX.Element {
         open={settings.open}
         proxy={proxy}
         initial={settings.section}
+        autoAction={shotParams.has('pair') ? 'regenerate-code' : undefined}
         uiPrefs={uiPrefs}
         onUiPrefs={saveUiPrefs}
         onClose={() => setSettings((current) => ({ ...current, open: false }))}

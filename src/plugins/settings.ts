@@ -21,6 +21,7 @@ import type {
   ProviderDraft,
   SettingsField,
   SettingsMutation,
+  SettingsMutationOk,
   SettingsSectionView,
   SettingsValues,
 } from '../contract.js'
@@ -130,10 +131,27 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       }
     }
 
-    async function mutate(work: () => string | void | Promise<string | void>): Promise<SettingsMutation> {
+    /**
+     * 动作（`action()`）与 `saveProvider()` 共用的那一条：`work()` 的返回值就是成功提示。
+     *
+     * 两种形状：
+     *   - 字符串：当提示条文案（老路，绝大多数动作都走这条）；
+     *   - 对象 `{ notice, data }`：文案之外再带一份结构化数据给界面（例如「连接手机」
+     *     的配对码与二维码地址——界面要拿它弹窗，光有文案只能闪一条通知）。
+     */
+    async function mutate(
+      work: () => string | void | SettingsMutationOk | Promise<string | void | SettingsMutationOk>,
+    ): Promise<SettingsMutation> {
       try {
-        const notice = await work()
-        return { ok: true, notice: typeof notice === 'string' && notice !== '' ? notice : undefined }
+        const result = await work()
+        if (result !== null && typeof result === 'object') {
+          return {
+            ok: true,
+            notice: typeof result.notice === 'string' && result.notice !== '' ? result.notice : undefined,
+            data: result.data,
+          }
+        }
+        return { ok: true, notice: typeof result === 'string' && result !== '' ? result : undefined }
       } catch (error) {
         return { ok: false, error: err(error) }
       }

@@ -7663,3 +7663,120 @@ body.resizing iframe {
     animation: none;
   }
 }
+
+/* ── 手机连接弹窗（PairModal）────────────────────────────────────────────────
+ * 结构见 desktop/src/renderer/PairModal.tsx。外层遮罩与卡片是原语层现成的
+ * （styles/primitives.css 的 .dsc-overlay / .dsc-overlay__card），这里只画卡内五块：
+ * 二维码、配对码行、可扫地址行、倒计时、动作行。值全走令牌，深浅主题共用这一份。
+ * 为什么二维码自己不铺白底：qrcode 生成时 light 传的是全透明，露出的就是 .pair-qr
+ * 那层卡片底色——写死白底在浅色主题下反而会糊成一块。 */
+.pair-card {
+  --card-w: 26rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsc-sp-4);
+  padding: var(--dsc-sp-5);
+}
+
+.pair-head {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--dsc-sp-3);
+}
+
+.pair-head-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--dsc-sp-1);
+  min-width: 0;
+}
+
+.pair-title {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-title);
+  margin: 0;
+}
+
+.pair-sub {
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-caption);
+  margin: 0;
+}
+
+.pair-qr {
+  align-items: center;
+  background: var(--dsc-bg-card);
+  border: 1px solid var(--dsc-stroke-float);
+  border-radius: var(--dsc-r-card);
+  display: grid;
+  justify-items: center;
+  padding: var(--dsc-sp-4);
+}
+
+/* 像素级图案别让浏览器做平滑插值，糊了手机更难对焦 */
+.pair-qr-img {
+  display: block;
+  height: 220px;
+  image-rendering: pixelated;
+  width: 220px;
+}
+
+.pair-qr-hold {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  padding: var(--dsc-sp-6) var(--dsc-sp-4);
+  text-align: center;
+}
+
+.pair-code-row {
+  align-items: center;
+  display: flex;
+  gap: var(--dsc-sp-3);
+  justify-content: center;
+}
+
+.pair-code {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-hero);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+
+/* 过期的码与二维码一起压暗：这里只降不透明度，不换配色——
+ * 二维码是图片，换色得重画一张，压暗一条规则两处都盖住了。 */
+.pair-qr.expired,
+.pair-code-row.expired {
+  filter: grayscale(1);
+  opacity: 0.4;
+}
+
+.pair-url {
+  margin: 0;
+}
+
+.pair-url .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pair-count {
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-caption);
+  text-align: center;
+}
+
+.pair-count.expired {
+  color: var(--dsc-red);
+}
+
+.pair-error {
+  margin: 0;
+}
+
+.pair-actions {
+  display: flex;
+  gap: var(--dsc-sp-2);
+  justify-content: flex-end;
+}
