@@ -20,6 +20,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { dsc, type RuntimeProxy } from './bridge.js'
+import { Select } from './components/Select.js'
 import { readTerminalFontSize, readTerminalTheme, watchAppearance } from './components/terminalTheme.js'
 import {
   IconBranch,
@@ -597,13 +598,12 @@ function TerminalPane(props: { cwd: string; proxy: RuntimeProxy; visible: boolea
     <div className="term-pane">
       <div className="term-bar">
         <span className="term-bar-label">Shell</span>
-        <select value={shell} onChange={(event) => pickShell(event.target.value as ShellValue)}>
-          {SHELL_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={shell}
+          options={SHELL_OPTIONS}
+          onPick={pickShell}
+          ariaLabel="终端 Shell"
+        />
       </div>
       <div ref={host} className="term-host" />
       {session?.exited === true && <div className="term-exited">会话已退出，重新打开面板或切换会话后可新建</div>}

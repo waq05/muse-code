@@ -115,6 +115,9 @@ export function App(): JSX.Element {
     processFold: 'standard',
     reasoningDefaultOpen: false,
     toolDefaultOpen: false,
+    // 分组展开态与会话手动顺序：首帧空表，宿主回读到了再换成真值。
+    sessionExpansion: {},
+    sessionOrder: {},
   }))
   // 最近用过的工作目录：切过去但还没发过消息的工作区也要能在侧栏看到
   const [recentCwds, setRecentCwds] = useState<string[]>([])

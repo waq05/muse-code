@@ -54,6 +54,7 @@ import {
   normalizeFontScale,
 } from './appearance.js'
 import { confirmAction } from './components/confirm.js'
+import { Select } from './components/Select.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { SkillsView } from './SkillsView.js'
 import { PresetsPanel } from './PresetsPanel.js'
@@ -390,21 +391,18 @@ export function GenericFields(props: {
             {field.help !== undefined && <div className="setting-help">{field.help}</div>}
           </div>
           <div className="setting-control">
-            <select
+            <Select
               className="setting-select"
               value={current}
-              onChange={(event) => commit(field.key, event.target.value)}
-            >
-              {field.options.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-              {/* 宿主返回了选项外的值也要看得见，不能悄悄显示成第一项 */}
-              {!field.options.some((option) => option.value === current) && current !== '' && (
-                <option value={current}>{current} · 未识别</option>
-              )}
-            </select>
+              options={
+                field.options.some((option) => option.value === current) || current === ''
+                  ? field.options
+                  // 宿主返回了选项外的值也要看得见，不能悄悄显示成第一项
+                  : [...field.options, { value: current, label: `${current} · 未识别` }]
+              }
+              onPick={(next) => commit(field.key, next)}
+              ariaLabel={field.label}
+            />
           </div>
         </div>
       )
@@ -723,17 +721,12 @@ function Dropdown<T extends string>(props: {
   onPick(value: T): void
 }): JSX.Element {
   return (
-    <select
+    <Select
       className="setting-select"
       value={props.value}
-      onChange={(event) => props.onPick(event.target.value as T)}
-    >
-      {props.options.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
+      options={props.options}
+      onPick={props.onPick}
+    />
   )
 }
 
@@ -821,34 +814,32 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
         <div className="setting-label">默认模型</div>
         <div className="setting-control">
           <div className="model-default">
-            <select
+            <Select
               className="setting-select"
               value={config.defaultProvider}
-              onChange={(event) => {
-                const provider = config.providers.find((entry) => entry.name === event.target.value)
+              options={
+                config.providers.length === 0
+                  ? [{ value: '', label: '暂无端点' }]
+                  : config.providers.map((entry) => ({ value: entry.name, label: entry.displayName || entry.name }))
+              }
+              onPick={(next) => {
+                const provider = config.providers.find((entry) => entry.name === next)
                 const first = provider?.models[0]?.id ?? ''
-                if (first !== '') write(props.proxy.setDefaultModel(event.target.value, first))
+                if (first !== '') write(props.proxy.setDefaultModel(next, first))
               }}
-            >
-              {config.providers.length === 0 && <option value="">暂无端点</option>}
-              {config.providers.map((entry) => (
-                <option key={entry.name} value={entry.name}>
-                  {entry.displayName || entry.name}
-                </option>
-              ))}
-            </select>
-            <select
+              ariaLabel="默认端点"
+            />
+            <Select
               className="setting-select"
               value={config.defaultModel}
               disabled={defaultProvider === undefined || defaultProvider.models.length === 0}
-              onChange={(event) => write(props.proxy.setDefaultModel(config.defaultProvider, event.target.value))}
-            >
-              {(defaultProvider?.models ?? []).map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name || model.id}
-                </option>
-              ))}
-            </select>
+              options={(defaultProvider?.models ?? []).map((model) => ({
+                value: model.id,
+                label: model.name || model.id,
+              }))}
+              onPick={(next) => write(props.proxy.setDefaultModel(config.defaultProvider, next))}
+              ariaLabel="默认模型"
+            />
           </div>
           <div className="setting-help">当前会话的下一次请求就用新值。</div>
         </div>
@@ -1389,17 +1380,13 @@ function ModelRow(props: {
             </button>
           ))}
         </span>
-        <select
+        <Select
           className="setting-select cap-param"
           value={model.thinkingParam}
-          onChange={(event) => props.onPatch({ thinkingParam: event.target.value as ThinkingParam })}
-        >
-          {THINKING_PARAMS.map((param) => (
-            <option key={param} value={param}>
-              {THINKING_PARAM_LABELS[param].label}
-            </option>
-          ))}
-        </select>
+          options={THINKING_PARAMS.map((param) => ({ value: param, label: THINKING_PARAM_LABELS[param].label }))}
+          onPick={(next) => props.onPatch({ thinkingParam: next })}
+          ariaLabel="思考参数"
+        />
         {model.thinkingParam === 'reasoning-effort' && (
           <span className="cap-wire">
             <span className="cap-label">线上值</span>

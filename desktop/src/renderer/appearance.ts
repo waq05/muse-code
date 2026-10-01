@@ -139,7 +139,10 @@ export function normalizeUiPrefs(prefs: UiPrefsView): UiPrefsView {
     // 两个默认态开关只有 true 才算开：老宿主回读里没有这两项（undefined），
     // 判 `=== true` 让「缺项」与「明确的 false」落到同一个结果上。
     reasoningDefaultOpen: prefs.reasoningDefaultOpen === true,
-    toolDefaultOpen: prefs.toolDefaultOpen === true
+    toolDefaultOpen: prefs.toolDefaultOpen === true,
+    // 分组展开态与会话手动顺序：老宿主回读里没有就给空表，别让侧栏读 undefined。
+    sessionExpansion: prefs.sessionExpansion ?? {},
+    sessionOrder: prefs.sessionOrder ?? {}
   }
 }
 

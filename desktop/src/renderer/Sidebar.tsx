@@ -1,13 +1,18 @@
 /**
  * 侧栏：品牌区、新会话、工作区分组的会话列表、底部工作目录与用量。
  *
- * 工作区交互对照 dsh 桌面端左栏：
- *   - 点工作区名 = 切到那个工作目录（宿主随之重启）；点左侧箭头 = 展开/折叠；
- *   - 行可拖动排序（顺序写 `~/.dsc/settings.json`），排过一次后不再自动把活动组置顶；
- *   - hover 出现操作按钮，挂成贴在会话数量徽标左侧的浮层（不进文档流，徽标不跳位）：
- *     工作区行是「在此新建会话」+ `···` 菜单，会话行是 `···` 菜单 + 归档 + 置顶；
- *   - 会话行拿到焦点后可用 Ctrl+Alt+R 改名、Ctrl+Alt+F 分叉、Ctrl+Shift+A 归档。
- * 快捷键刻意绑在行元素上而不是全局，避免和输入框抢键。
+ * 工作区交互对齐 dsh 桌面端（ui-workspace 包）：
+ *   - 点工作区行 = 只切换它自己的展开/收起，别的组不跟着动；切换工作区靠
+ *     点它的会话（跨区打开）或行尾「新建会话」（宿主重启换 cwd）；
+ *   - 展开状态按工作区持久化在 `uiPrefs.sessionExpansion`，当前工作区（树模式
+ *     连同祖先）自动展开并落盘，重开应用原样恢复；
+ *   - 「手动排序」档：工作区行拖动排序（顺序写 workspaceOrder），会话行在
+ *     置顶块内互拖（顺序写 sessionOrder）；
+ *   - 每组默认显示 5 条会话，展开剩余按 +5 增量走到底，再点「收起」折回；
+ *   - 会话行：单击打开、双击标题改名，行尾时间戳与操作钮在 hover 时互换，
+ *     置顶标记贴行尾（dsh 同位）。
+ * 快捷键刻意绑在行元素上而不是全局，避免和输入框抢键（Ctrl+Alt+R 改名、
+ * Ctrl+Alt+F 分叉、Ctrl+Shift+A 归档）。
  *
  * 这一档只放自己的会话：队友名册（原来「会话 | 队友」双 tab 的右边那半）连同运行记录
  * 一起搬到了会话标题旁的「智能体团队」，这里不再认识队友这件事。
@@ -28,8 +33,6 @@ import {
   IconBolt,
   IconCalendar,
   IconCheck,
-  IconChevronDown,
-  IconChevronRight,
   IconClock,
   IconClose,
   IconCoins,
@@ -40,6 +43,7 @@ import {
   IconFolderOpen,
   IconGear,
   IconMore,
+  IconNewChat,
   IconPin,
   IconPlus,
   IconPuzzle,
@@ -49,6 +53,7 @@ import {
   IconSidebar,
   IconSort,
   IconSwap,
+  IconTriangleRightFill,
   IconTree,
 } from './icons.js'
 
@@ -94,10 +99,16 @@ export function Sidebar(props: {
   /** 侧栏拖宽落盘（null = 双击复位成默认宽）。 */
   onSidebarResize(width: number | null): void
 }): JSX.Element {
-  /** 活动工作区默认展开的会话条数（其余收进「展开剩余」）。 */
+  /** 每组默认露出的会话条数（其余收进「展开剩余」，dsh 的 COLLAPSED_SESSION_LIMIT）。 */
   const PREVIEW_COUNT = 5
-  const [manualOpen, setManualOpen] = useState<Set<string>>(new Set())
-  const [showAll, setShowAll] = useState(false)
+  /**
+   * 展开态的本地即时层：点一下就生效，不等宿主落盘回读（`uiPrefs.sessionExpansion`
+   * 是异步回来的真值层，本地没有的键才读它）。dsh 的 groupExpansion 也是这个
+   * 「写穿 + 本地读」的形状。
+   */
+  const [localExpansion, setLocalExpansion] = useState<Record<string, boolean>>({})
+  /** 每组露出的会话条数（cwd → 条数；缺省 PREVIEW_COUNT）。不落盘，收组即重置（dsh 同）。 */
+  const [sessionLimits, setSessionLimits] = useState<Record<string, number>>({})
   const [searching, setSearching] = useState(false)
   const [query, setQuery] = useState('')
   /** 打开着 `···` 菜单的行（工作区行是 `w:<cwd>`，会话行是 `s:<路径>`）。 */
@@ -114,6 +125,16 @@ export function Sidebar(props: {
   const [dragCwd, setDragCwd] = useState<string | null>(null)
   /** 拖动时的落点：插到这一组工作区之前（after=false）还是之后（after=true）。 */
   const [dropAt, setDropAt] = useState<{ cwd: string; after: boolean } | null>(null)
+  /**
+   * 会话行拖拽（manual 档）：来源（cwd + 路径 + 是否置顶）与当前落点。
+   * 置顶行只能在置顶块内互拖（dsh 的 pinned 块约束），跨组拖动不收。
+   */
+  const [sessDrag, setSessDrag] = useState<{
+    cwd: string
+    id: string
+    pinned: boolean
+    over: { id: string; half: 'before' | 'after' } | null
+  } | null>(null)
   /**
    * 待新建会话的目标工作区。切换工作目录要重启宿主（新会话的 cwd 由宿主启动时的
    * 目录决定），而 App 的 onSwitchCwd 不返回 Promise，所以只能先登记目标目录，
@@ -156,12 +177,32 @@ export function Sidebar(props: {
   const group = props.uiPrefs.sessionGroup
   const archived = props.uiPrefs.archivedFilter
 
-  const sortedSessions = (list: SessionSummary[]): SessionSummary[] =>
-    [...list].sort((a, b) => {
+  /**
+   * 会话行排序：置顶块照旧排最前（置顶时间倒序）；manual 档按 `sessionOrder`
+   * 里拖出来的顺序走（dsh 的 reconcileManualOrder 语义——表里没有的会话按
+   * 最近使用接在所属置顶块末尾），其余档按时间。cwd 缺省（单列表）没有拖拽序。
+   */
+  const orderedSessions = (cwd: string | undefined, list: SessionSummary[]): SessionSummary[] => {
+    const sorted = [...list].sort((a, b) => {
       if ((a.pinnedAt ?? 0) !== (b.pinnedAt ?? 0)) return (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0)
-      // 「手动排序」只管工作区那一级（会话行拖不了），所以会话行按最近写入排。
       return sort === 'created' ? b.createdAt - a.createdAt : b.updatedAt - a.updatedAt
     })
+    if (sort !== 'manual' || cwd === undefined) return sorted
+    const saved = props.uiPrefs.sessionOrder[cwd]
+    if (saved === undefined || saved.length === 0) return sorted
+    const rank = new Map(saved.map((id, index) => [id, index]))
+    // 置顶块约束：拖拽只在同一块内进行，落盘序也只在块内生效，两块之间仍是置顶在前。
+    const weave = (part: SessionSummary[]): SessionSummary[] =>
+      [...part].sort((a, b) => {
+        const ra = rank.get(a.id)
+        const rb = rank.get(b.id)
+        if (ra !== undefined && rb !== undefined) return ra - rb
+        if (ra !== undefined) return -1
+        if (rb !== undefined) return 1
+        return 0
+      })
+    return [...weave(sorted.filter((session) => session.pinnedAt !== undefined)), ...weave(sorted.filter((session) => session.pinnedAt === undefined))]
+  }
 
   /** 归档筛选：hide 只看活动区，only 只看归档区，show 两区并成一份列表。 */
   const keepArchived = (session: SessionSummary): boolean =>
@@ -192,7 +233,7 @@ export function Sidebar(props: {
     const lastUsed = (list: SessionSummary[]): number => list.reduce((max, s) => Math.max(max, s.updatedAt), 0)
     const lastCreated = (list: SessionSummary[]): number => list.reduce((max, s) => Math.max(max, s.createdAt), 0)
     const sorted = visible
-      .map(([cwd, list]) => [cwd, sortedSessions(list)] as [string, SessionSummary[]])
+      .map(([cwd, list]) => [cwd, orderedSessions(cwd, list)] as [string, SessionSummary[]])
       .sort((a, b) => {
         if (sort === 'manual') {
           // 手动排过序就完全按手动顺序（活动组不再抢位）；没排过则活动组置顶，其余按最近使用
@@ -222,40 +263,61 @@ export function Sidebar(props: {
       (node): WorkGroup => ({ ...node, sessions: lists.get(node.cwd) ?? [] }),
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.sessions, props.recentCwds, props.cwd, order, aliases, trimmed, sort, group, archived])
+  }, [props.sessions, props.recentCwds, props.cwd, order, aliases, trimmed, sort, group, archived, props.uiPrefs.sessionOrder])
 
   const isActiveGroup = (cwd: string): boolean => cwd === props.cwd
   /** 树里带子分组的行（折叠它要连带收起后代，且默认展开）。 */
   const parents = useMemo(() => new Set(groups.filter((item) => item.hasChildren).map((item) => item.cwd)), [groups])
 
+  /**
+   * 展开真值（dsh 的 groupExpansion 语义）：本地即时层 → 宿主落盘层 → 默认档
+   * （树模式的父分组展开，其余收起）。键缺失才谈默认，所以点过的组记住自己的
+   * 选择，别的组不会被牵连；搜索时照旧全部展开。
+   */
   const isExpanded = (cwd: string): boolean => {
     if (trimmed !== '') return true
-    // 树里的父分组默认展开：折叠状态归 `!cwd` 管
-    if (group === 'tree' && parents.has(cwd)) return !manualOpen.has(`!${cwd}`)
-    if (isActiveGroup(cwd)) return !manualOpen.has(`!${cwd}`)
-    return manualOpen.has(cwd)
+    const explicit = localExpansion[cwd] ?? props.uiPrefs.sessionExpansion[cwd]
+    if (explicit !== undefined) return explicit
+    return group === 'tree' && parents.has(cwd)
   }
 
+  /** 切换一组的展开态：本地立即生效，同时写进 uiPrefs 落盘；别的组一个不碰。 */
   const toggle = (cwd: string): void => {
-    setManualOpen((current) => {
-      const next = new Set(current)
-      const defaultsOpen = isActiveGroup(cwd) || (group === 'tree' && parents.has(cwd))
-      if (isExpanded(cwd)) {
-        if (defaultsOpen) next.add(`!${cwd}`)
-        next.delete(cwd)
-      } else {
-        next.delete(`!${cwd}`)
-        next.add(cwd)
-      }
-      return next
-    })
+    const next = !isExpanded(cwd)
+    setLocalExpansion((current) => ({ ...current, [cwd]: next }))
+    props.onUiPrefs({ sessionExpansion: { ...props.uiPrefs.sessionExpansion, [cwd]: next } })
+    // 收组时把「展开剩余」的进度折回默认档（dsh：收组重置本组限额）
+    setSessionLimits((limits) => ({ ...limits, [cwd]: PREVIEW_COUNT }))
   }
+
+  // 当前工作区（树模式连同祖先链）自动展开并落盘——dsh 的 setGroupExpanded(currentGroup, true)：
+  // 点开哪个工作区的会话，那个组就保持展开，切走再回来也不会塌。列表加载完（groups
+  // 变化）也要补一次：树模式的祖先链要等分组算出来才知道。
+  useEffect(() => {
+    if (props.cwd === '') return
+    const chain = [props.cwd]
+    if (group === 'tree') {
+      for (const item of groups) {
+        if (item.cwd === props.cwd) chain.push(...item.ancestors)
+      }
+    }
+    const patch: Record<string, boolean> = {}
+    for (const key of chain) {
+      const explicit = localExpansion[key] ?? props.uiPrefs.sessionExpansion[key]
+      if (explicit !== true) patch[key] = true
+    }
+    if (Object.keys(patch).length === 0) return
+    setLocalExpansion((current) => ({ ...current, ...patch }))
+    props.onUiPrefs({ sessionExpansion: { ...props.uiPrefs.sessionExpansion, ...patch } })
+    // onUiPrefs 是 App 每次渲染新建的箭头函数，只认 cwd/group/groups 这几个真值。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.cwd, group, groups])
 
   /** 祖先里只要有一个被折叠，这一组就不出现在列表里。 */
   const hiddenByAncestor = (item: WorkGroup): boolean => item.ancestors.some((ancestor) => !isExpanded(ancestor))
 
   /** 单列表：不分工作区，所有会话混成一条按排序方式排好的流。 */
-  const flatSessions = sortedSessions(groups.flatMap((item) => item.sessions))
+  const flatSessions = orderedSessions(undefined, groups.flatMap((item) => item.sessions))
 
   /** 视图选项菜单的三组（对照 dsh 的「分组方式 / 排序方式 / 筛选会话」）。 */
   const viewSections: { label: string; items: { id: string; text: string; icon: JSX.Element; active: boolean }[] }[] = [
@@ -293,10 +355,10 @@ export function Sidebar(props: {
     setViewMenu(null)
   }
 
-  const activateGroup = (cwd: string): void => {
+  /** 点工作区行 = 只切换它自己的展开/收起（dsh 语义，别的组不牵连）；刚拖完不触发。 */
+  const clickGroup = (cwd: string): void => {
     if (justDragged.current === true) return
-    if (isActiveGroup(cwd)) toggle(cwd)
-    else props.onSwitchCwd(cwd)
+    toggle(cwd)
   }
 
   /**
@@ -356,6 +418,40 @@ export function Sidebar(props: {
     setTimeout(() => {
       justDragged.current = false
     }, 150)
+  }
+
+  /** 会话行拖拽的行内落点（dsh 的 rowHalf：指针在行的上/下半段）。 */
+  const sessRowHalf = (event: { clientY: number; currentTarget: HTMLElement }): 'before' | 'after' => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+  }
+
+  /**
+   * 会话行拖拽收尾（dsh 的 sessionDragOrder 语义）：把来源会话插到落点之前/之后，
+   * 保存这一组的完整会话顺序。置顶块约束由拖拽侧保证（只允许同块目标），这里再
+   * 按块校验一遍插入位，跨块的落点直接丢弃。
+   */
+  const commitSessDrag = (): void => {
+    const current = sessDrag
+    setSessDrag(null)
+    if (current === null || current.over === null) return
+    const { cwd, id: sourceId, pinned, over } = current
+    if (over.id === sourceId) return
+    const group = groups.find((item) => item.cwd === cwd)
+    if (group === undefined) return
+    const ordered = orderedSessions(cwd, group.sessions)
+    const full = ordered.map((session) => session.id)
+    const section = ordered.filter((session) => (session.pinnedAt !== undefined) === pinned)
+    const sourceIndex = section.findIndex((session) => session.id === sourceId)
+    if (sourceIndex === -1) return
+    const withoutSource = section.filter((session) => session.id !== sourceId)
+    const insertAt = withoutSource.findIndex((session) => session.id === over.id) + (over.half === 'after' ? 1 : 0)
+    if (insertAt === sourceIndex) return
+    const next = full.filter((id) => id !== sourceId)
+    const targetIndex = next.indexOf(over.id)
+    if (targetIndex === -1) return
+    next.splice(targetIndex + (over.half === 'after' ? 1 : 0), 0, sourceId)
+    props.onUiPrefs({ sessionOrder: { ...props.uiPrefs.sessionOrder, [cwd]: next } })
   }
 
   const startRename = (key: string, kind: 'workspace' | 'session', value: string): void => {
@@ -497,22 +593,30 @@ export function Sidebar(props: {
    * 会话行：分组列表、单列表、归档区共用这一份渲染。
    * 归档行置灰，点开被拦下（要先用行尾的「恢复」把它移回活动区），行操作也跟着换成恢复。
    */
-  const renderSession = (session: SessionSummary): JSX.Element => {
+  const renderSession = (session: SessionSummary, groupCwd?: string): JSX.Element => {
     const sKey = `s:${session.id}`
     const isArchived = session.archivedAt !== undefined
     const blocked = (): void => {
       toastErr('这个会话已归档：先点行尾的「恢复」再打开')
     }
+    // 会话行拖拽（manual 档）：只在同一组、同一置顶块内互拖；归档行不拖。
+    const draggable = sort === 'manual' && !isArchived && editing === null && groupCwd !== undefined
+    const dragCompatible =
+      sessDrag !== null && groupCwd !== undefined && sessDrag.cwd === groupCwd && sessDrag.pinned === (session.pinnedAt !== undefined)
+    const dropMark =
+      sessDrag !== null && sessDrag.over !== null && sessDrag.over.id === session.id ? sessDrag.over.half : null
     return (
       <div
         key={session.id}
-        className={`sess-item${isArchived ? ' archived' : ''}${session.id.endsWith(`${props.activeSessionId ?? '#'}.jsonl`) ? ' active' : ''}`}
+        className={`sess-item${isArchived ? ' archived' : ''}${session.id.endsWith(`${props.activeSessionId ?? '#'}.jsonl`) ? ' active' : ''}${
+          dropMark === 'before' ? ' drop-above' : ''
+        }${dropMark === 'after' ? ' drop-below' : ''}`}
         role="button"
         tabIndex={0}
         data-tip={
           isArchived
             ? `${session.title ?? '新会话'}（已归档）；恢复后才能在对话里打开`
-            : `${session.title ?? '新会话'}；Ctrl+Alt+R 改名 · Ctrl+Alt+F 分叉 · Ctrl+Shift+A 归档`
+            : `${session.title ?? '新会话'}；双击标题改名 · Ctrl+Alt+F 分叉 · Ctrl+Shift+A 归档`
         }
         onClick={() => {
           if (isArchived) blocked()
@@ -532,12 +636,38 @@ export function Sidebar(props: {
           event.preventDefault()
           setMenu(sKey)
         }}
+        draggable={draggable}
+        onDragStart={(event: DragEvent<HTMLDivElement>) => {
+          event.dataTransfer.effectAllowed = 'move'
+          event.dataTransfer.setData('text/plain', session.id)
+          setSessDrag({ cwd: groupCwd ?? '', id: session.id, pinned: session.pinnedAt !== undefined, over: null })
+        }}
+        onDragEnd={() => commitSessDrag()}
+        onDragOver={
+          dragCompatible
+            ? (event: DragEvent<HTMLDivElement>) => {
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'move'
+                const half = sessRowHalf(event)
+                setSessDrag((current) =>
+                  current === null || current.over?.id === session.id && current.over.half === half
+                    ? current
+                    : { ...current, over: { id: session.id, half } },
+                )
+              }
+            : undefined
+        }
+        onDrop={
+          dragCompatible
+            ? (event: DragEvent<HTMLDivElement>) => {
+                event.preventDefault()
+                commitSessDrag()
+              }
+            : undefined
+        }
       >
-        {session.pinnedAt !== undefined && (
-          <span className="pin-mark" data-tip="已置顶">
-            <IconPin size={11} />
-          </span>
-        )}
+        {/* dsh 的 16px 前导槽：现在没有会话级运行状态可画，留空占位撑住几何 */}
+        <span className="row-slot" aria-hidden />
         {editing?.key === sKey ? (
           <input
             className="row-rename"
@@ -552,18 +682,32 @@ export function Sidebar(props: {
             }}
           />
         ) : (
-          <span className="title">{session.title ?? '新会话'}</span>
+          <span
+            className="title"
+            onDoubleClick={(event) => {
+              // 双击标题改名（dsh 行为）；改名输入框里的双击选词不外溢。
+              event.stopPropagation()
+              if (!isArchived) startRename(sKey, 'session', session.title ?? '')
+            }}
+          >
+            {session.title ?? '新会话'}
+          </span>
         )}
-        {/* 归档行的时间显示归档时刻：那才是它在这一档里排队的依据。 */}
+        {/* 归档行的时间显示归档时刻：那才是它在这一档里排队的依据。
+            行尾时间戳与操作钮占同一格，hover 时互换（dsh 的 time ↔ rowActions）。 */}
         <span className="when">
           {relative(sort === 'created' ? session.createdAt : (session.archivedAt ?? session.updatedAt))}
         </span>
-        <span className="row-actions">
+        {session.pinnedAt !== undefined && (
+          <span className="pin-mark" data-tip="已置顶">
+            <IconPin size={12} />
+          </span>
+        )}
+        <span className="row-actions" onClick={(event) => event.stopPropagation()}>
           <button
             className="icon-btn"
             data-tip={session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
             onClick={(event) => {
-              event.stopPropagation()
               void run(props.proxy.setSessionPinned(session.id, session.pinnedAt === undefined))
             }}
           >
@@ -574,7 +718,6 @@ export function Sidebar(props: {
               className="icon-btn"
               data-tip="恢复这个会话，移回活动区"
               onClick={(event) => {
-                event.stopPropagation()
                 void run(props.proxy.restoreSessions([session.id]))
               }}
             >
@@ -585,7 +728,6 @@ export function Sidebar(props: {
               className="icon-btn"
               data-tip="归档会话"
               onClick={(event) => {
-                event.stopPropagation()
                 archiveWithConfirm(
                   [session.id],
                   `归档会话「${session.title ?? '新会话'}」？`,
@@ -600,7 +742,6 @@ export function Sidebar(props: {
             className={`icon-btn${menu === sKey ? ' on' : ''}`}
             data-tip="更多操作"
             onClick={(event) => {
-              event.stopPropagation()
               setMenu(menu === sKey ? null : sKey)
             }}
           >
@@ -740,7 +881,7 @@ export function Sidebar(props: {
 
       <div className="sidebar-scroll">
         <div className="section-head">
-          <span className="side-title">会话</span>
+          <span className="side-title">{group === 'flat' ? '会话' : '工作区'}</span>
           <span className="head-actions">
             <button
               className={`icon-btn${searching ? ' on' : ''}`}
@@ -799,30 +940,30 @@ export function Sidebar(props: {
 
         {props.sessions.length === 0 && props.recentCwds.length === 0 && (
           <div className="sidebar-empty">
-            还没有历史会话。
-            <br />
-            发送第一条消息开始。
+            <IconQueue size={24} />
+            <div>
+              还没有历史会话。
+              <br />
+              发送第一条消息开始。
+            </div>
           </div>
         )}
 
         {groups.length === 0 && !(props.sessions.length === 0 && props.recentCwds.length === 0) && (
           <div className="sidebar-empty">
-            {trimmed !== ''
-              ? `没有匹配「${query.trim()}」的会话。`
-              : archived === 'only'
-                ? '还没有已归档的会话。'
-                : '活动区没有会话了：归档的那些在「视图选项 → 仅显示已归档」里。'}
+            <IconQueue size={24} />
+            <div>
+              {trimmed !== ''
+                ? `没有匹配「${query.trim()}」的会话。`
+                : archived === 'only'
+                  ? '还没有已归档的会话。'
+                  : '活动区没有会话了：归档的那些在「视图选项 → 仅显示已归档」里。'}
+            </div>
           </div>
         )}
 
-        {/* 单列表：不分工作区，会话混成一条流 */}
-        {group === 'flat' &&
-          (showAll ? flatSessions : flatSessions.slice(0, PREVIEW_COUNT)).map((session) => renderSession(session))}
-        {group === 'flat' && !showAll && flatSessions.length > PREVIEW_COUNT && (
-          <button className="expand-link" onClick={() => setShowAll(true)}>
-            展开剩余 {flatSessions.length - PREVIEW_COUNT} 个会话
-          </button>
-        )}
+        {/* 单列表：不分工作区，会话混成一条流（dsh 的 FlatList：不设条数上限） */}
+        {group === 'flat' && flatSessions.map((session) => renderSession(session))}
 
         {group !== 'flat' &&
           groups.filter((item) => !hiddenByAncestor(item)).map(({ cwd, sessions, depth }) => {
@@ -831,7 +972,9 @@ export function Sidebar(props: {
           const active = isActiveGroup(cwd)
           // 拖拽排序只属于「按工作区」这一档：树顺序由目录层级决定，单列表没有工作区行
           const sortable = group === 'workspace'
-          const visible = expanded && !showAll ? sessions.slice(0, PREVIEW_COUNT) : expanded ? sessions : []
+          // 每组条数预算（dsh 的 sessionLimits）：搜索时全量放开；收组即重置（toggle 里做了）
+          const limit = trimmed !== '' ? Number.MAX_SAFE_INTEGER : (sessionLimits[cwd] ?? PREVIEW_COUNT)
+          const visible = expanded ? sessions.slice(0, limit) : []
           const rest = sessions.length - visible.length
           // 指示线画在整个工作区块的上沿或下沿，也就是两组之间
           const drop =
@@ -846,13 +989,14 @@ export function Sidebar(props: {
                 className={`group-row${active ? ' active' : ''}${dragCwd === cwd ? ' dragging' : ''}`}
                 role="button"
                 tabIndex={0}
-                data-tip={sortable ? `${cwd}，点击切换工作区，拖动排序` : `${cwd}，点击切换工作区`}
+                aria-expanded={expanded}
+                data-tip={`${cwd} · ${sessions.length} 个会话，点击展开/收起${sortable ? '，拖动排序' : ''}`}
                 draggable={sortable && editing === null}
-                onClick={() => activateGroup(cwd)}
+                onClick={() => clickGroup(cwd)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()
-                    activateGroup(cwd)
+                    clickGroup(cwd)
                     return
                   }
                   rowKeys(event, key, 'workspace')
@@ -880,17 +1024,12 @@ export function Sidebar(props: {
                 }}
                 onDragEnd={endDrag}
               >
-                <button
-                  className="twisty"
-                  data-tip={expanded ? '折叠这个工作区' : '展开这个工作区'}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    toggle(cwd)
-                  }}
-                >
-                  {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-                </button>
+                {/* 引导格对齐 dsh：平时是 folder（活动组染强调色），hover 换成实心三角，
+                    展开=旋转 90°；整行都是展开/收起的点击区，箭头不再单独占一颗按钮。 */}
                 <span className="folder-icon">{expanded ? <IconFolderOpen size={15} /> : <IconFolder size={15} />}</span>
+                <span className="folder-chevron">
+                  <IconTriangleRightFill size={14} className={expanded ? 'arrow-open' : undefined} />
+                </span>
                 {editing?.key === key ? (
                   <input
                     className="row-rename"
@@ -907,49 +1046,42 @@ export function Sidebar(props: {
                 ) : (
                   <span className="dir">{displayName(cwd, aliases)}</span>
                 )}
-                {/* 尾舱对齐 dsh 的行尾交互：平时只显示会话数量，悬停时数量隐藏、
-                    按钮组在同一个槽位出现（in-flow，见 styles.css 的 .row-tail），
-                    行右缘稳定，没有「数量被挤走」的位移感。 */}
-                <span className="row-tail">
-                  <span className="count">{sessions.length}</span>
-                  <span className="row-actions">
-                    {/* 工作区行按用户要求不再摆「归档全部」和拖动把手：批量归档仍在
-                        `···` 菜单里（下方 row-menu），排序改成直接拖行本身（行还是
-                        draggable）。这里只留「在此新建会话」和菜单。 */}
+                {/* 行尾对齐 dsh：没有常显的会话数量（数量在 data-tip 里），hover 才
+                    浮出 16px 裸图标按钮——`···` 菜单 + 「在此新建会话」。 */}
+                <span className="row-actions">
+                  {/* 只剩归档区这一档时，「全部恢复」是这里唯一的批量动作，保留 */}
+                  {archived === 'only' && sessions.length > 0 && (
                     <button
                       className="icon-btn"
-                      title={`在 ${displayName(cwd, aliases)} 新建会话`}
+                      data-tip="把这个工作区的会话全部恢复"
                       onClick={(event) => {
                         event.stopPropagation()
-                        newSessionIn(cwd)
+                        void run(props.proxy.restoreSessions(sessions.map((session) => session.id)))
                       }}
                     >
-                      <IconPlus size={14} />
+                      <IconRefresh size={14} />
                     </button>
-                    {/* 只剩归档区这一档时，「全部恢复」是这里唯一的批量动作，保留 */}
-                    {archived === 'only' && sessions.length > 0 && (
-                      <button
-                        className="icon-btn"
-                        data-tip="把这个工作区的会话全部恢复"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          void run(props.proxy.restoreSessions(sessions.map((session) => session.id)))
-                        }}
-                      >
-                        <IconRefresh size={14} />
-                      </button>
-                    )}
-                    <button
-                      className={`icon-btn${menu === key ? ' on' : ''}`}
-                      data-tip="更多操作"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setMenu(menu === key ? null : key)
-                      }}
-                    >
-                      <IconMore size={15} />
-                    </button>
-                  </span>
+                  )}
+                  <button
+                    className={`icon-btn${menu === key ? ' on' : ''}`}
+                    data-tip="更多操作"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setMenu(menu === key ? null : key)
+                    }}
+                  >
+                    <IconMore size={15} />
+                  </button>
+                  <button
+                    className="icon-btn"
+                    data-tip={`在 ${displayName(cwd, aliases)} 新建会话`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      newSessionIn(cwd)
+                    }}
+                  >
+                    <IconNewChat size={15} />
+                  </button>
                 </span>
                 {menu === key && (
                   <>
@@ -1000,20 +1132,28 @@ export function Sidebar(props: {
                   </>
                 )}
               </div>
-              {visible.map((session) => renderSession(session))}
-              {expanded && rest > 0 && (
-                <button className="expand-link" onClick={() => setShowAll(true)}>
-                  展开剩余 {rest} 个会话
+              {visible.map((session) => renderSession(session, cwd))}
+              {expanded && trimmed === '' && sessions.length > PREVIEW_COUNT && (
+                <button
+                  className="session-overflow"
+                  aria-expanded={rest === 0}
+                  onClick={() => {
+                    setSessionLimits((limits) => ({
+                      ...limits,
+                      [cwd]: rest === 0
+                        ? PREVIEW_COUNT
+                        : rest <= PREVIEW_COUNT
+                          ? Number.MAX_SAFE_INTEGER
+                          : (limits[cwd] ?? PREVIEW_COUNT) + PREVIEW_COUNT,
+                    }))
+                  }}
+                >
+                  {rest === 0 ? '收起' : `展开剩余 ${rest} 个会话`}
                 </button>
               )}
             </div>
           )
         })}
-        {showAll && (groups.length > 0 || flatSessions.length > 0) && (
-          <button className="expand-link" onClick={() => setShowAll(false)}>
-            收起完整列表
-          </button>
-        )}
         {/* 拖动时才对出现：整列表末尾的落点，保证「放到最后一个」永远点得着 */}
         {dragCwd !== null && group === 'workspace' && groups.length > 1 && (
           <div

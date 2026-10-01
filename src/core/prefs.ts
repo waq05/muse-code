@@ -205,6 +205,9 @@ export function readPrefs(): DscPrefs {
       // 两个「默认态」开关：出厂都是折叠（与 0.6.3 的实际观感一致，升级不改变现状）。
       reasoningDefaultOpen: false,
       toolDefaultOpen: false,
+      // 侧栏分组展开态与会话手动顺序：出厂都是空表（全部用默认行为）。
+      sessionExpansion: {},
+      sessionOrder: {},
     },
     remote: { enabled: false, port: REMOTE_PORT_DEFAULT, lan: false, push: false, notifyWebhook: '' },
   }
@@ -260,6 +263,26 @@ export function readPrefs(): DscPrefs {
       }
       if (typeof ui.toolDefaultOpen === 'boolean') {
         prefs.ui.toolDefaultOpen = ui.toolDefaultOpen
+      }
+      // 分组展开态：cwd → 布尔。只认这两种值，行数封顶 500（防手改坏档撑爆 settings.json）。
+      if (typeof ui.sessionExpansion === 'object' && ui.sessionExpansion !== null) {
+        const expansion: Record<string, boolean> = {}
+        for (const [key, value] of Object.entries(ui.sessionExpansion)) {
+          if (typeof value === 'boolean') expansion[key] = value
+          if (Object.keys(expansion).length >= 500) break
+        }
+        prefs.ui.sessionExpansion = expansion
+      }
+      // 会话手动顺序：cwd → 路径序列。只留非空字符串，每表封顶 500 条。
+      if (typeof ui.sessionOrder === 'object' && ui.sessionOrder !== null) {
+        const order: Record<string, string[]> = {}
+        for (const [key, value] of Object.entries(ui.sessionOrder)) {
+          if (!Array.isArray(value)) continue
+          const ids = value.filter((entry): entry is string => typeof entry === 'string' && entry !== '')
+          if (ids.length > 0) order[key] = ids.slice(0, 500)
+          if (Object.keys(order).length >= 500) break
+        }
+        prefs.ui.sessionOrder = order
       }
     }
     if (typeof doc.defaultPolicy === 'string' && POLICIES.includes(doc.defaultPolicy as ApprovalPolicy)) {

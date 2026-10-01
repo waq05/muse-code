@@ -595,6 +595,18 @@ export interface UiPrefsView {
   reasoningDefaultOpen: boolean
   /** 工具卡默认展开吗（默认 false = 只显示一行「工具名 + 状态」）。口径同 {@link reasoningDefaultOpen}。 */
   toolDefaultOpen: boolean
+  /**
+   * 侧栏各工作区分组的展开状态（cwd → 展开？），对齐 dsh 的 groupExpansion：
+   * 点工作区行只切换它自己，别的组不跟着动；关掉再开也记得住。
+   * 键缺失 = 用默认（活动组与树模式父组展开，其余收起）。
+   */
+  sessionExpansion: Record<string, boolean>
+  /**
+   * 「手动排序」档下各工作区里会话行的顺序（cwd → 会话 jsonl 路径序列），
+   * 对齐 dsh 的 sessionOrderByAccount：会话行拖完落在这里，置顶块照旧排最前。
+   * 键缺失或表里没有的会话按最近使用排在后面。
+   */
+  sessionOrder: Record<string, string[]>
 }
 
 /** 分叉结果：成功时带新会话的 jsonl 路径，UI 拿它直接切过去。 */

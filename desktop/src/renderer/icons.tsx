@@ -534,3 +534,42 @@ export function IconThumbDown(props: IconProps): JSX.Element {
     props,
   )
 }
+
+/** 实心右三角（dsh IconTriangleRightFill artwork 原样移植）：工作区行 hover 时
+ *  替换 folder 的展开箭头，展开态由样式表旋转 90°，fill 几何与线宽无关。 */
+export function IconTriangleRightFill(props: IconProps): JSX.Element {
+  const size = props.size ?? 14
+  return (
+    <svg width={size} height={size} style={sized(size)} viewBox="0 0 16 16" fill="none" className={props.className} aria-hidden>
+      <path
+        d="M5.5 4.5C5.5 4.40714 5.52586 4.31612 5.57467 4.23713C5.62349 4.15815 5.69334 4.09431 5.77639 4.05279C5.85945 4.01126 5.95242 3.99368 6.0449 4.00202C6.13738 4.01036 6.22572 4.04429 6.3 4.1L10.967 7.6C11.0291 7.64657 11.0795 7.70697 11.1142 7.77639C11.1489 7.84582 11.167 7.92238 11.167 8C11.167 8.07762 11.1489 8.15418 11.1142 8.22361C11.0795 8.29303 11.0291 8.35343 10.967 8.4L6.3 11.9C6.22572 11.9557 6.13738 11.9896 6.0449 11.998C5.95242 12.0063 5.85945 11.9887 5.77639 11.9472C5.69334 11.9057 5.62349 11.8419 5.57467 11.7629C5.52586 11.6839 5.5 11.5929 5.5 11.5V4.5Z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
+/** 对话气泡 + 加号（dsh NewChatOutlineArtwork 原样移植，1px 细线）：
+ *  工作区行尾的「在此新建会话」按钮。 */
+export function IconNewChat(props: IconProps): JSX.Element {
+  const size = props.size ?? 16
+  return (
+    <svg
+      width={size}
+      height={size}
+      style={sized(size)}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className}
+      aria-hidden
+    >
+      <path d="M2.37091 11.2501C1.58745 9.89288 1.32067 8.29835 1.61969 6.76006C1.91872 5.22177 2.76342 3.8433 3.99826 2.87846C5.2331 1.91362 6.77494 1.42737 8.33988 1.50925C9.90482 1.59113 11.3875 2.23562 12.5149 3.32406C13.6425 4.41269 14.3387 5.87206 14.4754 7.4334C14.612 8.99474 14.18 10.5529 13.2587 11.8209C12.3375 13.0888 10.9891 13.9813 9.46194 14.3337C8.18691 14.628 6.85895 14.5294 5.64989 14.0605C5.1712 13.8748 4.76962 13.4932 4.26534 13.3967C3.67413 13.2835 2.95257 13.5598 2.03794 14.3337" />
+      <path d="M8 5V11" />
+      <path d="M5 8H11" />
+    </svg>
+  )
+}

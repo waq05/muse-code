@@ -293,13 +293,17 @@
 }
 
 .sidebar-empty {
-  padding: 12px 8px;
+  align-items: flex-start;
   color: var(--dsc-text-tertiary);
+  display: flex;
+  flex-direction: column;
   font-size: var(--dsc-fs-caption);
+  gap: 8px;
   line-height: 1.7;
+  padding: 16px 12px;
 }
 
-/* 工作区行：会话行的基准几何，行高只写在这一处。 */
+/* 工作区行：会话行的基准几何。行高对齐 dsh 的 34px（乘密度档保持三档联动）。 */
 .group-row {
   align-items: center;
   border-radius: var(--dsc-r-control);
@@ -307,7 +311,7 @@
   display: flex;
   font-size: var(--dsc-fs-body);
   gap: var(--dsc-row-gap);
-  min-height: var(--dsc-row-h);
+  min-height: calc(34px * var(--dsc-density));
   padding-inline: var(--dsc-row-pad-x);
   text-align: left;
   transition: background var(--dsc-dur) var(--dsc-ease);
@@ -332,6 +336,35 @@
   width: var(--dsc-row-lead);
 }
 
+/* 引导格对齐 dsh 的 ProjectRow：folder 常显，hover 整行换成实心三角箭头
+   （展开态旋转 90°，150ms）；整行都是展开/收起的点击区。 */
+.group-row .folder-chevron {
+  align-items: center;
+  color: var(--dsc-text-quaternary);
+  display: none;
+  height: var(--dsc-row-lead);
+  justify-content: center;
+  width: var(--dsc-row-lead);
+}
+
+.group-row .folder-chevron svg {
+  transition: transform 150ms var(--dsc-ease);
+}
+
+.group-row .folder-chevron svg.arrow-open {
+  transform: rotate(90deg);
+}
+
+.group-row:hover .folder-chevron,
+.group-row:focus-within .folder-chevron {
+  display: inline-flex;
+}
+
+.group-row:hover .folder-icon,
+.group-row:focus-within .folder-icon {
+  display: none;
+}
+
 .group-row .dir {
   flex: 1;
   line-height: 1.35;
@@ -340,26 +373,28 @@
   white-space: nowrap;
 }
 
-.group-row .count {
-  color: var(--dsc-text-quaternary);
-  font-size: var(--dsc-fs-tool);
-  font-variant-numeric: tabular-nums;
-}
-
-/* 会话行：比工作区行缩进一级，标签 13px 二级灰。 */
+/* 会话行：与工作区行同缩进（dsh 的 sessionRow），靠 16px 前导槽分层，
+   行高对齐 dsh 的 32px（乘密度档）。 */
 .sess-item {
   align-items: center;
   border-radius: var(--dsc-r-control);
   color: var(--dsc-text-tertiary);
   display: flex;
   gap: var(--dsc-row-gap);
-  margin-left: 14px;
-  min-height: var(--dsc-row-h);
+  min-height: calc(32px * var(--dsc-density));
   padding-inline: var(--dsc-row-pad-x);
   text-align: left;
   transition:
     background var(--dsc-dur) var(--dsc-ease),
     color var(--dsc-dur) var(--dsc-ease);
+}
+
+/* dsh 的 16px 前导槽：会话级状态点（运行中/待批准）画在这里；现在没有
+   会话级状态数据，留空占位撑住几何。 */
+.sess-item .row-slot {
+  flex: none;
+  height: var(--dsc-row-lead);
+  width: 16px;
 }
 
 .sess-item:hover {
@@ -399,16 +434,36 @@
   font-variant-numeric: tabular-nums;
 }
 
-.expand-link {
-  margin: 2px 0 2px 36px;
-  padding: 2px 0;
-  color: var(--dsc-text-quaternary);
-  font-size: var(--dsc-fs-caption);
-  text-align: left;
-  transition: color var(--dsc-dur) var(--dsc-ease);
+/* 行尾互换（dsh 的 time ↔ rowActions）：hover/键盘聚焦/菜单开着（钮上的 .on）
+   时，时间与置顶标让位给操作钮，行保持着高亮。 */
+.sess-item:hover .when,
+.sess-item:focus-within .when,
+.sess-item:has(.row-actions .icon-btn.on) .when {
+  display: none;
 }
 
-.expand-link:hover {
+.sess-item:hover .pin-mark,
+.sess-item:focus-within .pin-mark,
+.sess-item:has(.row-actions .icon-btn.on) .pin-mark {
+  display: none;
+}
+
+/* 「展开剩余 / 收起」（dsh 的 sessionOverflowButton）：占满一行的左对齐文本钮 */
+.session-overflow {
+  background: transparent;
+  border: none;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  font-size: var(--dsc-fs-caption);
+  min-height: calc(28px * var(--dsc-density));
+  padding: 0 var(--dsc-row-pad-x);
+  text-align: left;
+  transition: color var(--dsc-dur) var(--dsc-ease);
+  width: 100%;
+}
+
+.session-overflow:hover {
   color: var(--dsc-text-secondary);
 }
 
@@ -459,22 +514,7 @@
   user-select: none;
 }
 
-/* 折叠箭头占一格 14px，和工作区图标的引导格同宽，标题才不会被箭头推来推去。 */
-.group-row .twisty {
-  align-items: center;
-  border-radius: var(--dsc-r-control);
-  color: var(--dsc-text-quaternary);
-  display: inline-flex;
-  height: var(--dsc-row-lead);
-  justify-content: center;
-  width: var(--dsc-row-lead);
-  flex-shrink: 0;
-}
-
-.group-row .twisty:hover {
-  background: var(--dsc-control-active-bg);
-  color: var(--dsc-text-primary);
-}
+/* 折叠箭头已并入引导格（folder ↔ 实心三角 hover 换位，见 .group-row .folder-chevron） */
 
 .group-row.dragging {
   opacity: 0.45;
@@ -483,6 +523,15 @@
 /* 拖工作区行时的落点指示线：画在整个工作区块的上沿或下沿，也就是两组之间 */
 .group {
   position: relative;
+}
+
+/* 组间与组内的呼吸间距（dsh 的 groupSection：组+组 4px、组内行距 2px） */
+.group + .group {
+  margin-top: 4px;
+}
+
+.group > * + * {
+  margin-top: 2px;
 }
 
 /* 树模式的缩进：只缩内容，行的点击区仍占满整行（对照 dsh 的树形分组） */
@@ -513,7 +562,7 @@
 .group.depth-2 > .sess-item,
 .group.depth-3 > .sess-item,
 .group.depth-4 > .sess-item {
-  margin-left: calc(14px + var(--dsc-tree-indent));
+  padding-left: calc(var(--dsc-row-pad-x) + var(--dsc-tree-indent));
 }
 
 .group.drop-above::before,
@@ -533,6 +582,27 @@
 }
 
 .group.drop-below::after {
+  bottom: -1px;
+}
+
+/* 会话行拖拽（manual 档）的落点：同款指示线画在行本身的上/下沿 */
+.sess-item.drop-above::before,
+.sess-item.drop-below::after {
+  background: var(--dsc-accent);
+  border-radius: var(--dsc-r-pill);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--dsc-accent) 60%, transparent);
+  content: '';
+  height: 2px;
+  left: 6px;
+  position: absolute;
+  right: 6px;
+}
+
+.sess-item.drop-above::before {
+  top: -1px;
+}
+
+.sess-item.drop-below::after {
   bottom: -1px;
 }
 
@@ -586,6 +656,22 @@
 .shot-reveal .row-actions,
 .shot-reveal .group-row .grip {
   display: inline-flex;
+}
+
+/* 截图钩子补充：把工作区行的 folder ↔ 三角 hover 换位和会话行的时间 ↔ 按钮互换
+   也常驻，方便拍「悬停态」的静态留证（:hover 没法用脚本造）。 */
+.shot-reveal .group-row .folder-chevron,
+.shot-reveal .group-row > .row-actions {
+  display: inline-flex;
+}
+
+.shot-reveal .group-row .folder-icon {
+  display: none;
+}
+
+.shot-reveal .sess-item .when,
+.shot-reveal .sess-item .pin-mark {
+  display: none;
 }
 
 .pin-mark {
@@ -2709,7 +2795,7 @@ body.resizing iframe {
   letter-spacing: 0.04em;
 }
 
-.term-bar select {
+.term-bar .select-trigger {
   background: var(--dsc-row-active-bg);
   color: var(--dsc-text-primary);
   border: 1px solid var(--dsc-stroke-4);
@@ -2718,7 +2804,6 @@ body.resizing iframe {
   padding: 3px 8px;
   font-size: var(--dsc-fs-caption);
   outline: none;
-  cursor: pointer;
 }
 
 .term-host {
@@ -6052,40 +6137,19 @@ body.resizing iframe {
         与第三段的 .ctx-card 完全共用。
    凡是要压过旧规则的地方，都用更高特异性的选择器写在这里。 */
 
-/* ── 文件夹行尾舱：数量徽标 + 悬停按钮组 ──
-   对齐 dsh 的行尾交互：平时只显示数量徽标；悬停时徽标隐藏、按钮组在
-   同一个槽位 in-flow 出现（不绝对定位、不悬浮），行右缘稳定，
-   没有「数量被挤走」的位移感。 */
-.sidebar .group-row .row-tail {
-  align-items: center;
-  display: inline-flex;
-  position: relative;
-}
-
-.sidebar .group-row .row-tail .row-actions {
+/* ── 文件夹行尾：hover 浮出按钮组（dsh 的 rowActions：16px 裸图标 tertiary）。
+   数量徽标已随 dsh 对齐移除（数量在 data-tip 里），行尾就是操作钮组本身。 */
+.sidebar .group-row .row-actions {
   border-radius: var(--dsc-r-control);
   display: none;
   gap: 1px;
 }
 
-/* 徽标在悬停时让位：display:none 而不是 visibility，让按钮组真正接管槽位 */
-.sidebar .group-row:hover .row-tail .count,
-.sidebar .group-row:focus-within .row-tail .count {
-  display: none;
-}
-
 /* 悬停、键盘聚焦、截图钩子三处都点亮按钮组 */
-.sidebar .group-row:hover .row-tail .row-actions,
-.sidebar .group-row:focus-within .row-tail .row-actions,
-.shot-reveal .sidebar .group-row .row-tail .row-actions {
+.sidebar .group-row:hover .row-actions,
+.sidebar .group-row:focus-within .row-actions,
+.shot-reveal .sidebar .group-row .row-actions {
   display: inline-flex;
-}
-
-/* 会话行同理对齐 dsh：悬停时时间隐藏、操作按钮接管同一个行尾槽位
-   （.row-actions 的显隐由文件顶部的 .sess-item:hover 规则管，这里只管时间让位） */
-.sess-item:hover > .when,
-.sess-item:focus-within > .when {
-  display: none;
 }
 
 /* ── 状态栏：前两段也配详情卡 ──
@@ -6934,16 +6998,15 @@ body.resizing iframe {
 }
 
 /* ── 侧栏行尾的按钮组：24px → 28px ──
-   工作区行走 .row-tail 那个槽位（数量徽标让位后接管），会话行是行内直接排。
-   两个槽位一起放大，同一列里两种行的高度才一致。 */
-.sidebar .group-row .row-tail .row-actions .icon-btn,
+   工作区行与会话行的行尾操作钮一起放大，同一列里两种行的高度才一致。 */
+.sidebar .group-row > .row-actions .icon-btn,
 .sidebar .sess-item > .row-actions .icon-btn {
   height: calc(28px * var(--dsc-btn-scale));
   width: calc(28px * var(--dsc-btn-scale));
 }
 
 /* 按钮一大，原来 1px 的缝就贴住了：给到 3px，三颗按钮仍然挤在行尾。 */
-.sidebar .group-row .row-tail .row-actions,
+.sidebar .group-row > .row-actions,
 .sidebar .sess-item > .row-actions {
   gap: 3px;
 }
@@ -8613,4 +8676,90 @@ body.resizing iframe {
   display: flex;
   gap: var(--dsc-sp-2);
   justify-content: flex-end;
+}
+
+/* ── 自绘下拉（components/Select.tsx）：原生 <select> 的弹层是 Chromium 原生
+   绘制，深色主题里是白底（nativeTheme 在 Windows 上管不到它），全量换成 DOM
+   弹层。触发钮复用调用方给的语境类（.setting-select / .term-select），这里只
+   补内部布局与浮层。 ── */
+.select-trigger {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 6px;
+  text-align: left;
+}
+
+.select-trigger:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.select-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-chevron {
+  color: var(--dsc-text-tertiary);
+  flex: none;
+  transition: transform var(--dsc-dur) var(--dsc-ease);
+}
+
+.select-trigger[aria-expanded='true'] .select-chevron {
+  transform: rotate(180deg);
+}
+
+.select-pop {
+  background: var(--dsc-bg-popover);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-badge);
+  box-shadow: var(--dsc-shadow-md);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  position: fixed;
+  z-index: var(--dsc-z-modal-popover);
+}
+
+.select-opt {
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  cursor: pointer;
+  display: flex;
+  font-size: var(--dsc-fs-body);
+  gap: 8px;
+  min-height: calc(var(--dsc-row-h) + 2px);
+  padding: 0 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.select-opt[data-active='true'] {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.select-opt[data-selected='true'] {
+  color: var(--dsc-accent);
+}
+
+.select-opt-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-opt-check {
+  color: var(--dsc-accent);
+  flex: none;
 }

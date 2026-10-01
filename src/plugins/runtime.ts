@@ -343,6 +343,11 @@ export const runtimePlugin: Plugin.Object = {
       setUiPrefs(patch) {
         const current = ctx.settings.prefs().ui
         ctx.settings.setPrefs({ ui: { ...current, ...patch } })
+        // 分组展开态与会话拖拽顺序是点一下/拖一下就写一次的高频静默写入，
+        // 弹回执反而吵：这两类补丁直接返回，不进下面的文案链。
+        if (patch.sessionExpansion !== undefined || patch.sessionOrder !== undefined) {
+          return Promise.resolve({ ok: true })
+        }
         const notice =
           patch.sessionSort !== undefined
             ? patch.sessionSort === 'recent'

@@ -953,3 +953,37 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 验收：desktop typecheck 0 错；宿主+渲染层 build 过（语法懒 chunk 逐语言产出，主包仅 +97KB 的映射数据）；四回归脚本全绿；实机截图十张——树（探针 `rows=33 svg-icons=33 dotfiles=true folder-icons=14`）、md（`md-img=512x512 md-shiki=1`——相对图片+高亮围栏+表格+引用全渲染）、csv 表格、xlsx（`sheets=进度|发布 rows=3`）、pdf（`pages=1 first=600x240`）、binary 占位、五预览页签并存（chip 各色彩色图标）、收起重挂恢复（`subtree-restored=true`）、浅色树（`theme=light rows=33`）。
 
 诚实边界：① doc/docx/ppt/pptx/老 xls 不预览（dsh 走服务端 Office→PDF 管道，Muse Code 无此管道）——占位提示；② HTML 按源码高亮，不进 iframe 沙箱渲染；③ PDF 无缩放/搜索、表格只读；④ 预览页签上限 10 张/窗格（dsh 无上限，页签条没有虚拟化）；⑤ 图标数据 ~4MB 懒 chunk，打包体积约涨 4MB（gzip 后 ~500KB），首屏不受影响。
+
+## 阶段 40：下拉框全量自绘主题化 + 会话区完整对标 dsh（0.6.22）
+
+用户报了两件事：① 深色主题里 `<select>` 的下拉弹层是白底（设置页 + 终端 Shell 选择器，附截图），要求找齐所有同类问题；② 会话管理区（左栏）点击逻辑不对——点工作区其他组会塌、第一下只选中，要求直接对齐 dsh 的操作逻辑、视觉效果与图标。
+
+### 一、下拉弹层白色：根因与修法
+
+两个标准兜底早就齐了却都不管用：`nativeTheme.themeSource`（0.6.15 接的 IPC）与 `:root { color-scheme: dark }`（同 0.6.15），0.6.21 打包件实测弹层依旧白——Windows 上 Chromium 绘制的原生 select 弹层不吃这两套。结论：**原生弹层没救，全量换成自绘**。
+
+- 新组件 `components/Select.tsx`（dsh Menu 规格）：触发钮 = 当前值 + chevron（展开旋转 180°）；弹层 portal 到 body、`--dsc-bg-popover` 底 + blur + 描边圆角阴影、宽不小于触发钮、max-height 320 内滚；键盘 ↑↓/Home/End/Enter/Escape（combobox 模式焦点不进浮层）、点外/滚轮关、选中项 accent + 勾。全吃 `--dsc-*` 令牌，深浅主题自动跟随。
+- 替换全部 6 处原生 select：设置字段渲染器、`Dropdown` 助手、默认端点/默认模型、思考参数、终端 Shell。页面里 `<select>` 元素清零（探针 `native-select=0`）。
+- 兜底层：tokens.css 补 `accent-color: var(--dsc-accent)`（checkbox/radio 原生部件的选中色跟品牌蓝；range 滑杆早已自绘）。
+
+验收：弹层现在是 DOM，capturePage 拍得到——深色弹层底 `rgb(44,44,46)/0.96`（token 色）、浅色 `white/0.96`，选中项 accent + 勾，截图双主题留证。
+
+### 二、会话区对标 dsh（ui-workspace 包）
+
+操作逻辑（对照 dsh 逐条搬）：
+
+| dsh 行为 | Muse Code 改法 |
+| --- | --- |
+| 点工作区行 = 只切换它自己的展开/收起 | `activateGroup` 的切 cwd 分支删除；切工作区走「点会话」（跨区打开）或行尾「新建会话」 |
+| 展开态按组持久化（groupExpansion） | `UiPrefsView.sessionExpansion`（cwd→bool）落 settings.json；侧栏本地即时层 + 异步落盘，双击互不牵连 |
+| 当前会话所在组自动展开并保持 | effect 把 cwd（树模式含祖先链）写 true——切走再回来也不塌 |
+| 每组 5 条 + 「展开剩余 n」增量 | 全局 showAll 改 per-group limits（+5 增量 → 全开 → 「收起」，收组重置；不落盘同 dsh） |
+| manual 档会话行拖拽（置顶块内） | `UiPrefsView.sessionOrder`（cwd→路径序列）落盘；置顶块约束 + 拖拽序只在块内生效；指示线同款 |
+| 双击会话标题改名 | 新增（Ctrl+Alt+R 与 ··· 菜单保留） |
+| 头部标题随分组方式 | 树/按工作区=「工作区」，单列=「会话」 |
+
+视觉与图标：行高对齐 dsh（工作区 34px / 会话 32px × 密度档）；folder 常显（活动组 accent）↔ **hover 换实心三角箭头**（dsh `IconTriangleRightFill` artwork，开合 150ms 旋转）；行尾去常显数量徽标（数量进 data-tip），hover 浮出 [···][new-chat] 16px 裸图标（dsh `NewChatOutline` artwork 移植）；会话行去 14px 缩进（dsh 同缩进 + 16px 前导槽），行尾**时间戳 ↔ 操作钮 hover 互换**、置顶标挪行尾；组间距 4px/组内 2px；空态加图标。
+
+验收：desktop typecheck 0 错；宿主+渲染层 build 过；四回归全绿；实机探针——侧栏基线（`native-select=0 groups=3 exp=false,false,true` 活动组自动展开）、hover 态留证（folder→三角、行尾按钮组）、干净 toggle（`before=false,false,true → g2-after-own=true → final=true,true,true` 点一组别的组不动）、重启恢复（`restored=true,true,true`）、每组限页（5 条 + 展开剩余 4/8）、双击改名（`rename-opened=true`）、会话拖拽（`drop-mark=true`，sessionOrder 落盘 9 条完整序）、弹层双主题（上）。
+
+诚实边界：① 会话级状态点（运行中/待批准）没做——SessionSummary 无运行状态字段，单宿主单活动会话，不造假数据；② HoverCard 富浮卡用 data-tip（标题+快捷键）近似；③ dsh 的行进出场动画（AnimatedRows）与远端内容搜索不搬；④ 会话拖拽只在「手动排序」档生效（与 dsh 一致）。

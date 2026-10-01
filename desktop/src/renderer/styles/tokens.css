@@ -28,6 +28,9 @@
 
 :root {
   color-scheme: dark;
+  /* 原生部件（checkbox/radio/progress）的选中色跟品牌蓝走：color-scheme 只管
+     它们的深浅底，勾选填充色默认是系统蓝，浅色主题下会跟 --dsc-accent 对不上。 */
+  accent-color: var(--dsc-accent);
 
   /* ── 种子：改观感先改这两个 ── */
   --dsc-base: #f9fafb;
