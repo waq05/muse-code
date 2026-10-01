@@ -13,7 +13,7 @@ import { dsc, type RuntimeProxy } from './bridge.js'
 import { readTerminalFontSize, readTerminalTheme, watchAppearance } from './components/terminalTheme.js'
 import { IconChevronDown, IconChevronRight, IconRefresh } from './icons.js'
 
-type DockTab = 'terminal' | 'browser' | 'files' | 'git'
+export type DockTab = 'terminal' | 'browser' | 'files' | 'git'
 
 const TABS: { value: DockTab; label: string }[] = [
   { value: 'terminal', label: '终端' },
@@ -54,10 +54,12 @@ export function Dock(props: {
   cwd: string
   proxy: RuntimeProxy
   width: number
+  /** 当前面板由 App 持有：开始页的入口卡（终端/浏览器/文件）要定向打开某一面。 */
+  tab: DockTab
+  onTab(tab: DockTab): void
   onResize(width: number): void
   onClose(): void
 }): JSX.Element {
-  const [tab, setTab] = useState<DockTab>('terminal')
   const { cwd, proxy } = props
 
   // 左边缘拖拽调宽：mousedown 后挂 window 监听，clamp 到 [300, 820]，双击复位
@@ -88,7 +90,7 @@ export function Dock(props: {
       />
       <div className="dock-tabs">
         {TABS.map((item) => (
-          <button key={item.value} className={tab === item.value ? 'on' : ''} onClick={() => setTab(item.value)}>
+          <button key={item.value} className={props.tab === item.value ? 'on' : ''} onClick={() => props.onTab(item.value)}>
             {item.label}
           </button>
         ))}
@@ -97,10 +99,10 @@ export function Dock(props: {
         </button>
       </div>
       <div className="dock-body">
-        {tab === 'terminal' && <TerminalPane cwd={cwd} proxy={proxy} />}
-        {tab === 'browser' && <BrowserPane />}
-        {tab === 'files' && <FilesPane cwd={props.cwd} proxy={props.proxy} />}
-        {tab === 'git' && <GitPane cwd={props.cwd} proxy={props.proxy} />}
+        {props.tab === 'terminal' && <TerminalPane cwd={cwd} proxy={proxy} />}
+        {props.tab === 'browser' && <BrowserPane />}
+        {props.tab === 'files' && <FilesPane cwd={props.cwd} proxy={props.proxy} />}
+        {props.tab === 'git' && <GitPane cwd={props.cwd} proxy={props.proxy} />}
       </div>
     </aside>
   )

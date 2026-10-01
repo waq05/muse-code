@@ -1020,6 +1020,104 @@
   padding-bottom: 8vh;
 }
 
+/* 居中 logo（对照 dsh 开始页的罗盘）：取应用图标，圆角小方 */
+.welcome-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 22%, transparent);
+}
+
+/* 三张入口卡（对照 dsh 开始页）：竖排一列，图标+标题+描述在左、快捷键在右 */
+.welcome-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 22px;
+  width: min(420px, 86%);
+}
+
+.welcome-card {
+  align-items: center;
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-primary);
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.welcome-card:hover {
+  background: var(--dsc-fill-quaternary);
+  border-color: var(--dsc-accent);
+}
+
+.welcome-card:focus-visible {
+  border-color: var(--dsc-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 22%, transparent);
+  outline: none;
+}
+
+/* 图标座：软色底 + 对应令牌色的图形；三张卡各占一色（全令牌，浅深各自成立） */
+.welcome-card-icon {
+  align-items: center;
+  border-radius: 8px;
+  display: flex;
+  flex-shrink: 0;
+  height: 32px;
+  justify-content: center;
+  width: 32px;
+}
+
+.welcome-card-icon.tone-folder {
+  background: color-mix(in srgb, var(--dsc-orange) 16%, transparent);
+  color: var(--dsc-orange);
+}
+
+.welcome-card-icon.tone-terminal {
+  background: color-mix(in srgb, var(--dsc-green) 16%, transparent);
+  color: var(--dsc-green);
+}
+
+.welcome-card-icon.tone-browser {
+  background: color-mix(in srgb, var(--dsc-purple) 16%, transparent);
+  color: var(--dsc-purple);
+}
+
+.welcome-card-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.welcome-card-title {
+  font-size: var(--dsc-fs-body);
+  font-weight: 500;
+}
+
+.welcome-card-desc {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+}
+
+.welcome-card-key {
+  align-self: center;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: 6px;
+  color: var(--dsc-text-tertiary);
+  flex-shrink: 0;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  padding: 2px 7px;
+}
+
 .welcome h1 {
   margin: 0;
   font-size: var(--dsc-fs-hero);

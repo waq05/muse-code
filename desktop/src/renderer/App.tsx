@@ -13,7 +13,7 @@ import { ApprovalCard } from './ApprovalCard.js'
 import { AskCard, GoalBar, PlanReview, TaskDock } from './TaskDock.js'
 import { ChatView } from './ChatView.js'
 import { Composer } from './Composer.js'
-import { Dock } from './Dock.js'
+import { Dock, type DockTab } from './Dock.js'
 import { PluginsView } from './PluginsView.js'
 import { SessionPicker } from './SessionPicker.js'
 import { isSessionMarker } from './session-marker.js'
@@ -37,7 +37,8 @@ import {
   writeStoredFlag,
   writeStoredPx,
 } from './panels.js'
-import { IconChevronDown, IconCode, IconCopy, IconFolderOpen, IconSidebar, IconTerminal } from './icons.js'
+import { IconChevronDown, IconCode, IconCopy, IconFolder, IconFolderOpen, IconGlobe, IconSidebar, IconTerminal } from './icons.js'
+import iconUrl from '../../build/icon.png'
 
 export function App(): JSX.Element {
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null)
@@ -59,6 +60,8 @@ export function App(): JSX.Element {
   const [subOpen, setSubOpen] = useState(false)
   const [teamOpen, setTeamOpen] = useState(false)
   const [dockOpen, setDockOpen] = useState(false)
+  // dock 停在哪个面板：开始页入口卡（终端/浏览器/文件）要定向打开，所以提到 App 持有
+  const [dockTab, setDockTab] = useState<DockTab>('terminal')
   // 顶栏「多种方式打开工作区」的下拉菜单（对照 dsh 的文件夹+下拉分组钮）
   const [wsMenu, setWsMenu] = useState(false)
   // dock 宽度（拖拽调宽，持久化到 localStorage）
@@ -156,16 +159,34 @@ export function App(): JSX.Element {
 
   // Ctrl+B（macOS 上是 Cmd+B）收起/展开侧栏。主进程只建了托盘菜单，没占任何快捷键，
   // 输入框里 Ctrl+B 也没有默认行为，这个键是空的。
+  // Ctrl+P / Ctrl+` / Ctrl+T（对照 dsh 的开始页卡片角标）定向打开 dock 的文件 / 终端 /
+  // 浏览器面板——浏览器没有打印与「新建标签页」的默认行为可抢，这三个键也是空的。
+  const openDock = useCallback((next: DockTab): void => {
+    setDockTab(next)
+    setDockOpen(true)
+  }, [])
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return
-      if (event.key.toLowerCase() !== 'b') return
-      event.preventDefault()
-      toggleRail()
+      if (event.defaultPrevented) return
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+      const key = event.key.toLowerCase()
+      if (key === 'b') {
+        event.preventDefault()
+        toggleRail()
+      } else if (key === 'p') {
+        event.preventDefault()
+        openDock('files')
+      } else if (key === '`' || event.code === 'Backquote') {
+        event.preventDefault()
+        openDock('terminal')
+      } else if (key === 't') {
+        event.preventDefault()
+        openDock('browser')
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [toggleRail])
+  }, [toggleRail, openDock])
 
   /** 侧栏拖宽落盘（null = 双击复位成样式表默认宽）。 */
   const resizeSidebar = (px: number | null): void => {
@@ -621,7 +642,10 @@ export function App(): JSX.Element {
               ) : tab === 'trace' ? (
                 <TraceView entries={snapshot.entries as TranscriptEntry[]} status={snapshot.status} />
               ) : empty ? (
-                <Welcome systemEntries={snapshot.entries.filter((entry) => entry.kind === 'system')} />
+                <Welcome
+                  systemEntries={snapshot.entries.filter((entry) => entry.kind === 'system')}
+                  onOpenDock={openDock}
+                />
               ) : (
                 <ChatView
                   entries={snapshot.entries as TranscriptEntry[]}
@@ -718,6 +742,8 @@ export function App(): JSX.Element {
           cwd={cwd}
           proxy={proxy}
           width={dockWidth}
+          tab={dockTab}
+          onTab={setDockTab}
           onResize={(width) => {
             setDockWidth(width)
             localStorage.setItem('dsc.dockWidth', String(width))
@@ -753,16 +779,55 @@ export function App(): JSX.Element {
   )
 }
 
-/** 空会话欢迎态：居中引导文案 + 宿主预写的 system 提示行。 */
-function Welcome({ systemEntries }: { systemEntries: { id: number; text: string }[] }): JSX.Element {
+/**
+ * 空会话欢迎态（对照 dsh 的「开始」页）：居中 logo + 三张入口卡，直接进 dock 的
+ * 对话前常用面板；宿主预写的 system 提示行跟在卡片下面。
+ */
+function Welcome(props: {
+  systemEntries: { id: number; text: string }[]
+  onOpenDock(tab: 'terminal' | 'browser' | 'files'): void
+}): JSX.Element {
   // 开场那条「会话 x · 模型 y」不画：它已经在状态栏第一段的悬浮提示里（见 session-marker.ts）。
-  const notes = systemEntries.filter((entry) => !isSessionMarker(entry.text))
+  const notes = props.systemEntries.filter((entry) => !isSessionMarker(entry.text))
   return (
     <div className="welcome">
+      <img className="welcome-logo" src={iconUrl} alt="" />
       <h1>有什么可以帮忙的？</h1>
       <p>
         输入 <code>/</code> 查看可用指令 · 消息会携带当前工作目录上下文
       </p>
+      <div className="welcome-cards">
+        <button className="welcome-card" onClick={() => props.onOpenDock('files')}>
+          <span className="welcome-card-icon tone-folder">
+            <IconFolder size={17} />
+          </span>
+          <span className="welcome-card-text">
+            <span className="welcome-card-title">工作区文件</span>
+            <span className="welcome-card-desc">浏览会话工作区的文件</span>
+          </span>
+          <kbd className="welcome-card-key">Ctrl + P</kbd>
+        </button>
+        <button className="welcome-card" onClick={() => props.onOpenDock('terminal')}>
+          <span className="welcome-card-icon tone-terminal">
+            <IconTerminal size={17} />
+          </span>
+          <span className="welcome-card-text">
+            <span className="welcome-card-title">新建终端</span>
+            <span className="welcome-card-desc">在会话工作区运行命令</span>
+          </span>
+          <kbd className="welcome-card-key">Ctrl + `</kbd>
+        </button>
+        <button className="welcome-card" onClick={() => props.onOpenDock('browser')}>
+          <span className="welcome-card-icon tone-browser">
+            <IconGlobe size={17} />
+          </span>
+          <span className="welcome-card-text">
+            <span className="welcome-card-title">浏览器</span>
+            <span className="welcome-card-desc">浏览网页</span>
+          </span>
+          <kbd className="welcome-card-key">Ctrl + T</kbd>
+        </button>
+      </div>
       {notes.map((entry) => (
         <div key={entry.id} className="welcome-note">
           {entry.text}
