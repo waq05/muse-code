@@ -59,11 +59,11 @@ const ARCHIVED_FILTERS: readonly ArchivedFilter[] = ['hide', 'show', 'only']
 const THEME_MODES: readonly ThemeMode[] = ['dark', 'light', 'system']
 const DENSITIES: readonly UiDensity[] = ['compact', 'standard', 'roomy']
 /**
- * 过程折叠程度三档（桌面端「通用 → 过程折叠程度」）。
+ * 过程折叠程度四档（桌面端「通用 → 过程折叠程度」）。
  * 与桌面端 appearance.ts 的 normalizeProcessFold 同一张表，改这里要两边一起改。
  */
-const PROCESS_FOLDS: readonly UiProcessFold[] = ['compact', 'standard', 'detailed']
-/** 读不出过程折叠程度时的默认档：标准档（整轮折叠 + 摘要照显）。 */
+const PROCESS_FOLDS: readonly UiProcessFold[] = ['compact', 'standard', 'detailed', 'verbose']
+/** 读不出过程折叠程度时的默认档：标准档（整轮折叠 + 阶段分组 + 摘要 + 组头带实时详情）。 */
 const PROCESS_FOLD_DEFAULT: UiProcessFold = 'standard'
 
 /**
@@ -118,7 +118,7 @@ function readButtonScale(value: unknown): number {
 }
 
 /**
- * 把存档里的过程折叠程度读成三档之一。
+ * 把存档里的过程折叠程度读成四档之一。
  *
  * 认不出的值（手改坏的 `"简单"`、null、数字）一律回落标准档，绝不让存档把启动拦下来；
  * 老 settings.json 里没有这一项，走的也是这条回落。
@@ -165,6 +165,9 @@ export function readPrefs(): DscPrefs {
       buttonScale: BUTTON_SCALE_DEFAULT,
       density: 'standard',
       processFold: PROCESS_FOLD_DEFAULT,
+      // 两个「默认态」开关：出厂都是折叠（与 0.6.3 的实际观感一致，升级不改变现状）。
+      reasoningDefaultOpen: false,
+      toolDefaultOpen: false,
     },
     remote: { enabled: false, port: REMOTE_PORT_DEFAULT, lan: false },
   }
@@ -209,10 +212,17 @@ export function readPrefs(): DscPrefs {
       if (typeof ui.density === 'string' && DENSITIES.includes(ui.density as UiDensity)) {
         prefs.ui.density = ui.density as UiDensity
       }
-      // 过程折叠程度也只有桌面端这一个写入方，存的是三个字符串之一；
+      // 过程折叠程度也只有桌面端这一个写入方，存的是四个字符串之一；
       // 认不出的值由 readProcessFold 回落 standard（老档里没这一项也是这条路）。
       if (ui.processFold !== undefined) {
         prefs.ui.processFold = readProcessFold(ui.processFold)
+      }
+      // 两个默认态开关：老 settings.json 里没有，读不到就保持上面的 false。
+      if (typeof ui.reasoningDefaultOpen === 'boolean') {
+        prefs.ui.reasoningDefaultOpen = ui.reasoningDefaultOpen
+      }
+      if (typeof ui.toolDefaultOpen === 'boolean') {
+        prefs.ui.toolDefaultOpen = ui.toolDefaultOpen
       }
     }
     if (typeof doc.defaultPolicy === 'string' && POLICIES.includes(doc.defaultPolicy as ApprovalPolicy)) {

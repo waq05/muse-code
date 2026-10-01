@@ -464,12 +464,49 @@ function AppearanceRows(props: {
               { value: 'compact', label: '紧凑' },
               { value: 'standard', label: '标准' },
               { value: 'detailed', label: '详细' },
+              // 档位名与 dsh 的中文文案一致（ui-chat 的 settings.transcript.verbose = 完全展开）
+              { value: 'verbose', label: '完全展开' },
             ]}
             onPick={(value) => props.onUiPrefs({ processFold: value })}
           />
           <div className="setting-help">
-            一轮结束后，思考与工具调用这些过程条目整组收起，只留一行「用时 X」总开关。
-            紧凑档不显示思考行末尾的摘要预览；详细档不做整轮折叠，过程条目逐条摊开。
+            一轮结束后，思考与工具调用这些过程条目整组收起，只留一行「用时 X」总开关，
+            轮里再按阶段分组。紧凑档不显示思考行的摘要预览、组头也不报实时详情；
+            详细档整轮照旧收起，但只有历史轮分组——正在跑的那一轮直接摊开；
+            完全展开档不做整轮折叠，阶段也不分组，过程条目逐条摊开。
+          </div>
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-label">定稿的思考行</div>
+        <div className="setting-control">
+          <Segments
+            value={props.uiPrefs.reasoningDefaultOpen ? 'open' : 'closed'}
+            options={[
+              { value: 'closed', label: '默认收起' },
+              { value: 'open', label: '默认展开' },
+            ]}
+            onPick={(value) => props.onUiPrefs({ reasoningDefaultOpen: value === 'open' })}
+          />
+          <div className="setting-help">
+            每条思考过程默认折成一行还是摊开正文。跑动中的那一段永远展开——它是「现在在干什么」
+            的唯一线索；这里只管已经写完的那些。你手动点开的某一条不会被这项改掉。
+          </div>
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-label">工具卡</div>
+        <div className="setting-control">
+          <Segments
+            value={props.uiPrefs.toolDefaultOpen ? 'open' : 'closed'}
+            options={[
+              { value: 'closed', label: '默认收起' },
+              { value: 'open', label: '默认展开' },
+            ]}
+            onPick={(value) => props.onUiPrefs({ toolDefaultOpen: value === 'open' })}
+          />
+          <div className="setting-help">
+            每张工具卡默认只显示「工具名 + 状态」一行，还是连参数与结果一起摊开。
           </div>
         </div>
       </div>

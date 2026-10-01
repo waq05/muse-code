@@ -14,6 +14,8 @@ import { readFold, writeFold } from './fold-state.js'
 import { formatDuration } from './turn-timing.js'
 
 const STATUS_TEXT: Record<ToolCallView['status'], string> = {
+  // 模型已经吐了工具名、参数还没到齐（对照 dsh 的 preparing 阶段）
+  preparing: '准备中',
   running: '进行中',
   done: '完成',
   failed: '失败',
@@ -188,6 +190,14 @@ export function ToolCard({
 }): JSX.Element {
   const status = call.status
   const running = status === 'running'
+  /**
+   * 还在准备中：模型吐了工具名、参数没到齐（对照 dsh 的 preparing 阶段）。
+   *
+   * 这一行**不可展开**：参数此刻本来就不完整，展开出来是半截 JSON。它随后会被
+   * adapter 就地升级成 running（同一个 id、同一个时刻），那一刻才恢复可展开。
+   * 对照 dsh 的「准备中的调用…不解析参数，只渲染不可展开的一行」。
+   */
+  const preparing = status === 'preparing'
   const [open, setOpen] = useState(() => readFold(storeKey, defaultOpen))
   const [barVisible, setBarVisible] = useState(false)
 
@@ -262,15 +272,23 @@ export function ToolCard({
     running || duration === null ? STATUS_TEXT[status] : `${STATUS_TEXT[status]} · 用时 ${duration}`
 
   return (
-    <div className={`entry tool-card status-${status}${open ? ' open' : ''}`}>
+    <div className={`entry tool-card status-${status}${open && !preparing ? ' open' : ''}`}>
       <div
         className="tool-head"
         role="button"
         tabIndex={0}
-        aria-expanded={open}
-        data-tip={open ? '点击收起' : '点击展开参数与结果'}
-        onClick={() => setOpenPersisted(!open)}
+        aria-expanded={preparing ? undefined : open}
+        data-tip={
+          preparing
+            ? '正在准备这次调用，参数还没到齐'
+            : open ? '点击收起参数与结果' : '点击展开参数与结果'
+        }
+        onClick={() => {
+          if (preparing) return
+          setOpenPersisted(!open)
+        }}
         onKeyDown={(event) => {
+          if (preparing) return
           if (event.key !== 'Enter' && event.key !== ' ') return
           // 空格按在 div 上默认会滚页面，先挡掉再自己处理。
           event.preventDefault()
@@ -281,12 +299,12 @@ export function ToolCard({
         {/* 摘要这一格始终渲染（哪怕是空串）：它的 flex:1 负责把状态与箭头顶到行尾 */}
         <span className="preview">{summary}</span>
         <span className="status">
-          {running && <i className="tc-spin" aria-hidden />}
+          {(running || preparing) && <i className="tc-spin" aria-hidden />}
           {STATUS_TEXT[status]}
         </span>
-        <IconChevronDown size={11} className="tc-chevron" />
+        {preparing ? null : <IconChevronDown size={11} className="tc-chevron" />}
       </div>
-      {open && (
+      {open && !preparing && (
         <div className="tool-body" ref={bodyRef}>
           {barVisible && (
             <div className="tc-bar" data-tc-chrome="1" ref={barRef}>

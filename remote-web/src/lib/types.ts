@@ -17,7 +17,7 @@
 export type EffortLevel = 'default' | 'off' | 'low' | 'high' | 'max'
 
 /** 一次工具调用的展示状态。 */
-export type ToolStatus = 'running' | 'done' | 'failed' | 'rejected'
+export type ToolStatus = 'preparing' | 'running' | 'done' | 'failed' | 'rejected'
 
 /** 工具卡片视图（字段口径见宿主 src/contract.ts 的 ToolCallView）。 */
 export interface ToolCallView {

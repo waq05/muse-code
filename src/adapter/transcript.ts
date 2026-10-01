@@ -37,6 +37,16 @@ export class Transcript {
   private list: TranscriptEntry[] = []
   /** callId → 工具条目在 `list` 中的下标（append-only 保证下标稳定）。 */
   private toolIndex = new Map<string, number>()
+  /**
+   * 流式期间已经报出工具名、还在等参数的条目（对照 dsh 的 `preparing` 阶段）。
+   *
+   * 为什么**不直接进 list**：list 里的条目永远排在直播尾之前，而准备中的工具在语义上
+   * 恰恰是「最新发生的一件事」——push 进去会让工具卡插到正在流式的思考前面（自检实测过，
+   * 顺序会变成「工具 → 思考 → 正文」，而且升级是就地替换，这个位置会一直错下去）。
+   * 交给 {@link liveEntries} 合成在最后，等 `tool/call` 到达时再正式落进 list——
+   * 那时直播尾已经被清掉了，顺序自然对。
+   */
+  private prepared: { id: number; name: string; ts: number | null }[] = []
   private seq = 1
   /** 直播尾段（`message`/`turn/end`/清空时重置）。 */
   private segments: LiveSegment[] = []
@@ -72,9 +82,9 @@ export class Transcript {
     return this.list
   }
 
-  /** 直播尾条目（负 id，与定稿的正 id 不冲突）。 */
+  /** 还没定稿的条目：直播尾 + 「准备中」的工具（见 `prepared` 的注释）。 */
   liveEntries(): TranscriptEntry[] {
-    return this.segments.map(
+    const live = this.segments.map(
       (segment, position): TranscriptEntry => ({
         kind: segment.kind,
         id: -(position + 1),
@@ -82,6 +92,21 @@ export class Transcript {
         ...(segment.ts === undefined ? {} : { ts: segment.ts }),
       }),
     )
+    // 准备中的工具用**正 id**：负 id 是「这段内容还在长」的标记（整轮折叠与轮次划分都拿它
+    // 当直播证据），而准备中的调用是一个已经确定的调用，只是参数还没到齐。
+    const prepared = this.prepared.map((item): TranscriptEntry => ({
+      kind: 'tool',
+      id: item.id,
+      call: {
+        callId: '',
+        name: item.name,
+        // 参数这会儿还没到齐，一条都不解析（对照 dsh 的「不解析参数」）
+        argsText: '',
+        status: 'preparing',
+      },
+      ...(item.ts === null ? {} : { ts: item.ts }),
+    }))
+    return [...live, ...prepared]
   }
 
   /**
@@ -124,6 +149,7 @@ export class Transcript {
   clear(): void {
     this.list = []
     this.toolIndex.clear()
+    this.prepared = []
     this.seq = 1
     this.segments = []
     this.usage = { inputTokens: 0, outputTokens: 0 }
@@ -245,6 +271,35 @@ export class Transcript {
   }
 
   /**
+   * 从「准备中」队列里取一条同名的（先来后到）。
+   *
+   * 为什么按名字配对而不是纯按顺序：模型偶尔会重排 index，名字对上才算同一条。
+   * 一个都没对上就返回 undefined，调用方用新 id 落一条——那条准备中的留给
+   * {@link dropPrepared} 在轮末收掉。
+   */
+  private takePrepared(name: string): { id: number; ts: number | null } | undefined {
+    const at = this.prepared.findIndex((item) => item.name === name)
+    if (at < 0) return undefined
+    return this.prepared.splice(at, 1)[0]
+  }
+
+  /**
+   * 丢掉还挂着「准备中」、却等不到对应 `tool/call` 的那些。
+   *
+   * 什么时候会有：模型吐了工具名之后被打断，或者吐到一半改了主意。那些条目代表
+   * 「本来想调、最后没调」，留着会让用户一直盯着一句「准备读取文件」等下去。
+   *
+   * 为什么放在轮末而不是 `message`：`loop.ts` 的顺序是「先发 message、再执行工具」，
+   * message 那一刻这一批的 `tool/call` 还没发出来——在那儿清会把等着升级的一起误杀。
+   *
+   * 为什么只是一句赋值：这些条目从来没进过 `list`（见 `prepared` 的注释），
+   * 所以没有下标要修、也没有 toolIndex 要重建。
+   */
+  private dropPrepared(): void {
+    this.prepared = []
+  }
+
+  /**
    * 折叠一条 core 事件。
    * @param ts 这条事件的时刻；省略取当前时间（运行中的实时事件都这样）。
    *           重放老会话时显式传 null：条目不带 ts，界面据此降级。
@@ -256,7 +311,9 @@ export class Transcript {
       case 'user': {
         // 一条用户消息就是新一轮的起点：上一轮的累计不能带进这一轮，
         // 否则界面会把上一轮花掉的量算到这一轮头上。
-        this.turnUsage = { inputTokens: 0, outputTokens: 0 }
+        // 例外是轮中途插话（steering）：它还属于同一轮，累计要接着算下去，
+        // 否则这一轮前半段已经花掉的量会被当场抹掉。
+        if (event.steering !== true) this.turnUsage = { inputTokens: 0, outputTokens: 0 }
         const last = this.list[this.list.length - 1]
         const imageCount = event.images?.length ?? 0
         const sameAsLast =
@@ -277,6 +334,7 @@ export class Transcript {
             text: event.text,
             ...(imageCount > 0 ? { images: event.images } : {}),
             ...(compacted ? { compaction: this.compactionMark() } : {}),
+            ...(event.steering === true ? { steering: true } : {}),
           }),
         )
         return true
@@ -294,11 +352,36 @@ export class Transcript {
           this.pushAssistantText(event.text)
           changed = true
         }
+        // 这次输出撞上了长度上限：单独记一条（对照 dsh 的 turn-max-tokens 节点）。
+        // 它是独立节点——不进任何阶段组，也不被整轮折叠藏掉：用户得看见「话被截断了」，
+        // 否则只会以为模型答到一半就不说了。重放老会话时拿不到 finish_reason，所以没有这条。
+        if (event.finishReason === 'length') {
+          this.list.push(this.stamp({ kind: 'turn-max-tokens', id: this.seq++ }))
+          changed = true
+        }
         return changed
       }
       case 'delta':
         this.appendSegment(event.kind === 'reasoning' ? 'thinking' : 'text', event.text)
         return true
+      case 'tool/prepare': {
+        // 模型开始吐这个工具的名字、参数还没到齐：记一笔，好让用户看得见「接下来要干这件事」
+        // （对照 dsh 的 preparing 节点）。这条不往 list 里 push，理由见 `prepared` 的注释——
+        // 它由 liveEntries() 合成在最后，`tool/call` 到达时才正式落进 list。
+        this.prepared.push({ id: this.seq++, name: event.name, ts: this.eventTs })
+        return true
+      }
+      case 'model/retry': {
+        // 重试发生在 llm 层内部，不报出来的话用户只会觉得界面卡了几秒。
+        // 它同时是二级分组的边界（前后两段过程被切开），但整轮折叠仍包含它。
+        this.list.push(this.stamp({
+          kind: 'model-retry',
+          id: this.seq++,
+          attempt: event.attempt,
+          text: event.reason,
+        }))
+        return true
+      }
       case 'tool/call': {
         this.working = true
         // 工具调用意味着模型输出已定稿，直播尾让位
@@ -307,20 +390,27 @@ export class Transcript {
         // 发起时刻就是这条条目第一次写入的时刻，只在这里取一次；结果回来时不许覆盖
         // （条目的 ts 是「最后写入时刻」，只留给界面算轮次计时）
         const startedAt = this.eventTs
-        const entry: ToolEntry = {
-          kind: 'tool',
-          id: this.seq++,
-          call: {
-            callId: event.callId,
-            name: event.name,
-            argsText: event.args,
-            status: 'running' satisfies ToolStatus,
-            // 重放老会话（eventTs 为 null）时拿不到发起时刻，干脆不写，界面据此降级
-            ...(startedAt === null ? {} : { startedAt }),
-          } satisfies ToolCallView,
+        const call: ToolCallView = {
+          callId: event.callId,
+          name: event.name,
+          argsText: event.args,
+          status: 'running',
+          // 重放老会话（eventTs 为 null）时拿不到发起时刻，干脆不写，界面据此降级
+          ...(startedAt === null ? {} : { startedAt }),
         }
-        this.toolIndex.set(event.callId, this.list.length)
-        this.list.push(this.stamp(entry))
+        // 流式期间为它报过「准备中」就接着用那一条的身份：id 与 ts 都保留，
+        // 用户看到的是同一张卡从「准备读取文件」变成「正在读取文件」。
+        // dsh 的口径是「准备中的调用使用首个具名 delta 的时间」，所以 ts 用准备那一刻的。
+        const prepared = this.takePrepared(event.name)
+        this.list.push(prepared === undefined
+          ? this.stamp({ kind: 'tool', id: this.seq++, call })
+          : {
+              kind: 'tool',
+              id: prepared.id,
+              call,
+              ...(prepared.ts === null ? {} : { ts: prepared.ts }),
+            })
+        this.toolIndex.set(event.callId, this.list.length - 1)
         return true
       }
       case 'tool/result': {
@@ -375,6 +465,17 @@ export class Transcript {
         this.working = false
         this.inTurn = false
         this.stampTurnUsage()
+        // 轮尾标记：把「这一轮为什么结束」记成一条独立条目（对照 dsh 的 turn.end.reason
+        // 与 turn-error 节点）。为什么要落成条目：整轮折叠有两条规矩要读它——中断或失败的轮
+        // 不折整轮，开关行还要显示「已停止 / 过程失败」。这两件事都发生在轮**结束之后**，
+        // 「当前回合状态」那份快照表达不出来（它那时已经是 idle 了）。
+        // 正常结束（completed）不落条目：那时渲染层没什么可判的，多一条只会让订阅者白重算。
+        if (event.reason !== 'completed') {
+          this.list.push(this.stamp({ kind: 'turn-end', id: this.seq++, reason: event.reason }))
+        }
+        // 到这里这一轮所有 tool/call 都已经发过了（loop 是等工具跑完才进下一跳），
+        // 还挂在「准备中」的就是「吐了名字、最后没调」的那些，清掉。
+        this.dropPrepared()
         return true
       }
       default:

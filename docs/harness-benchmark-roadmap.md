@@ -62,6 +62,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:71`，`KERNEL_API_VERSION 
 | --- | :--: | :--: | :--: | :--: | --- |
 | ReAct 循环 / 流式 / 审批 | ● | ● | ● | ● | 持平，够个人用 |
 | 会话 JSONL 落盘 / 重放 | ● | ● | ● | ● | 重放折叠已修（T1），见 §3.1 |
+| 会话区过程折叠（三层 + 四档） | ● | ◐ | ◐ | ● | 已对齐 dsh（T11），见 §3.2 |
 | OS 级沙箱 | ⊘ | ● | ○ | ● | 个人版取舍；要做得单独立项 |
 | MCP 客户端 | ● | ● | ● | ● | 已补（T5），安全层与围栏复用现成的 |
 | 长期记忆 | ● | ● | ● | ◐ | 已内核化（`src/plugins/memory.ts`） |
@@ -83,6 +84,59 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:71`，`KERNEL_API_VERSION 
 **当时的毛病**：内存里 `compactSession` 用 `session.replaceWithSummary` 折叠是对的，但磁盘是 append-only，而 `Session.load` 读到 `summary` 记录时**只把它当一条 user 消息 push 进去，前面累积的原始 `messages` 一条都没清**。结果 `/compact` 完当下上下文确实变小，一旦 `--resume` 重开，摘要之前的原始消息全被读回来，等于白压。
 
 **后来更正的认识**：这里原本写的「最小改法：先 `messages.length = 0` 再放摘要」不充分——它会把压缩时特意保留的尾部（最近若干条原文）一起丢掉，压缩后的第一次交接就少了上下文。最终实现给 `summary` 记录加了 `keep` 字段（摘要之外保留了尾部多少条），重放时先取末尾 `keep` 条再清空，接回「摘要 + 保留尾部」；老日志没有这个字段按 0 处理，退化成「摘要 + 摘要之后的记录」，原文一样不会读回来。落地情况见 §5.1。
+
+### 3.2 会话区过程折叠（已对齐，见 §5.1 与 `docs/session-fold-todo.md`）
+
+**这一层对齐的是 dsh 的三层结构**（对照 `packages/client/ui-chat/src/client/conversation-nodes/`）：
+
+1. **整轮总开关**：一轮跑完，过程整组收起，原位只留一行「用时 X」（`TurnProcessNodeView.tsx`）。跑动中的轮不画这一行；
+2. **阶段组头**：轮内再按「阶段正文」切段，每段一行类别聚合文案（`process-groups.ts` 的切分规则 + `step-process.ts` 的文案拼法）。运行中的组头带实时任务详情（「正在运行命令 · pnpm build」）；
+3. **单条思考 / 工具行**：各自折叠成一行（`ReasoningRow.tsx` / `ui-tool` 的 `ToolRow.tsx`）。
+
+**四档展示档位**（`presentation-policy.ts` 的四个能力逐格对照，落地在 `desktop/src/renderer/fold-policy.ts`）：
+`compact`（折 + 分组 + 无摘要 + 组头不带详情）/ `standard`（默认）/ `detailed`（整轮照折，但只有**历史轮**分组）/ `verbose`（不折、也不分组）。
+
+**本轮补齐的三项「dsh 有、dsc 原来没有」的界面能力**：
+
+| 项 | dsh 的蓝本 | dsc 落地 |
+| --- | --- | --- |
+| 组体限高 + 方向渐隐 + 组内独立滚动 | `use-process-scroll.ts` + `ChatGroupSeat.module.css` 的 `max-height: min(400px, 50vh)` 与 mask 渐隐 | `.step-body` / `useProcessScroll`（`desktop/src/renderer/fold-seats.tsx`） |
+| 收起的 DOM 仍能被浏览器查找命中 | `chat/searchable-hidden.ts` 的 `hidden="until-found"` + `beforematch` | `useSearchableHidden`（同上），两处收起都不再 `return null` |
+| 自动收起不抽走键盘焦点 | 同一个 `useSearchableHidden` 里的焦点检查（隐藏前先看焦点在不在里面） | 同上；另外组头点击时先把焦点落到组头自己身上 |
+
+**口径变更（会改变观感，值得记一笔）**：`processFold` 原本是「compact / standard / detailed」三档，其中 `detailed` 的语义是「不做整轮折叠」——那其实是 dsh 的 `verbose`。对齐之后 `detailed` 改为 dsh 的语义（整轮照折，只有历史轮分组），原来那种「全摊开」由新的 `verbose` 档承担。老 `settings.json` 里存着 `detailed` 的用户升级后会看到过程折起来了，去设置里改「完全展开」即可（没有做存档迁移：这个档位是 0.6.3 才加的，且迁移需要额外引入一个存档版本位）。
+
+**有意不做**：`hasInterleavedInput`（轮中途插话就不折整轮）。dsc 的 transcript 里没有 steering 这个条目类型（`src/contract.ts` 只有 user / thinking / text / tool / plan / system），既没数据也没行为，要做先得有「轮中途插话」的数据模型。
+
+**顺手发现的一处不一致（未在本轮动）**：启动恢复历史会话走的是 `src/host/kernel.ts:363-366` 的重放分支，**没有发 `dsc/session-open`**，而切会话（`src/plugins/session.ts:88-98`）会发。于是靠这个事件恢复自己状态的插件（plan / todo / goal / mode）在「冷启动恢复」这条路上不会被触发——计划卡因此不会出现在冷启动的会话流里（`src/plugins/plan.ts:114-121`）。要让两条路一致，得把 kernel 的重放分支改成走 `session.open(resumePath)`，或者补发一次事件；那会影响 approval-floor 的 reset 与 agent 的 switchSession，属于内核改动，单独立项。
+
+### 3.3 会话区继续对齐：剩余批次（用户裁决「完全对齐 dsh」）
+
+0.6.7 把折叠这一层的骨架对齐之后，逐项核出来的差异按可做性分了四批。批 1 已落地（见 `development-log.md` 阶段 24）：
+
+| 批 | 内容 | 状态 |
+| --- | --- | --- |
+| 1 | 轮结束原因与「已停止 / 过程失败」（`turn/end` 的 reason 一直有，adapter 丢了）、轮中途插话（steering）落在同一轮且锁住整轮折叠、轮内 `system` 不再被折叠藏掉、组收口时不重置组内阅读位置、没有过程内容时画一行不可点的「用时 X」、输出撞长度上限时给一行提示 | 已落地（0.6.8） |
+| 2 | **「准备中」态**（dsh 的 `preparing`：组头显示「准备读取文件」，通用类别在标准档还追加工具名）——落到 `core/llm.ts` 的流式层新增 `onToolPrepare` 回调，adapter 用「准备中」队列按名字配对、`tool/call` 到达时就地升级成 `running`；**模型重试行**（dsh 的 `model-retry`）——`core/llm.ts` 的重试环新增 `onRetry` 透出事件，adapter 落一条 `model-retry` 条目（它是二级分组的边界，但整轮折叠仍包含它） | 已落地（0.6.9） |
+| 3 | **组头跑动中的扫光**（dsh 的 `TextShimmer`）：dsc 早在思考摘要上做了同一套写法（`styles.css` 的 `data-shimmer` + `::after` 复制文字 + `background-clip: text`），这一批把它共用给阶段组头的标题；**类别图标不改**，理由见下 | 已落地（0.6.10） |
+| 4 | **加载更早历史**：dsh 是按正文顺序锚定按钮下第一个可见内容项、限高组先吸收位移再外层补偿、分页期间读者滚动优先、保留组级开合（`conversation-nodes/README.zh.md:96-100`）。dsc 按**同样的可见行为**做了渲染层渐进渲染（`ChatView.tsx` 的 `earliestVisible` / `loadEarlier`），**数据源分页不做**——理由见下 | 已落地（渲染层，0.6.11）；数据源分页押后 |
+
+**明确不做（已裁定）**：
+
+- **运行指示换成 dsh 的「鲸鱼摆尾 + 闪烁计时」**：dsc 现在的两行（阶段说明 + 当前活动名 + 实时用时）比它多一句「此刻在调什么」，换过去是信息量降级；
+- **类别图标换成 dsh 那一套**：dsh 的图标来自它自己的设计系统包（`@deepseek-ai/dsh-client-ui-primitives`），dsc 拿不到那些 SVG（只能手抄路径）；而且 dsh 把 `commands` 画成一个抽象的 API 方块图标，语义上不如 dsc 现在用的终端图标贴切。真正值得对齐的是「哪一类用哪一类图标」这个映射，而那条已经对齐（读→文件夹、搜→放大镜、命令→终端、子代理→树、计划→队列）。`webFetch` 一度想按 dsh 归到与 `read` 同用的「浏览」图标，但 dsc 没有浏览图标，而地球图标对「抓取网页」更贴切，所以也保持原样；
+- **子调用递归计数**：dsh 需要它是因为有 PTC（`run_code` 的嵌套调用）与子调用投影，dsc 的 `ToolCallView` 没有子调用结构、`subagent` 是另一条会话，规则无处应用；
+- **`turn-tail` 节点语义未查明**，本批不动（它可能就是 dsh 的"轮尾标记"，dsc 用 `turn-end` 条目承担了同样的角色）。
+
+**押后：数据源分页（不是不做，是现在做没有收益）**。原本打算照 dsh 把「加载更早」做成**从宿主分页取数据**，实测之后改了口径：
+
+| 量的是什么（`desktop/shots/load-bench.mjs`，只读真实 `~/.dsc`） | 实测 |
+| --- | --- |
+| 最大的单会话（1 MB / 25 条消息） | `Session.load` 4.9ms + 重放 0.5ms，堆增量 3.3 MB |
+| **全部 78 个会话**加载一遍 | 26ms，堆增量 2.5 MB（共 237 条消息） |
+| 全库磁盘占用 | 2.6 MB |
+
+**关键在于 dsc 的 `messages` 同时是「模型请求上下文」和「界面展示来源」同一份**：只给展示分页，请求上下文仍然要全量加载，**内存一点不减**，只是少画 DOM。dsh 能靠分页省下来是因为它结构上就把两者分开了（`session-query` 的索引 + node store + `next-turn` 领取批次），那是架构级改造。所以 dsc 这一步做的是**渲染层渐进渲染**——用户可见行为与 dsh 完全一致（有「加载更早」、锚定不动、保留组级开合、限高组先吸位移），只是数据早就在内存里。等哪天会话真长到几千轮，再连架构拆分一起做。
 
 ---
 
@@ -195,6 +249,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 | T9 沙箱 | 已落地（第五轮，**codex 路线**，非本节原先写的 dsh fail-closed 路线） | `src/plugins/sandbox.ts` + `src/core/sandbox/{policy,execpolicy,backends}.ts`，守卫 order 8：三档模式（默认 workspace-write）、可写根白名单（`realpathSync.native` 规范化 + 祖先包含 + 最深存在祖先回退）、受保护元数据名、NT 命名空间前缀守卫（resolve 之前判原始串）、8.3/ADS/junction、命令前缀 allow/prompt/forbidden（含内层脚本再拆一层）、一次性升权（`sandbox_permissions`+`justification` 必须成对、只对本次生效、照常弹审批卡）、**降级照 codex：强制层不可用不 fail-closed，改为照常执行 + 审批兜底并如实上报 `enforced: full/partial`**。容器后端（docker，探测通过且用户显式选择才启用）经命令执行器缝（`src/core/tools/command-runner.ts`，内核 API v5）真换执行体。不做受限令牌后端（纯 TS 拿不到，`runas /trustlevel` 隔离是假的）。`node shots/sandbox-check.mjs` 193 PASS / 0 FAIL |
 | T11 自我改进闭环 | 已落地（第五轮，三条闭环先立写入门） | `src/plugins/self-improve.ts` + `src/core/learnings/{store,ledger,skill-write}.ts`：L1 纠正捕获（`dsc/turn-end` 落候选，**不进系统提示**，`/learnings promote` 才生效）；L2 复盘产技能草稿（迭代数 ≥12 触发，走 `agent.followup`，落盘即写进 `skills.json` disabled **默认停用**）；L3 `skill_write` 工具（read-before-write 硬校验、`.bak` 备份、`.ledger.jsonl` 台账可回滚、威胁扫描不过就还原、archive 只搬不删）。写入走 `ctx.approval.decide`；cron/队友/插件发起的写直接拒（判不出的退审批门，宁严不松）。`node shots/self-improve-check.mjs` 181 PASS / 0 FAIL |
 | T12 LSP + 浏览器自动化 | 已落地（第五轮，checkpoint 仍未动） | LSP：`src/core/lsp/{framing,uri,servers,client}.ts` + 单工具按 operation 分发（定义/引用含声明/实现/悬停，100 条 + 16000 字符双上限），无状态同步（读盘→didOpen→请求→didClose），idle 回收 + 破键退避，诊断经 `registerObserver` 只报本次编辑新引入的 ERROR；`node shots/lsp-check.mjs` 167 PASS / 0 FAIL。浏览器：`src/core/cdp/{transport,launch,snapshot,actions}.ts`，无障碍树文本化 + 行内 ref、**ref 代际校验**（动作前 `DOM.describeNode` 复核）、独立临时 profile + `DevToolsActivePort`、对话框三策略、`browser_look`（read）/`browser`（exec）分档、`taskkill /T /F` 整树清理；`node shots/browser-check.mjs` 210 PASS / 0 FAIL |
+| T13 会话区过程折叠 | 已落地（第三轮，见 §3.2） | 三层结构（整轮总开关 / 阶段组头 / 单条思考与工具行）+ 四档展示档位（能力表在 `desktop/src/renderer/fold-policy.ts`，逐格对照 dsh 的 `presentation-policy.ts`）、运行中组头的实时任务详情（取参数的键序照抄 dsh，160 字素簇上限）、组头标题 150ms 最短保留（纯函数 `liveTitleDecision` 可测）、组体 `min(400px, 50vh)` 限高 + 24px mask 方向渐隐 + 组内独立滚动跟随、收起改挂 `hidden="until-found"`（Ctrl+F 能命中收起内容、自动收起不抽走键盘焦点）、两个与档位正交的默认态开关（思考行 / 工具卡，dsc 自己的增量）。四张网：`step-groups-check.mjs` 163 PASS / 0 FAIL、`step-seed-check.mjs` 25 PASS / 0 FAIL、`fold-check.mjs` 166 PASS / 0 FAIL、`step-shots.ps1` 六用例隔离截图全绿。已知未做：轮中途插话不折整轮（dsc 无 steering 条目类型） |
 
 集体验收：`node shots/integration-check.mjs` 起两次真内核（默认态 + 打开三个默认关的档位），95 PASS / 0 FAIL，顺带验了守卫链次序、打开后的灾难命令仍被拒、以及压缩重放的端到端回归。第五轮另起一份 `node shots/m5-integration-check.mjs`：起四次真内核，验五个新插件的登记/默认开关/挂载/工具面/热卸载无残留，以及「沙箱默认开不误伤只读命令、不挡正常工作区写入」。
 

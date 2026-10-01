@@ -82,9 +82,11 @@ export function App(): JSX.Element {
     workspaceOrder: [],
     workspaceAliases: {},
     ...loadCachedAppearance(),
-    // 过程折叠程度不进外观镜像（它不落到 DOM 属性上，只由 ChatView 消费）：
-    // 首帧先按标准档画，宿主回读到了再换成真值。
+    // 过程折叠程度与两个「默认态」开关都不进外观镜像（它们不落到 DOM 属性上，只由 ChatView 消费）：
+    // 首帧先按标准档 + 都折叠画，宿主回读到了再换成真值。
     processFold: 'standard',
+    reasoningDefaultOpen: false,
+    toolDefaultOpen: false,
   }))
   // 最近用过的工作目录：切过去但还没发过消息的工作区也要能在侧栏看到
   const [recentCwds, setRecentCwds] = useState<string[]>([])
@@ -525,9 +527,11 @@ export function App(): JSX.Element {
                   sessionPath={active?.id ?? null}
                   proxy={proxy}
                   onOpenSession={openSession}
-                  // 过程折叠程度（设置 → 通用 → 过程折叠程度）：整轮折叠只在详细档关掉，
-                  // 思考摘要预览只在紧凑档关掉，两个开关都由 ChatView 与 ThinkingBlock 消费。
+                  // 过程折叠程度（设置 → 通用 → 过程折叠程度）：四档能力表在 appearance.ts，
+                  // 渲染层只读能力。另两项是「单条思考 / 工具卡」的默认态（设置 → 通用）。
                   processFold={uiPrefs.processFold}
+                  reasoningDefaultOpen={uiPrefs.reasoningDefaultOpen}
+                  toolDefaultOpen={uiPrefs.toolDefaultOpen}
                 />
               )}
 

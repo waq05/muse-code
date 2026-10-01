@@ -230,6 +230,22 @@ export function IconInfo(props: IconProps): JSX.Element {
   )
 }
 
+/**
+ * 地球：阶段组头给「搜网页 / 访问网页 / 开浏览器」这三类共用。
+ * 为什么单加一个而不是复用搜索图标：浏览器与网页抓取是「出网」，代码搜索是「在本地找」，
+ * 同一段过程里两类经常前后脚出现，图标一样就分不出这一步在干什么。
+ */
+export function IconGlobe(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3.2 12h17.6" />
+      <path d="M12 3c2.5 2.4 3.9 5.6 3.9 9s-1.4 6.6-3.9 9c-2.5-2.4-3.9-5.6-3.9-9S9.5 5.4 12 3Z" />
+    </>,
+    props,
+  )
+}
+
 export function IconStore(props: IconProps): JSX.Element {
   return base(
     <>

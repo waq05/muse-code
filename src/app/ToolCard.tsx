@@ -11,6 +11,9 @@ import { GAP, INDENT, SEP, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 状态标签：中文硬编码，配色只取 `STATUS_COLOR` 里的状态色。 */
 const STATUS_LABEL: Record<ToolCallView['status'], { text: string; color: string | undefined }> = {
+  // 模型吐了工具名、参数还没到齐（对照 dsh 的 preparing 阶段）：与「执行中」同色，
+  // 但它只是「接下来要干这件事」，参数与结果都还没有。
+  preparing: { text: '◌ 准备中', color: STATUS_COLOR.pending },
   running: { text: '◐ 执行中', color: STATUS_COLOR.pending },
   done: { text: '✓ 完成', color: STATUS_COLOR.done },
   failed: { text: '✗ 失败', color: STATUS_COLOR.failed },

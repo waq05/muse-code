@@ -134,6 +134,27 @@ export function dropImageParts(messages: ChatMessage[], note: string): ChatMessa
 export interface StreamHandlers {
   /** 增量回调（思考/正文二选一到达）。 */
   onDelta(kind: 'text' | 'reasoning', text: string): void
+  /**
+   * 模型开始吐某个工具调用的**名字**（参数还没到齐）。
+   *
+   * 对照 dsh 的 `preparing` 节点：那边是「具名实时 delta 可以创建该节点」，它计一次调用、
+   * 不解析参数、只渲染不可展开的一行。为什么值得单独报一声——从「模型决定要调什么」到
+   * 「参数攒齐、工具真的开跑」之间有一段真空，那段时间界面上原本一点线索都没有，
+   * 长参数（比如一整段补丁）能空上好几秒。
+   *
+   * 名字可能是分片拼出来的，所以**同一个 index 只会报一次**（从「还没有名字」变到有名字时）。
+   */
+  onToolPrepare?(name: string): void
+  /**
+   * 这次请求失败、正要重试。
+   *
+   * 对照 dsh 的 `model-retry` 节点：它让用户看得见「模型刚重试了一次」。不报的话，
+   * 一次 429 之后用户只会觉得界面卡了几秒，然后答案莫名其妙冒出来。
+   *
+   * @param nextAttempt 即将进行的第几次尝试（2 起）
+   * @param reason 触发重试的原因（错误原文，界面上只作说明）
+   */
+  onRetry?(nextAttempt: number, reason: string): void
 }
 
 export interface StreamResult {
@@ -179,6 +200,7 @@ export async function streamChat(request: StreamRequest, handlers: StreamHandler
         error instanceof LlmError &&
         (error.retryable || (error.status !== undefined && (error.status === 429 || error.status >= 500)))
       if (!retryable) throw error
+      handlers.onRetry?.(attempt + 1, error instanceof Error ? error.message : String(error))
       // 服务端明确要求等多久（Retry-After）就至少等那么久；没有才用指数退避。
       await delay(Math.max(500 * 2 ** (attempt - 1), error.retryAfterMs ?? 0), request.signal)
     }
@@ -289,14 +311,22 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
       for (const call of delta?.tool_calls ?? []) {
         const existing = callsByIndex.get(call.index)
         if (existing === undefined) {
+          const name = call.function?.name ?? ''
           callsByIndex.set(call.index, {
             id: call.id ?? '',
-            name: call.function?.name ?? '',
+            name,
             arguments: call.function?.arguments ?? '',
           })
+          // 首次拿到工具名就报一声「准备中」——参数这会儿多半还没开始到
+          if (name !== '') handlers.onToolPrepare?.(name)
         } else {
           if (call.id !== undefined && call.id !== '') existing.id = call.id
-          if (call.function?.name !== undefined && call.function.name !== '') existing.name = call.function.name
+          const name = call.function?.name
+          if (name !== undefined && name !== '') {
+            // 名字也可能被分片切开：只在「从没有名字变成有名字」那一次报
+            if (existing.name === '') handlers.onToolPrepare?.(name)
+            existing.name = name
+          }
           if (call.function?.arguments !== undefined) existing.arguments += call.function.arguments
         }
       }

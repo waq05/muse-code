@@ -75,12 +75,24 @@ export function formatDuration(ms: number | null): string | null {
  * - 开场那条 system 提示（「会话 x · 模型 y」）：它在第一条用户消息之前，不属于任何一轮；
  * - 轮次之后冒出来的 system 条目（错误、宿主通知、「已恢复会话」这类）：它们不是模型的
  *   回复内容。要是把它们算进来，最后一轮的结束时刻会变成「现在」，用时直接算出一个天文数字。
+ *
+ * 一条例外：**轮中途插话**（`entry.steering`）不另起一轮，它留在原来那一轮里（见下面那条注释）。
  */
 export function roundInfos(entries: readonly TranscriptEntry[]): RoundInfo[] {
   const rounds: RoundInfo[] = []
   let current: RoundInfo | null = null
   entries.forEach((entry, index) => {
     if (entry.kind === 'user') {
+      // 轮中途插话（steering）不另起一轮：它属于正在跑的那一轮，内容位置保持在原地
+      // （对照 dsh 的 steering 节点，以及它的 `hasInterleavedInput`）。要是把它当成新一轮的
+      // 起点，这一轮就被切成了两半——前半段失去「最终回答」，用户会看到一段被莫名折起来的过程。
+      // 只有还没开轮时（current 为空）才退化成普通用户消息，那种情况在真实会话里不会出现。
+      if (entry.steering === true && current !== null) {
+        current.endIndex = index
+        const steeringTs = entryTs(entry)
+        if (steeringTs !== null) current.endTs = steeringTs
+        return
+      }
       current = {
         index: rounds.length,
         startIndex: index,
@@ -116,13 +128,16 @@ export function roundDuration(round: RoundInfo): number | null {
 }
 
 /**
- * 这一轮是从哪一刻开始的：取最后一条用户消息的 ts。
- * 状态行的计时器按它算已用时；老会话拿不到就返回 null，由组件退回「本组件看到这一轮的时刻」。
+ * 这一轮是从哪一刻开始的：取最后一条**非插话**的用户消息的 ts。
+ *
+ * 为什么跳过 steering：插话是轮中途进来的，按它计时会让计时器在用户插一句话之后当场归零
+ * （对照 dsh：计时跟的是 turn.start）。状态行的计时器按它算已用时；
+ * 老会话拿不到就返回 null，由组件退回「本组件看到这一轮的时刻」。
  */
 export function turnStartedAt(entries: readonly TranscriptEntry[]): number | null {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]
-    if (entry !== undefined && entry.kind === 'user') return entryTs(entry)
+    if (entry !== undefined && entry.kind === 'user' && entry.steering !== true) return entryTs(entry)
   }
   return null
 }
@@ -161,9 +176,18 @@ export function liveActivity(
     .reverse()
     .find(
       (entry): entry is Extract<TranscriptEntry, { kind: 'tool' }> =>
-        entry.kind === 'tool' && entry.call.status === 'running',
+        entry.kind === 'tool'
+        && (entry.call.status === 'running' || entry.call.status === 'preparing'),
     )
-  if (running !== undefined) return { stage: '正在执行工具', activity: `正在调用 ${running.call.name}` }
+  if (running !== undefined) {
+    return {
+      stage: '正在执行工具',
+      // 「准备中」是模型还在吐参数、「正在调用」是工具真的开跑了——两句话不同
+      activity: running.call.status === 'preparing'
+        ? `正在准备 ${running.call.name}`
+        : `正在调用 ${running.call.name}`,
+    }
+  }
   if (turnState === 'working') return { stage: '正在执行工具', activity: '正在执行工具' }
   return { stage: '正在分析请求', activity: '正在思考' }
 }

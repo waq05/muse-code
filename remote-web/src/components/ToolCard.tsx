@@ -13,6 +13,8 @@ export interface ToolCardProps {
 }
 
 const STATUS_LABEL: Record<ToolStatus, string> = {
+  // 模型吐了工具名、参数还没到齐（对照 dsh 的 preparing 阶段）
+  preparing: '准备中',
   running: '运行中',
   done: '完成',
   failed: '失败',

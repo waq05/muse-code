@@ -101,8 +101,18 @@ export class MiniAgent {
    * @param images - 随消息发送的图片（data URL 清单）；模型收不收图由请求前的改写决定。
    */
   followup(text: string, images?: string[]): void {
+    // 回合还没跑完就收到的消息算「轮中途插话」（对照 dsh 的 steering）：它会并进这一轮的
+    // 下一次模型请求（messages 是同一份，下一轮 for(;;) 重建请求时自然带上）。界面据此
+    // 锁住整轮折叠、也不把它当成新一轮的起点。要在 enqueueTurn 之前读 running——
+    // 那之后 running 会被置真，再来一条就分不出先后了。
+    const steering = this.running
     this.session.appendUser(text, images)
-    this.deps.emit({ type: 'user', text, ...(images !== undefined && images.length > 0 ? { images } : {}) })
+    this.deps.emit({
+      type: 'user',
+      text,
+      ...(images !== undefined && images.length > 0 ? { images } : {}),
+      ...(steering ? { steering: true } : {}),
+    })
     this.enqueueTurn()
   }
 
@@ -201,10 +211,19 @@ export class MiniAgent {
       },
       {
         onDelta: (kind, text) => this.deps.emit({ type: 'delta', kind, text }),
+        // 「模型决定要调什么」与「工具真的开跑」之间那段真空，界面上靠这一条才有线索
+        onToolPrepare: (name) => this.deps.emit({ type: 'tool/prepare', name }),
+        // 重试发生在 llm 层内部，不透出来用户只会觉得界面莫名卡了几秒
+        onRetry: (attempt, reason) => this.deps.emit({ type: 'model/retry', attempt, reason }),
       },
     )
     this.session.appendAssistant(result.text, result.reasoning, result.toolCalls)
-    this.deps.emit({ type: 'message', text: result.text, reasoning: result.reasoning })
+    this.deps.emit({
+      type: 'message',
+      text: result.text,
+      reasoning: result.reasoning,
+      finishReason: result.finishReason,
+    })
     if (result.usage !== null) {
       this.deps.emit({ type: 'usage', inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens })
     }

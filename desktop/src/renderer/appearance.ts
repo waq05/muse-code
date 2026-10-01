@@ -86,7 +86,7 @@ export function normalizeButtonScale(value: unknown): number {
 }
 
 /**
- * 把外部来的过程折叠程度归一成三档之一。
+ * 把外部来的过程折叠程度归一成四档之一。
  *
  * 认不出的值（老宿主没这一项、手改坏的字符串、null）一律回落 `standard`——与宿主
  * core/prefs.ts 的 readProcessFold 同一张表、同一个默认值，改这里要两边一起改。
@@ -96,8 +96,18 @@ export function normalizeButtonScale(value: unknown): number {
  * @returns 可以直接交给 ChatView 的档位
  */
 export function normalizeProcessFold(value: unknown): UiProcessFold {
-  return value === 'compact' || value === 'detailed' ? value : 'standard'
+  return value === 'compact' || value === 'detailed' || value === 'verbose' ? value : 'standard'
 }
+
+/**
+ * 一个档位开启哪几项能力，见 {@link ./fold-policy.ts}（那张表挪到零依赖模块里，
+ * 好让行为单测直接跑源码）。这里只 re-export，调用方沿用 `appearance.js` 这个入口。
+ */
+export {
+  PROCESS_FOLD_POLICIES,
+  processFoldPolicy,
+  type ProcessFoldPolicy,
+} from './fold-policy.js'
 
 /**
  * 只改按钮大小时用：把倍率写到 `<html>` 的内联 `--dsc-btn-scale` 上。
@@ -125,7 +135,11 @@ export function normalizeUiPrefs(prefs: UiPrefsView): UiPrefsView {
     ...prefs,
     fontSize: normalizeFontScale(prefs.fontSize),
     buttonScale: normalizeButtonScale(prefs.buttonScale),
-    processFold: normalizeProcessFold(prefs.processFold)
+    processFold: normalizeProcessFold(prefs.processFold),
+    // 两个默认态开关只有 true 才算开：老宿主回读里没有这两项（undefined），
+    // 判 `=== true` 让「缺项」与「明确的 false」落到同一个结果上。
+    reasoningDefaultOpen: prefs.reasoningDefaultOpen === true,
+    toolDefaultOpen: prefs.toolDefaultOpen === true
   }
 }
 

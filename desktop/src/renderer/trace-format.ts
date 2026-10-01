@@ -17,8 +17,15 @@
 import type { TranscriptEntry } from '@dsc/runtime/contract.js'
 import { entryTs } from './turn-timing.js'
 
-/** 一条步骤的种类：轨迹页只认这四种（正文 text 不进轨迹，压缩落点另有区段行）。 */
-export type TraceStepKind = 'tool' | 'thinking' | 'system' | 'plan'
+/**
+ * 一条步骤的种类：轨迹页只认这七种（正文 text 不进轨迹，压缩落点另有区段行）。
+ *
+ * 后三种是轮级的：`turn-end` 只在中断 / 失败时落（正常结束不落条目，见 adapter 的
+ * turn/end 分支）、`turn-max-tokens` 是这次输出撞上了长度上限、`model-retry` 是模型重试
+ * （它同时是二级分组的边界，但整轮折叠仍包含它）。
+ */
+export type TraceStepKind =
+  | 'tool' | 'thinking' | 'system' | 'plan' | 'turn-end' | 'turn-max-tokens' | 'model-retry'
 
 /** 轨迹页会渲染的条目（去掉 user / text：前者是轮头，后者留在对话页）。 */
 export type TraceStepEntry = Extract<TranscriptEntry, { kind: TraceStepKind }>
@@ -93,6 +100,9 @@ export const KIND_LABEL: Record<TraceStepKind | 'user', string> = {
   thinking: '思考',
   system: '系统事件',
   plan: '计划卡',
+  'turn-end': '轮结束',
+  'turn-max-tokens': '长度上限',
+  'model-retry': '模型重试',
   user: '用户消息',
 }
 
@@ -110,6 +120,13 @@ export function stepName(entry: TranscriptEntry): string {
       return '系统事件'
     case 'plan':
       return '计划卡'
+    case 'turn-end':
+      // 轮尾标记：轨迹页里它就是这一轮的收尾记录，名字直接用「为什么结束」
+      return entry.reason === 'aborted' ? '已停止' : '过程失败'
+    case 'turn-max-tokens':
+      return '达到长度上限'
+    case 'model-retry':
+      return `模型重试（第 ${String(entry.attempt)} 次）`
     case 'user':
       return '用户消息'
     default:

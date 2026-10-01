@@ -297,11 +297,21 @@ export const runtimePlugin: Plugin.Object = {
                     ? '已保存外观设置'
                     : patch.processFold !== undefined
                       ? patch.processFold === 'compact'
-                        ? '过程折叠程度改为紧凑：整轮过程收起，思考行不显示摘要'
+                        ? '过程折叠程度改为紧凑：整轮收起、阶段分组，思考行不显示摘要，组头不报实时详情'
                         : patch.processFold === 'detailed'
-                          ? '过程折叠程度改为详细：过程条目逐条摊开，不做整轮折叠'
-                          : '过程折叠程度改为标准：整轮过程收起，摘要照显'
-                      : '已保存工作区名字'
+                          ? '过程折叠程度改为详细：整轮照旧收起，但只有历史轮分组，正在跑的那一轮直接摊开'
+                          : patch.processFold === 'verbose'
+                            ? '过程折叠程度改为逐条摊开：不做整轮折叠，阶段也不分组'
+                            : '过程折叠程度改为标准：整轮过程收起，摘要照显，组头带实时详情'
+                      : patch.reasoningDefaultOpen !== undefined
+                        ? patch.reasoningDefaultOpen
+                          ? '定稿的思考行默认展开'
+                          : '定稿的思考行默认收起'
+                        : patch.toolDefaultOpen !== undefined
+                          ? patch.toolDefaultOpen
+                            ? '工具卡默认展开'
+                            : '工具卡默认收起'
+                          : '已保存工作区名字'
         return Promise.resolve({ ok: true, notice })
       },
 

@@ -151,8 +151,13 @@ export interface AskUserView {
 /** 提一个单题提问的入参：`id` 由服务发，`questions` 由服务按这一题的字段补出来。 */
 export type AskUserViewInput = Omit<AskUserView, 'id' | 'questions'>
 
-/** 一次工具调用的展示状态。 */
-export type ToolStatus = 'running' | 'done' | 'failed' | 'rejected'
+/**
+ * 一次工具调用的展示状态。
+ *
+ * `preparing` = 模型已经开始吐这个工具的名字、参数还没到齐（对照 dsh 的 `preparing` 阶段）。
+ * 那一行不解析参数、不可展开，只是告诉用户「接下来要干这件事」。它随后会被升级成 `running`。
+ */
+export type ToolStatus = 'preparing' | 'running' | 'done' | 'failed' | 'rejected'
 
 /** 工具卡片视图：参数原文 +（完成后的）结果摘要。 */
 export interface ToolCallView {
@@ -235,8 +240,9 @@ export type TranscriptEntry =
   /**
    * images 是 data URL 清单（用户贴进来的图）；界面渲染成缩略图。
    * `compaction` 只出现在重放出来的压缩摘要上（见 {@link CompactionMark}）。
+   * `steering` = 这条消息是在助手回合**还没跑完**时插进来的（对照 dsh 的 steering 节点）。
    */
-  | { kind: 'user'; id: number; text: string; images?: string[]; ts?: number; compaction?: CompactionMark }
+  | { kind: 'user'; id: number; text: string; images?: string[]; ts?: number; compaction?: CompactionMark; steering?: boolean }
   | { kind: 'thinking'; id: number; text: string; ts?: number }
   /** usage 是整轮累计口径，见本类型头部的说明。 */
   | { kind: 'text'; id: number; text: string; ts?: number; usage?: { inputTokens: number; outputTokens: number } }
@@ -246,6 +252,27 @@ export type TranscriptEntry =
   | { kind: 'plan'; id: number; plan: PlanView; ts?: number }
   /** `compaction` 只出现在压缩插件写下的那条通知上（见 {@link CompactionMark}）。 */
   | { kind: 'system'; id: number; text: string; ts?: number; compaction?: CompactionMark }
+  /** 轮尾标记：这一轮为什么结束，见 {@link TurnEndReason}。 */
+  | { kind: 'turn-end'; id: number; reason: TurnEndReason; ts?: number }
+  /** 这一轮的输出撞上了长度上限（对照 dsh 的 `turn-max-tokens` 节点）。 */
+  | { kind: 'turn-max-tokens'; id: number; ts?: number }
+  /**
+   * 模型这次请求失败、正在重试（对照 dsh 的 `model-retry` 节点）。
+   *
+   * 它是二级分组的**边界**（前后两段过程被它切开），但**不属于**整轮折叠要放过的那些
+   * 独立节点——dsh 的规矩是「二级分组把模型重试视为分隔节点，但整轮折叠仍包含重试行」。
+   */
+  | { kind: 'model-retry'; id: number; attempt: number; text: string; ts?: number }
+
+/**
+ * 一轮对话为什么结束（口径就是宿主 `turn/end` 事件的 reason，见 core/events.ts）。
+ *
+ * 为什么要有它：dsh 的整轮折叠有一条规矩——**中断或失败的轮不折整轮**，开关行还要把
+ * 「已停止 / 过程失败」显示出来（`contract/turn-process.ts` 的 `turnProcessAlwaysOpen`
+ * 与 `chat/TurnProcessNodeView.tsx:26-28`）。dsc 的宿主一直知道这个原因，只是 adapter
+ * 从事件折条目时把它丢了，于是界面上「跑挂了的一轮」和「好好答完的一轮」长得一模一样。
+ */
+export type TurnEndReason = 'completed' | 'aborted' | 'error'
 
 /** 会话累计 token 用量。 */
 export interface TokenUsageView {
@@ -452,14 +479,21 @@ export type UiDensity = 'compact' | 'standard' | 'roomy'
 /**
  * 过程折叠程度：对话流里「思考 / 工具调用」这些过程条目的展示档位。
  *
- * - `compact`：整轮过程折叠 + 定稿的思考行不显示摘要预览；
- * - `standard`：整轮过程折叠 + 摘要照显（默认）；
- * - `detailed`：不做整轮折叠，过程条目照旧逐条摊开。
+ * 四档与 dsh 的展示档位一一对应（packages/client/ui-chat/src/client/presentation-policy.ts:24-53），
+ * 每档开哪几项能力见 desktop/src/renderer/appearance.ts 的 PROCESS_FOLD_POLICIES：
  *
- * 对照 dsh 的展示档位（packages/client/ui-chat/src/client/presentation-policy.ts）：
- * 那边是四档，dsc 只取「折叠已完成轮次」「定稿思考行显示摘要」两个能力的三种组合。
+ * - `compact`：整轮折叠 + 阶段分组 + 不显示思考行摘要 + 组头不带实时详情；
+ * - `standard`：整轮折叠 + 阶段分组 + 摘要 + 组头带实时详情（默认）；
+ * - `detailed`：整轮折叠，但**只有历史轮**才分组——正在跑的那一轮直接摊开；
+ * - `verbose`：整轮不折、阶段也不分组，过程条目逐条摊开。
+ *
+ * 为什么 `detailed` 和 `verbose` 都要有：dsh 里 `detailed` 是桌面端的实际默认档
+ * （ui-chat/src/client/apply.ts 里非 dsh 桌面端走 detailed），它的意思是「想看细节，但不想
+ * 每次都把历史摊开」——整轮照折，只有运行中的那一轮摊着。`verbose` 才是「什么都不折」。
+ * dsc 0.6.3 的三档里 `detailed` 曾经等于现在的 `verbose`，本次按 dsh 的语义改回
+ * 「折叠 + 只折历史轮」，原来那种「全摊开」的行为改由 `verbose` 承担。
  */
-export type UiProcessFold = 'compact' | 'standard' | 'detailed'
+export type UiProcessFold = 'compact' | 'standard' | 'detailed' | 'verbose'
 
 /** 侧栏界面偏好，存在 `~/.dsc/settings.json`，桌面端与以后别的界面共用。 */
 export interface UiPrefsView {
@@ -480,8 +514,22 @@ export interface UiPrefsView {
   buttonScale: number
   /** 密度档位。 */
   density: UiDensity
-  /** 过程折叠程度（紧凑 / 标准 / 详细），默认 standard。 */
+  /** 过程折叠程度（紧凑 / 标准 / 详细 / 逐条摊开），默认 standard。 */
   processFold: UiProcessFold
+  /**
+   * 定稿的思考行默认展开吗（默认 false = 折叠成一行「思考过程」）。
+   *
+   * 为什么与 {@link processFold} 分成两套：档位管的是「整轮折不折、阶段要不要分组」这一层
+   * 结构，这两项管的是最里层「单条思考 / 单张工具卡默认长什么样」。dsh 没有这两项——它的
+   * 可选性只体现在四个档位加上每层手动开合，所以这是 dsc 自己的增量（用户要求「可选折叠
+   * 思考、工具调用」）。两条轴正交：档位是粗档，这两项是在档位之上的默认态微调。
+   *
+   * 只管**定稿**条目：跑动中的那一段思考永远是展开的（它是「现在在干什么」的唯一线索，
+   * 见 ThinkingBlock 的 showPreview 那条同样的理由）。用户手点的展开态优先于这里的默认值。
+   */
+  reasoningDefaultOpen: boolean
+  /** 工具卡默认展开吗（默认 false = 只显示一行「工具名 + 状态」）。口径同 {@link reasoningDefaultOpen}。 */
+  toolDefaultOpen: boolean
 }
 
 /** 分叉结果：成功时带新会话的 jsonl 路径，UI 拿它直接切过去。 */

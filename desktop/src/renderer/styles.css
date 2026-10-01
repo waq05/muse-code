@@ -5164,12 +5164,27 @@ body.resizing iframe {
      4. 每轮底部的时间与用时（.round-foot）。
    凡是要压过旧规则的地方，都用更高特异性的选择器写在这里。 */
 
-/* ── 条目的外层容器：display: contents ──
-   这个盒子自己不参与布局，里面的条目顶上来当 .chat-inner 的 flex 项，
-   所以原来的间距（gap）、对齐（align-self: flex-end / center）与旧代码分毫不差；
-   它只提供两个落点：data-round（刻度条命中测试认回合）和每轮的页脚。 */
+/* ── 条目的外层容器：真正的盒子 ──
+   0.6.3 这里是 `display: contents`（盒子自己不参与布局，里面的条目顶上来当 .chat-inner 的
+   flex 项）。0.6.6 改成真盒子，因为两件事都要求它有盒子：
+     1. 收起的整轮不再卸载 DOM，而是挂 `hidden="until-found"`（浏览器查找能命中，见
+        fold-seats.tsx 的 useSearchableHidden）；而 `hidden` 靠 display:none 生效，
+        `display: contents` 的元素上它不起作用；
+     2. 阶段组的组体要包住组员，给组员一个共同的限高与滚动上下文。
+   布局等价性怎么保住的：原来条目直接是 .chat-inner 的 flex 项，间距靠它的 gap；现在
+   .entry-row 自己是 .chat-inner 的 flex 项（同样吃那个 gap），内部再设 flex column，于是
+   align-self: flex-end（用户气泡）与 align-self: center（system 提示）在盒子里照旧生效，
+   宽度也仍是撑满（flex 的默认 stretch）。 */
 .entry-row {
-  display: contents;
+  display: flex;
+  flex-direction: column;
+}
+
+/* `hidden` 必须能压过上面的 display：同特异性时作者样式优先于 UA 样式，
+   所以要在作者样式里显式补一条。`hidden="until-found"` 也走这条——属性存在就整条不参与布局，
+   浏览器查找命中它时发 beforematch，由 useSearchableHidden 把这一层放出来。 */
+.entry-row[hidden] {
+  display: none;
 }
 
 /* ── 刻度条与滚动条各占一条轨道 ──
@@ -5367,6 +5382,12 @@ body.resizing iframe {
 /* 状态位沿用语义色，但往前景色靠一档（与 --dsc-accent-text 同一套做法），
    这样浅底深底都能读，也不至于比正文还亮。 */
 .tool-card.status-running .tool-head .status {
+  color: var(--dsc-accent-text);
+}
+
+/* 「准备中」与「运行中」同一档颜色：两者都表示「此刻正在发生」。
+   区别在左边那句（准备读取文件 / 正在读取文件）与这里（准备中 / 进行中）。 */
+.tool-card.status-preparing .tool-head .status {
   color: var(--dsc-accent-text);
 }
 
@@ -6160,8 +6181,13 @@ body.resizing iframe {
    0.3s 延迟）。这里是同一套语义的纯 CSS 写法：::after 用 content: attr(data-shimmer)
    复制同一串文字，高光渐变裁进字形（background-clip: text）、字形自己填透明，
    于是只看得到那一道从左扫到右的亮带。
-   最底层仍是那行真文字：可选中、读屏读得到，扫光过去时也不会消失。 */
-.think-summary-text[data-shimmer]::after {
+   最底层仍是那行真文字：可选中、读屏读得到，扫光过去时也不会消失。
+
+   两处挂点共用这一套（dsh 那边两处都套 TextShimmer）：
+   - 思考行的摘要（.think-summary-text，跑动中「正在想什么」的那句）；
+   - 阶段组头的标题（.step-fold-label，跑动中「正在干什么」的那句）。 */
+.think-summary-text[data-shimmer]::after,
+.step-fold-label[data-shimmer]::after {
   animation: dsc-think-shimmer 1.5s steps(48, end) 0.3s infinite;
   background-clip: text;
   -webkit-background-clip: text;
@@ -6229,7 +6255,8 @@ body.resizing iframe {
     transition: none;
   }
 
-  .think-summary-text[data-shimmer]::after {
+  .think-summary-text[data-shimmer]::after,
+  .step-fold-label[data-shimmer]::after {
     animation: none;
     opacity: 0;
   }
@@ -6481,6 +6508,17 @@ body.resizing iframe {
   background: var(--dsc-row-hover-bg);
 }
 
+/* 不可折的那一行（中断 / 失败 / 压根没有过程内容）：它只报「这一轮收成什么样」，
+   不给开合的承诺。悬停底色与手型指针一起去掉——留着会让人以为点了有反应。
+   对照 dsh 的 TurnProcessNodeView.tsx:44 的 disabled={!canCollapse}。 */
+.turn-fold:disabled {
+  cursor: default;
+}
+
+.turn-fold:disabled:hover {
+  background: none;
+}
+
 .turn-fold:active {
   background: var(--dsc-row-active-bg);
 }
@@ -6520,6 +6558,250 @@ body.resizing iframe {
 .turn-fold[data-open] .turn-fold-chevron {
   color: var(--dsc-text-tertiary);
   transform: rotate(180deg);
+}
+
+/* ── 阶段组头：一轮里的第二级折叠（对照 dsh 的 ChatGroupSeat.tsx:114-127 与
+      ChatGroupSeat.module.css 的 .title。行为那一半在 ChatView.tsx 的 stepGrouping /
+      StepGroupRow——哪些条目归一组、组头文案怎么拼，都在 process-groups.ts）。
+
+      长什么样：一行左对齐的整行按钮，「类别图标 + 聚合标题（已读取文件，已搜索代码，
+      执行了命令）+ 紧贴标题的 chevron」，整行可点。
+
+      为什么形状跟 .turn-fold 同规格（同 min-height / 同内距 / 同圆角 / 同 hover 令牌）：
+      两级折叠是同一件事的粗细分档——整轮管「这一轮花了多久、值不值得看」，组头管「这一轮
+      走过哪几个阶段」。同规格让用户认一次就知道都能点。
+
+      靠什么区分两级（为什么不是靠缩进）：dsh 的两级都贴正文左缘，缩进会把组头读成「缩进的
+      子级」而不是「同级的阶段标题」。这里用三处差异区分：
+        1. label 用 text-secondary（比整轮那一行和思考行的 tertiary 亮一档）——组头是这一
+           段过程的标题，标题要比它下面的内容显眼；
+        2. 带类别图标（read/search/commands…），整轮那一行只有字；
+        3. 文案是动作聚合而不是时长读数。
+      hover 时 label 再提一档到 primary：鼠标扫过一整屏组头时，停在哪一组要一眼看出来。 */
+.step-fold {
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-quaternary);
+  cursor: pointer;
+  display: flex;
+  font-family: inherit;
+  font-size: var(--dsc-fs-ui);
+  /* gap 6px：比 .think-head 的 8px 紧一点。组头只有图标 + 标题两项，图标是标题的类别标记
+     而不是独立的一格，靠紧些才读成「图标 + 一句话」这一整块。 */
+  gap: 6px;
+  justify-content: flex-start;
+  min-height: var(--dsc-row-h);
+  padding: 0 8px;
+  text-align: left;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+  width: 100%;
+}
+
+.step-fold:hover {
+  background: var(--dsc-row-hover-bg);
+}
+
+.step-fold:active {
+  background: var(--dsc-row-active-bg);
+}
+
+.step-fold:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* 截图钩子（?reveal=1）：真实 :hover 抓不进静态图，沿用仓库既有的 .shot-reveal 约定。 */
+.shot-reveal .step-fold {
+  background: var(--dsc-row-hover-bg);
+}
+
+/* 类别图标与箭头**叠在同一格**，悬停 / 键盘聚焦 / 展开时显示箭头、否则显示图标
+   （对照 dsh 的 .leading 里 .activityIcon 与 .chevron 绝对定位叠放，ChatGroupSeat.tsx:117-121
+   与 conversation-nodes/README.zh.md:168）。
+
+   为什么叠放而不是并排：组头读完只有两个信息——「这一组属于哪类活」和「它能不能点开」。
+   并排会把图标位撑成两格宽，整行读起来像有四个元素；叠放则任何时刻只显一个，
+   静息看类别、要动手时才把「能点」显出来。 */
+.step-fold-leading {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+}
+
+/* 叠放：图标与箭头同占一格（grid 的同一个 cell），靠显隐切换。 */
+.step-fold-leading > * {
+  grid-area: 1 / 1;
+}
+
+/* 类别图标：静息压到 quaternary——它是「这一组属于哪类活」的标记，不该比标题抢眼。 */
+.step-fold-icon {
+  align-items: center;
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+  transition: opacity var(--dsc-dur) var(--dsc-ease);
+}
+
+/* 箭头：静息藏起来（图标占位），悬停 / 聚焦 / 展开时顶上。 */
+.step-fold-chevron {
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+  opacity: 0;
+  transition:
+    opacity var(--dsc-dur) var(--dsc-ease),
+    transform var(--dsc-dur) var(--dsc-ease);
+}
+
+.step-fold:hover .step-fold-icon,
+.step-fold:focus-visible .step-fold-icon,
+.step-fold[data-open] .step-fold-icon {
+  opacity: 0;
+}
+
+.step-fold:hover .step-fold-chevron,
+.step-fold:focus-visible .step-fold-chevron,
+.step-fold[data-open] .step-fold-chevron {
+  color: var(--dsc-text-tertiary);
+  opacity: 1;
+}
+
+/* 展开态：箭头转 180°（收起 ∨、展开 ∧，与 .turn-fold-chevron 同一套写法）。 */
+.step-fold[data-open] .step-fold-chevron {
+  transform: rotate(180deg);
+}
+
+/* 截图钩子（?reveal=1）也要把箭头显出来：那一档专门拍「悬停长什么样」。 */
+.shot-reveal .step-fold-icon {
+  opacity: 0;
+}
+
+.shot-reveal .step-fold-chevron {
+  color: var(--dsc-text-tertiary);
+  opacity: 1;
+}
+
+.step-fold-label {
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-ui);
+  /* flex:none + nowrap：与 .think-label 那两条同一个道理（见上面「竖排字」那段注释）——
+     标题不许被压成一列字。组头标题里有「，」，断行风险比「思考过程」还高。 */
+  flex: none;
+  /* 跑动中的扫光是 ::after 绝对定位叠在字形上（见下面那条共用规则），要一个定位父级 */
+  position: relative;
+  white-space: nowrap;
+}
+
+.step-fold:hover .step-fold-label {
+  color: var(--dsc-text-primary);
+}
+
+/* 展开时组头与组体之间留 8px（对照 dsh 的 .title[aria-expanded="true"] { padding-bottom: 8px }）：
+   组头是这一段的标题，贴太紧会读成组体里的第一行。 */
+.step-fold[data-open] {
+  padding-bottom: 8px;
+}
+
+/* ── 「加载更早」那颗按钮 ──
+   对话流最前面的一行居中按钮，只在上面还有没画出来的轮时出现（见 ChatView 的 hasEarlier）。
+   规格与过程行同档（同 min-height、同行内字号、同 hover 底色），它是「可以点的一行」这件事
+   与整轮开关、阶段组头保持一致。为什么居中而不是左对齐：它不是对话内容的一部分，
+   是「上面还有东西」的一个提示，居中才不会跟某一轮的过程混在一起。 */
+.chat-earlier {
+  align-self: center;
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--dsc-fs-ui);
+  min-height: var(--dsc-row-h);
+  padding: 0 12px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.chat-earlier:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-secondary);
+}
+
+.chat-earlier:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* ── 一轮的座位：把「用户消息 → 总开关 → 过程区 → 最终回答 → 页脚」收进一个盒子 ──
+   为什么需要它：阶段组的组体要有自己的限高与滚动，而组员在 entries 里是连续的一段——
+   只有按块（座位 / 组）产出才包得住。间距继续吃 .chat-inner 那一档 gap，观感与
+   0.6.3 的「所有条目平铺在 .chat-inner 里」一致。 */
+.turn-seat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsc-turn-gap);
+}
+
+/* ── 阶段组的座位：组头 + 组体 ── */
+.step-seat {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 整轮收起时组头与组体一起藏（三层显隐从外向内）。同样要显式压过上面的 display。 */
+.step-seat[hidden] {
+  display: none;
+}
+
+/* 组体：限高 + 组内独立滚动 + 上下两条方向渐隐（对照 dsh 的 ChatGroupSeat.module.css:74-105）。
+   限高取 min(400px, 50vh)：一个阶段可能压着几十条调用，不限高展开就是一屏到底；
+   用 50vh 兜底是因为小窗口里 400px 会占掉大半屏。
+   为什么要组内独立滚动：这一组滚它的，外层 transcript 的跟随照旧在底部——两者互不干扰。 */
+.step-body {
+  max-height: min(400px, 50vh);
+  overflow-y: auto;
+  overscroll-behavior-y: auto;
+  scrollbar-gutter: stable;
+}
+
+/* 两条方向渐隐：用 mask 让内容在边缘淡出（对照 dsh 的 .fadeTop / .fadeBottom）。
+   为什么是 mask 而不是叠一层渐变色块：叠色块要求底色是纯色，而会话区底色是 color-mix
+   按主题与密度算出来的，写死颜色在浅色主题下会露馅。 */
+.step-body[data-scroll-up] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%);
+}
+
+.step-body[data-scroll-down] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
+}
+
+.step-body[data-scroll-up][data-scroll-down] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+}
+
+/* 组体里的内容列：不限高（限高在 .step-body 上），间距与 .chat-inner 同一档。 */
+.step-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsc-turn-gap);
 }
 
 /* ── 页脚里那三颗新按钮（复制 / 赞 / 踩）──
@@ -6577,6 +6859,9 @@ body.resizing iframe {
 @media (prefers-reduced-motion: reduce) {
   .turn-fold,
   .turn-fold-chevron,
+  .step-fold,
+  .step-fold-icon,
+  .step-fold-chevron,
   .round-foot .round-act {
     transition: none;
   }

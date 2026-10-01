@@ -31,6 +31,21 @@ export function turnFoldKey(sessionId: string | null, roundIndex: number): strin
   return `${sessionId ?? ''}:turn:${String(roundIndex)}`
 }
 
+/**
+ * 阶段组折叠的存档键：`会话id:step:轮序号:组序号`。
+ *
+ * 与整轮键同风格（都带会话前缀，两条会话不会互相借展开态）。用「轮序号 + 轮内组序号」而不是
+ * 组内第一条的条目下标：直播中尾组会不断吸收新工具，但它的组序号是定的；正文一封组，新组的
+ * 序号也是定的。拿下标当键的话，往前插一条历史就会让整轮的组全部换号、展开态集体作废。
+ *
+ * @param sessionId 当前会话 id；未知传 null
+ * @param roundIndex 轮次序号（0 基，与 turn-timing 的 RoundInfo.index 同源）
+ * @param groupSeq 轮内组序号（0 基，见 process-groups.ts 的 StepGroup.seq）
+ */
+export function stepGroupFoldKey(sessionId: string | null, roundIndex: number, groupSeq: number): string {
+  return `${sessionId ?? ''}:step:${String(roundIndex)}:${String(groupSeq)}`
+}
+
 /** 读存档；没有记录就用调用方给的默认值（首次挂载与「没存档」是同一种情况）。 */
 export function readFold(key: string | undefined, fallback: boolean): boolean {
   if (key === undefined) return fallback

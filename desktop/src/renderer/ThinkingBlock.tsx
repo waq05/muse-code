@@ -91,6 +91,7 @@ export function ThinkingBlock({
   live,
   storeKey,
   showPreview = true,
+  defaultOpen = false,
 }: {
   /** 思考原文：定稿后是一条，直播中每来一段它会变长。 */
   text: string
@@ -108,10 +109,18 @@ export function ThinkingBlock({
    * 正在写的那一段是「它现在在干什么」的唯一线索，不能因为档位把它藏了。
    */
   showPreview?: boolean
+  /**
+   * 定稿条目的初始展开态（设置 → 通用 → 定稿的思考行，默认收起）。
+   *
+   * 为什么与 `live` 分开而不是合成一位：直播尾那一条**永远**是展开的——它是「现在在干什么」
+   * 的唯一线索，用户如果把「定稿行默认展开」关掉，直播中还是得看得见正在写什么。
+   * 两者取或：直播尾展开，定稿条目看用户这项设置。用户手点的展开态优先于两者（走存档）。
+   */
+  defaultOpen?: boolean
 }): JSX.Element {
-  // 直播尾挂载即展开（沿用改动前 `open={entry.id < 0}` 的语义）；定稿条目默认折叠。
+  // 直播尾挂载即展开（沿用改动前 `open={entry.id < 0}` 的语义）；定稿条目按用户的默认态设置。
   // 有存档就认存档：重挂（换会话再切回来）时不能让用户的展开白点。
-  const [open, setOpen] = useState(() => readFold(storeKey, live))
+  const [open, setOpen] = useState(() => readFold(storeKey, live || defaultOpen))
   const [barVisible, setBarVisible] = useState(false)
   const bodyRef = useRef<HTMLDivElement | null>(null)
 

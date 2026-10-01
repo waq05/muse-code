@@ -106,7 +106,11 @@ export function TraceInspector(props: {
           <Section label="输出">
             {entry.call.resultText === undefined || entry.call.resultText === '' ? (
               <div className="ti-empty">
-                {entry.call.status === 'running' ? '这次调用还在跑，结果还没回来。' : '这次调用没有输出。'}
+                {entry.call.status === 'running'
+                  ? '这次调用还在跑，结果还没回来。'
+                  : entry.call.status === 'preparing'
+                    ? '这次调用还在准备中（参数没到齐），结果还没回来。'
+                    : '这次调用没有输出。'}
               </div>
             ) : (
               <Block text={entry.call.resultText} marker="result" />

@@ -66,7 +66,7 @@ function pickNumber(source: Rec, ...keys: string[]): number | null {
 
 // ── 条目 ────────────────────────────────────────────────────────────────────
 
-const TOOL_STATUSES: readonly ToolStatus[] = ['running', 'done', 'failed', 'rejected']
+const TOOL_STATUSES: readonly ToolStatus[] = ['preparing', 'running', 'done', 'failed', 'rejected']
 
 function normalizeToolCall(raw: unknown): ToolCallView | null {
   const source = asRecord(raw)
