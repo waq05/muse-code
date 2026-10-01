@@ -13,7 +13,26 @@ import { ApprovalCard } from './ApprovalCard.js'
 import { AskCard, GoalBar, PlanReview, TaskDock } from './TaskDock.js'
 import { ChatView } from './ChatView.js'
 import { Composer } from './Composer.js'
-import { Dock, type DockTab } from './Dock.js'
+import { Dock } from './Dock.js'
+import {
+  closeTab as dockCloseTab,
+  defaultSurface,
+  type DockActions,
+  type DockSurface,
+  type DockSurfaces,
+  type DockTabKind,
+  focusPane as dockFocusPane,
+  focusTab as dockFocusTab,
+  loadSurfaces,
+  openTab as dockOpenTab,
+  placeTab as dockPlaceTab,
+  saveSurfaces,
+  setExpanded as dockSetExpanded,
+  setFraction as dockSetFraction,
+  splitPane as dockSplitPane,
+  toggleMode as dockToggleMode,
+  unsplitPane as dockUnsplitPane,
+} from './dock-model.js'
 import { PluginsView } from './PluginsView.js'
 import { SessionPicker } from './SessionPicker.js'
 import { isSessionMarker } from './session-marker.js'
@@ -37,8 +56,7 @@ import {
   writeStoredFlag,
   writeStoredPx,
 } from './panels.js'
-import { IconChevronDown, IconCode, IconCopy, IconFolder, IconFolderOpen, IconGlobe, IconSidebar, IconTerminal } from './icons.js'
-import iconUrl from '../../build/icon.png'
+import { IconChevronDown, IconCode, IconCopy, IconFolderOpen, IconSidebar, IconTerminal } from './icons.js'
 
 export function App(): JSX.Element {
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null)
@@ -59,9 +77,9 @@ export function App(): JSX.Element {
   const [mates, setMates] = useState<TeammateView[]>([])
   const [subOpen, setSubOpen] = useState(false)
   const [teamOpen, setTeamOpen] = useState(false)
-  const [dockOpen, setDockOpen] = useState(false)
-  // dock 停在哪个面板：开始页入口卡（终端/浏览器/文件）要定向打开，所以提到 App 持有
-  const [dockTab, setDockTab] = useState<DockTab>('terminal')
+  // dock（右侧栏）布局真源：每个会话各一份（页签组/开合/全屏都随会话走，对照 dsh）。
+  // dockOpen/dockTab 不再单独存——它们是当前会话 surface 上的 expanded / 页签激活态。
+  const [surfaces, setSurfaces] = useState<DockSurfaces>(loadSurfaces)
   // 顶栏「多种方式打开工作区」的下拉菜单（对照 dsh 的文件夹+下拉分组钮）
   const [wsMenu, setWsMenu] = useState(false)
   // dock 宽度（拖拽调宽，持久化到 localStorage）
@@ -157,14 +175,60 @@ export function App(): JSX.Element {
     writeStoredFlag(PANEL_KEYS.sidebarRail, next)
   }, [])
 
+  // 当前会话 id 与它的右侧栏布局：没有存档就给默认的「开始」布局
+  const sessionId = snapshot?.status.sessionId ?? ''
+  const surface = surfaces[sessionId] ?? defaultSurface()
+  // 派发一个布局变更：以当前会话的 surface 为基，算完顺手落盘（布局很小，写 localStorage 便宜）
+  const mutateSurface = useCallback(
+    (fn: (s: DockSurface) => DockSurface): void => {
+      setSurfaces((current) => {
+        const base = current[sessionId] ?? defaultSurface()
+        const next = { ...current, [sessionId]: fn(base) }
+        saveSurfaces(next)
+        return next
+      })
+    },
+    [sessionId],
+  )
+  const dockActions = useMemo<DockActions>(
+    () => ({
+      openTab: (kind, options) => mutateSurface((s) => dockOpenTab(s, kind, options)),
+      closeTab: (tabId) => mutateSurface((s) => dockCloseTab(s, tabId)),
+      focusTab: (tabId) => mutateSurface((s) => dockFocusTab(s, tabId)),
+      focusPane: (paneId) => mutateSurface((s) => dockFocusPane(s, paneId)),
+      splitPane: (paneId) => mutateSurface((s) => dockSplitPane(s, paneId)),
+      unsplit: () => mutateSurface((s) => dockUnsplitPane(s)),
+      placeTab: (tabId, paneId) => mutateSurface((s) => dockPlaceTab(s, tabId, paneId)),
+      setExpanded: (expanded) => mutateSurface((s) => dockSetExpanded(s, expanded)),
+      toggleMode: () => mutateSurface((s) => dockToggleMode(s)),
+      setFraction: (fraction) => mutateSurface((s) => dockSetFraction(s, fraction)),
+    }),
+    [mutateSurface],
+  )
+
   // Ctrl+B（macOS 上是 Cmd+B）收起/展开侧栏。主进程只建了托盘菜单，没占任何快捷键，
   // 输入框里 Ctrl+B 也没有默认行为，这个键是空的。
-  // Ctrl+P / Ctrl+` / Ctrl+T（对照 dsh 的开始页卡片角标）定向打开 dock 的文件 / 终端 /
-  // 浏览器面板——浏览器没有打印与「新建标签页」的默认行为可抢，这三个键也是空的。
-  const openDock = useCallback((next: DockTab): void => {
-    setDockTab(next)
-    setDockOpen(true)
-  }, [])
+  // Ctrl+P / Ctrl+` / Ctrl+T（对照 dsh 的开始页卡片角标）在右侧栏打开 文件 / 终端 /
+  // 浏览器 页——浏览器没有打印与「新建标签页」的默认行为可抢，这三个键也是空的。
+  // 开页 + 展开：开始页还挂着时就地替换（dsh 的入口路径），开过的单例页聚焦现成的。
+  // 快捷键/自检钩子可能抢在快照（会话 id）到达之前——那时先把意图排进 ref，会话一到就补开。
+  const pendingDock = useRef<DockTabKind | null>(null)
+  const openDock = useCallback(
+    (kind: DockTabKind): void => {
+      if (sessionId === '') {
+        pendingDock.current = kind
+        return
+      }
+      mutateSurface((s) => dockSetExpanded(dockOpenTab(s, kind, { replaceGuide: true }), true))
+    },
+    [mutateSurface, sessionId],
+  )
+  useEffect(() => {
+    const pending = pendingDock.current
+    if (sessionId === '' || pending === null) return
+    pendingDock.current = null
+    openDock(pending)
+  }, [sessionId, openDock])
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.defaultPrevented) return
@@ -234,6 +298,9 @@ export function App(): JSX.Element {
     // 侧栏那档队友清单撤掉后，原来 ?teammates=1 的位置由 ?team=1 接上）
     if (shotParams.has('team')) setTeamOpen(true)
     if (shotParams.has('subagents')) setSubOpen(true)
+    // ?dock=1 展开右侧栏（停在「开始」页）——多页签面板的截图钩子；分栏/多开用
+    // SHOT_EVAL 点真实按钮（.dock-add / .dock-chip 右键）驱动
+    if (shotParams.has('dock')) openDock('guide')
     if (shotParams.has('reveal')) document.body.classList.add('shot-reveal')
     // ?dropline=1 给第二个工作区块画上真实的落点线，好拍清拖动指示长什么样
     const dropLine = shotParams.has('dropline')
@@ -617,9 +684,9 @@ export function App(): JSX.Element {
                   )}
                 </div>
                 <button
-                  className={`icon-btn dock-toggle${dockOpen ? ' on' : ''}`}
-                  data-tip="工作区面板：终端、浏览器、文件、Git"
-                  onClick={() => setDockOpen((current) => !current)}
+                  className={`icon-btn dock-toggle${surface.expanded ? ' on' : ''}`}
+                  data-tip="工作区面板：开始、终端、浏览器、文件、Git"
+                  onClick={() => dockActions.setExpanded(!surface.expanded)}
                 >
                   <IconSidebar size={15} />
                 </button>
@@ -642,10 +709,7 @@ export function App(): JSX.Element {
               ) : tab === 'trace' ? (
                 <TraceView entries={snapshot.entries as TranscriptEntry[]} status={snapshot.status} />
               ) : empty ? (
-                <Welcome
-                  systemEntries={snapshot.entries.filter((entry) => entry.kind === 'system')}
-                  onOpenDock={openDock}
-                />
+                <Welcome systemEntries={snapshot.entries.filter((entry) => entry.kind === 'system')} />
               ) : (
                 <ChatView
                   entries={snapshot.entries as TranscriptEntry[]}
@@ -736,19 +800,18 @@ export function App(): JSX.Element {
         )}
       </div>
 
-      {dockOpen && (
+      {/* dock 常驻挂载：收起 = 整块滑出右缘（终端进程与输出都活着），布局随会话走 */}
+      {sessionId !== '' && (
         <Dock
-          visible
+          surface={surface}
+          actions={dockActions}
           cwd={cwd}
           proxy={proxy}
           width={dockWidth}
-          tab={dockTab}
-          onTab={setDockTab}
           onResize={(width) => {
             setDockWidth(width)
             localStorage.setItem('dsc.dockWidth', String(width))
           }}
-          onClose={() => setDockOpen(false)}
         />
       )}
 
@@ -779,55 +842,16 @@ export function App(): JSX.Element {
   )
 }
 
-/**
- * 空会话欢迎态（对照 dsh 的「开始」页）：居中 logo + 三张入口卡，直接进 dock 的
- * 对话前常用面板；宿主预写的 system 提示行跟在卡片下面。
- */
-function Welcome(props: {
-  systemEntries: { id: number; text: string }[]
-  onOpenDock(tab: 'terminal' | 'browser' | 'files'): void
-}): JSX.Element {
+/** 空会话欢迎态：居中引导文案 + 宿主预写的 system 提示行。入口卡在右侧栏的「开始」页里（对照 dsh），这里不放。 */
+function Welcome(props: { systemEntries: { id: number; text: string }[] }): JSX.Element {
   // 开场那条「会话 x · 模型 y」不画：它已经在状态栏第一段的悬浮提示里（见 session-marker.ts）。
   const notes = props.systemEntries.filter((entry) => !isSessionMarker(entry.text))
   return (
     <div className="welcome">
-      <img className="welcome-logo" src={iconUrl} alt="" />
       <h1>有什么可以帮忙的？</h1>
       <p>
         输入 <code>/</code> 查看可用指令 · 消息会携带当前工作目录上下文
       </p>
-      <div className="welcome-cards">
-        <button className="welcome-card" onClick={() => props.onOpenDock('files')}>
-          <span className="welcome-card-icon tone-folder">
-            <IconFolder size={17} />
-          </span>
-          <span className="welcome-card-text">
-            <span className="welcome-card-title">工作区文件</span>
-            <span className="welcome-card-desc">浏览会话工作区的文件</span>
-          </span>
-          <kbd className="welcome-card-key">Ctrl + P</kbd>
-        </button>
-        <button className="welcome-card" onClick={() => props.onOpenDock('terminal')}>
-          <span className="welcome-card-icon tone-terminal">
-            <IconTerminal size={17} />
-          </span>
-          <span className="welcome-card-text">
-            <span className="welcome-card-title">新建终端</span>
-            <span className="welcome-card-desc">在会话工作区运行命令</span>
-          </span>
-          <kbd className="welcome-card-key">Ctrl + `</kbd>
-        </button>
-        <button className="welcome-card" onClick={() => props.onOpenDock('browser')}>
-          <span className="welcome-card-icon tone-browser">
-            <IconGlobe size={17} />
-          </span>
-          <span className="welcome-card-text">
-            <span className="welcome-card-title">浏览器</span>
-            <span className="welcome-card-desc">浏览网页</span>
-          </span>
-          <kbd className="welcome-card-key">Ctrl + T</kbd>
-        </button>
-      </div>
       {notes.map((entry) => (
         <div key={entry.id} className="welcome-note">
           {entry.text}

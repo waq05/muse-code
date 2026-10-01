@@ -1020,104 +1020,6 @@
   padding-bottom: 8vh;
 }
 
-/* 居中 logo（对照 dsh 开始页的罗盘）：取应用图标，圆角小方 */
-.welcome-logo {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
-  margin-bottom: 10px;
-  box-shadow: 0 1px 3px color-mix(in srgb, #000 22%, transparent);
-}
-
-/* 三张入口卡（对照 dsh 开始页）：竖排一列，图标+标题+描述在左、快捷键在右 */
-.welcome-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 22px;
-  width: min(420px, 86%);
-}
-
-.welcome-card {
-  align-items: center;
-  background: var(--dsc-fill-quinary);
-  border: 1px solid var(--dsc-stroke-2);
-  border-radius: var(--dsc-r-control);
-  color: var(--dsc-text-primary);
-  cursor: pointer;
-  display: flex;
-  gap: 12px;
-  padding: 12px 14px;
-  text-align: left;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-
-.welcome-card:hover {
-  background: var(--dsc-fill-quaternary);
-  border-color: var(--dsc-accent);
-}
-
-.welcome-card:focus-visible {
-  border-color: var(--dsc-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 22%, transparent);
-  outline: none;
-}
-
-/* 图标座：软色底 + 对应令牌色的图形；三张卡各占一色（全令牌，浅深各自成立） */
-.welcome-card-icon {
-  align-items: center;
-  border-radius: 8px;
-  display: flex;
-  flex-shrink: 0;
-  height: 32px;
-  justify-content: center;
-  width: 32px;
-}
-
-.welcome-card-icon.tone-folder {
-  background: color-mix(in srgb, var(--dsc-orange) 16%, transparent);
-  color: var(--dsc-orange);
-}
-
-.welcome-card-icon.tone-terminal {
-  background: color-mix(in srgb, var(--dsc-green) 16%, transparent);
-  color: var(--dsc-green);
-}
-
-.welcome-card-icon.tone-browser {
-  background: color-mix(in srgb, var(--dsc-purple) 16%, transparent);
-  color: var(--dsc-purple);
-}
-
-.welcome-card-text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.welcome-card-title {
-  font-size: var(--dsc-fs-body);
-  font-weight: 500;
-}
-
-.welcome-card-desc {
-  color: var(--dsc-text-tertiary);
-  font-size: var(--dsc-fs-caption);
-}
-
-.welcome-card-key {
-  align-self: center;
-  border: 1px solid var(--dsc-stroke-3);
-  border-radius: 6px;
-  color: var(--dsc-text-tertiary);
-  flex-shrink: 0;
-  font-family: var(--dsc-font-mono);
-  font-size: var(--dsc-fs-caption);
-  padding: 2px 7px;
-}
-
 .welcome h1 {
   margin: 0;
   font-size: var(--dsc-fs-hero);
@@ -2435,7 +2337,7 @@
   background: var(--dsc-row-hover-bg);
 }
 
-/* ══════════ dock 工作区面板 ══════════ */
+/* ══════════ dock 工作区面板（对照 dsh 右侧栏：多页签 / 开始页 / 分栏 / 全屏） ══════════ */
 
 .dock {
   position: relative;
@@ -2444,6 +2346,26 @@
   flex-shrink: 0;
   border-left: 1px solid var(--dsc-stroke-4);
   background: var(--dsc-bg-side);
+  transition: transform 0.2s var(--dsc-ease), margin-right 0.2s var(--dsc-ease);
+}
+
+/* 收起：整块滑出右缘并松开正文轨道（margin 抵消占位），内容不卸载（终端进程存活） */
+.dock.collapsed {
+  transform: translateX(100%);
+  visibility: hidden;
+}
+
+/* 全屏：盖住顶栏以下、保留正文轨道宽度（surface 上的 width 不动），退出时零回流 */
+.dock.mode-fullscreen {
+  position: fixed;
+  top: var(--dsc-titlebar-h);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw !important;
+  margin-right: 0 !important;
+  border-left: none;
+  z-index: var(--dsc-z-dock);
 }
 
 /* 左边缘拖拽调宽手柄（热区 9px，视觉上由 hover 高亮提示） */
@@ -2478,39 +2400,259 @@ body.resizing iframe {
   pointer-events: none;
 }
 
-.dock-tabs {
+/* 窗格行（1–2 格）与中间的分栏拖拽条 */
+.dock-panes {
   display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--dsc-stroke-4);
-  -webkit-app-region: drag;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 
-.dock-tabs button {
-  -webkit-app-region: no-drag;
+.dock-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.dock-split {
+  cursor: col-resize;
+  flex: 0 0 8px;
+  margin: 0 -4px;
+  z-index: 1;
+}
+
+.dock-split:hover {
+  background: color-mix(in srgb, var(--dsc-accent) 35%, transparent);
+}
+
+/* 页签条：chip（图标 + 标题 + hover 关闭点）+ 加号 + 条尾 chrome 两钮 */
+.dock-strip {
+  align-items: center;
+  border-bottom: 1px solid var(--dsc-stroke-4);
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
   min-height: var(--dsc-row-h);
-  padding: 4px 10px;
+  padding: 4px 6px;
+}
+
+.dock-chip {
+  align-items: center;
   border-radius: var(--dsc-r-control);
   color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  flex-shrink: 0;
   font-size: var(--dsc-fs-caption);
+  gap: 5px;
+  max-width: 40%;
+  min-height: calc(var(--dsc-row-h) - 6px);
+  padding: 3px 8px;
   transition:
     background var(--dsc-dur) var(--dsc-ease),
     color var(--dsc-dur) var(--dsc-ease);
 }
 
-.dock-tabs button:hover {
+.dock-chip:hover {
   background: var(--dsc-row-hover-bg);
   color: var(--dsc-text-primary);
 }
 
-.dock-tabs button.on {
+.dock-chip.on {
   background: var(--dsc-row-active-bg);
   color: var(--dsc-text-primary);
 }
 
-.dock-tabs .dock-close {
-  margin-left: auto;
+.dock-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 关闭点：hover（或菜单开着）才现身，别让一排 ✕ 抢视线 */
+.dock-chip-close {
+  border-radius: 4px;
+  display: none;
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.7;
+  padding: 1px 3px;
+}
+
+.dock-chip:hover .dock-chip-close,
+.dock-chip.menu .dock-chip-close {
+  display: inline;
+}
+
+.dock-chip-close:hover {
+  background: var(--dsc-row-hover-bg);
+  opacity: 1;
+}
+
+.dock-add {
+  color: var(--dsc-text-tertiary);
+  flex-shrink: 0;
+  font-size: 14px;
+  min-height: calc(var(--dsc-row-h) - 6px);
+  padding: 0 8px;
+}
+
+.dock-add:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.dock-strip-fill {
+  flex: 1;
+}
+
+.dock-chrome-btn {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  flex-shrink: 0;
+  min-height: calc(var(--dsc-row-h) - 6px);
+  padding: 0 7px;
+}
+
+.dock-chrome-btn:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+/* 页签的右键菜单：fixed 贴着指针（遮罩/菜单样式沿用 .menu-backdrop/.row-menu） */
+.dock-tab-menu {
+  min-width: 120px;
+  z-index: var(--dsc-z-dock);
+}
+
+/* 窗格体与单页签的容器 */
+.dock-pane-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.dock-tab-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 「开始」页（对照 dsh 的 guide）：罗盘 + 入口卡，无标题 */
+.dock-guide {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 20px 16px;
+}
+
+.dock-guide-hero {
+  color: var(--dsc-text-quaternary);
+  margin-bottom: 22px;
+}
+
+.dock-guide-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(380px, 92%);
+}
+
+.dock-guide-entry {
+  align-items: center;
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-primary);
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  padding: 11px 13px;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dock-guide-entry:hover {
+  background: var(--dsc-fill-quaternary);
+  border-color: var(--dsc-accent);
+}
+
+.dock-guide-entry:focus-visible {
+  border-color: var(--dsc-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 22%, transparent);
+  outline: none;
+}
+
+/* 图标座：软色底 + 对应令牌色的图形（全令牌，浅深各自成立） */
+.dock-guide-icon {
+  align-items: center;
+  border-radius: 8px;
+  display: flex;
+  flex-shrink: 0;
+  height: 32px;
+  justify-content: center;
+  width: 32px;
+}
+
+.dock-guide-icon.tone-folder {
+  background: color-mix(in srgb, var(--dsc-orange) 16%, transparent);
+  color: var(--dsc-orange);
+}
+
+.dock-guide-icon.tone-terminal {
+  background: color-mix(in srgb, var(--dsc-green) 16%, transparent);
+  color: var(--dsc-green);
+}
+
+.dock-guide-icon.tone-browser {
+  background: color-mix(in srgb, var(--dsc-purple) 16%, transparent);
+  color: var(--dsc-purple);
+}
+
+.dock-guide-icon.tone-git {
+  background: color-mix(in srgb, var(--dsc-accent) 16%, transparent);
+  color: var(--dsc-accent);
+}
+
+.dock-guide-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.dock-guide-title {
+  font-size: var(--dsc-fs-body);
+  font-weight: 500;
+}
+
+.dock-guide-desc {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+}
+
+.dock-guide-key {
+  align-self: center;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: 6px;
+  color: var(--dsc-text-tertiary);
+  flex-shrink: 0;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  padding: 2px 7px;
 }
 
 .dock-body {

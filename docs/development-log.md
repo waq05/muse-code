@@ -889,3 +889,27 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 验收：桌面端 typecheck 0 错；`scripts/settings-sections-check.mjs`、`shots/integration-check.mjs`、`shots/team-check.mjs` 全绿；update-check 冒烟（六个版本比较用例 + 本地 HTTP 服务的 GitHub 回包解析）全过；实机截图 `shots/r618-home-light/home-dark/general-dark/general-light/about-dark`——开始页三卡、下拉框、关于页按钮逐张目检；selfcheck 日志出现「原生主题源 dark」（新 IPC 生效）。
 
 诚实边界：① 更新源未配置时「检查更新」只会提示还没配置，不会瞎报「已是最新」；② 快捷键在终端面板聚焦时同样生效（xterm 不吞 Ctrl 组合键，dsh 同款行为）；③ 手机端 remote-web 不受这轮影响（开始页与设置都是桌面端界面）。
+
+## 阶段 37：右侧栏对齐 dsh——多页签 / 开始页 / 分栏 / 全屏 / 每会话布局（0.6.19）
+
+用户纠偏：上一轮那张截图是 **dsh 的右侧栏**，不是主页——「开始 + 入口卡」是右侧栏没内容时的引导页。于是把 Muse Code 的右侧 dock 按它重做，且选择**完整对齐**档（多页签 + 分栏 + 每会话布局）；上一轮误放进对话空态的三张卡移进右侧栏的「开始」页，空态还原纯文字。
+
+对照 dsh（`ui-sidebar-right` + `ui-dockkit`）收窄出的能力面与决策：
+
+| 项 | 决策 | 理由 |
+| --- | --- | --- |
+| 布局真源 | 新建 `desktop/src/renderer/dock-model.ts` 纯模型（零 React）：`DockSurface { panes(1..2), activePaneId, fraction, expanded, mode }`，每会话一份；reducer 全部不可变 | 行为单测直接跑这份源码（`shots/dock-model-check.mjs`，node 内存转译），界面只是它的投影 |
+| 页签种类 | `guide / terminal / browser / files / git`；终端可无限多开，浏览器/文件/Git 每布局单例（已开再开=聚焦），guide 每窗格至多一张 | 终端宿主侧本来就按 id 多实例；浏览器是主进程单例 WebContentsView；「开始」是门面不是内容 |
+| 「开始」页 | 罗盘 + 四张入口卡（工作区文件/新建终端/浏览器/Git 管理，带快捷键角标），选中就地替换 guide（dsh 的 `replaceTab` 路径）；`+` 钮只在格内没有 guide 时画 | 对齐 dsh 的 guide 契约：guide 是「新标签页」的门面，选完就让位 |
+| chrome 两钮 | 全屏切换 + 收起，只骑在**最右窗格**条尾（dsh 的 top-right pane seat）；`✕` 退役 | dsh 原样；收起不再是销毁，是整块滑出右缘（内容不卸载，终端进程存活） |
+| 展示 | 贴边（占正文轨道）⇄ 全屏（盖住顶栏以下、`width:100vw`、轨道宽度保留，退出零回流）；视口 <768px 自动全屏 | dsh 的 push/fullscreen 双态与 autoFullscreen 同款 |
+| 分栏 | 上限两格；右键菜单「向右分栏 / 收回分栏」；拖拽条调宽比（fraction 0.2–0.8，双击收回）；页签 chip 可拖拽跨窗格搬移 | dsh 的两格上限；浮动页签（floatTab）不做，工程量与收益不成比 |
+| 页面体挂载 | 终端按页签 keepMounted（切页签/窗格只藏不卸，首次可见才 `term-spawn`）；浏览器/文件/Git 只在激活页签挂载（浏览器 URL 记入 localStorage，重开回到上次地址） | 终端的生命周期贵（进程），文件/Git 便宜（重取即回）；浏览器单例是主进程约束 |
+| 每会话布局 | surfaces 按 `snapshot.status.sessionId` 取；切会话各回各的页签组与开合状态；localStorage 落盘最多 30 个会话 | dsh 的 surfaces 就是按会话分的；「切会话还是上一块面板」是这一轮要消灭的事 |
+| 对话空态 | 还原纯文字引导；Ctrl+P / Ctrl+` / Ctrl+T 保留（dsh 里它们本来就是开右侧栏页面的命令键） | 卡片的家在右侧栏，对话区不放 |
+
+验收：`shots/dock-model-check.mjs` 21 条断言全过（含 unsplit 合并后 guide 去重——测试抓出过这个真 bug）；typecheck 0 错；四个回归脚本全绿；实机截图六张——开始页浅/深（与 dsh 截图逐项对齐）、终端双页签、分栏（探针实测 `panes=206/206 dock=420`，即 50/50）、全屏（顶栏盖住、原生控件条保留）、空态还原。
+
+诚实边界：① 非活动**会话**的终端在切走时随之关闭（同会话内切页签/窗格不关）；② 浏览器 WebContentsView 仍是主进程单例，跨会话共用一个视图；③ 浮动页签不做；④ 分栏宽度比在两格间拖拽调，不支持更多格。
+
+发布：`desktop/dist` 重建（快捷方式吃到 0.6.19）。
