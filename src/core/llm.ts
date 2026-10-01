@@ -150,6 +150,45 @@ export function dropImageParts(messages: ChatMessage[], note: string): ChatMessa
   })
 }
 
+/**
+ * 剔除历史里配不上对的工具调用与工具结果（协议守门：assistant 的每个 `tool_call`
+ * 必须有跟随的 tool 消息回应，反之亦然，否则 OpenAI 系网关直接 HTTP 400）。
+ *
+ * 孤儿从哪来：进程在「assistant 的 tool_calls 已落盘、工具结果还没写」之间被杀
+ * （崩溃、强退），会话日志里就永久留下孤儿调用；`Session.load` 原样重建，之后这个
+ * 会话**每一次请求都被 400 拒掉，用户没有自救手段**（运行中的打断不需要这里管——
+ * loop.ts 会给没跑完的调用补合成结果）。清洗只动传入的这份请求副本，落盘历史保持
+ * 原样，损坏的会话恢复后即可直接继续用。
+ *
+ * 配对按全文 id 集合判断，不要求 tool 消息紧邻：正常历史里 call id 唯一，全文判断
+ * 不会误删；而「调用与回应隔着别的消息」的畸形顺序本身就只在损坏日志里出现。
+ *
+ * @param messages - 组装好的请求消息；原数组不动。
+ * @returns 配对完整（或已剔除孤儿）的消息数组。
+ */
+export function sanitizeToolOrphans(messages: ChatMessage[]): ChatMessage[] {
+  const called = new Set<string>()
+  const answered = new Set<string>()
+  for (const message of messages) {
+    if (message.role === 'assistant') {
+      for (const call of message.tool_calls ?? []) called.add(call.id)
+    } else if (message.role === 'tool' && message.tool_call_id !== undefined) {
+      answered.add(message.tool_call_id)
+    }
+  }
+  return messages.flatMap((message): ChatMessage[] => {
+    if (message.role === 'tool') {
+      return message.tool_call_id !== undefined && !called.has(message.tool_call_id) ? [] : [message]
+    }
+    if (message.role !== 'assistant' || message.tool_calls === undefined) return [message]
+    const kept = message.tool_calls.filter((call) => answered.has(call.id))
+    if (kept.length === message.tool_calls.length) return [message]
+    if (kept.length > 0) return [{ ...message, tool_calls: kept }]
+    // 调用全被剔掉、正文又是空的：这条 assistant 已经不表达任何内容，整条删
+    return contentText(message.content) === '' ? [] : [{ ...message, tool_calls: undefined }]
+  })
+}
+
 export interface StreamHandlers {
   /** 增量回调（思考/正文二选一到达）。 */
   onDelta(kind: 'text' | 'reasoning', text: string): void
@@ -254,7 +293,9 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
     model: request.model,
     // 消息按调用方给的原样发：历史里混进多条 system 的合并是 prompt 层的
     // 命名投影（fold-system）该做的事，协议适配器只认一条流水线形状。
-    messages: serializeMessages(request.messages),
+    // 工具孤儿是协议层面的硬伤（配不上对就 400），在这里——离 wire 最近的
+    // 一站——统一守门，循环轮次与压缩等所有调用方都自动受益。
+    messages: serializeMessages(sanitizeToolOrphans(request.messages)),
     stream: true,
     stream_options: { include_usage: true },
   }

@@ -987,3 +987,19 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 验收：desktop typecheck 0 错；宿主+渲染层 build 过；四回归全绿；实机探针——侧栏基线（`native-select=0 groups=3 exp=false,false,true` 活动组自动展开）、hover 态留证（folder→三角、行尾按钮组）、干净 toggle（`before=false,false,true → g2-after-own=true → final=true,true,true` 点一组别的组不动）、重启恢复（`restored=true,true,true`）、每组限页（5 条 + 展开剩余 4/8）、双击改名（`rename-opened=true`）、会话拖拽（`drop-mark=true`，sessionOrder 落盘 9 条完整序）、弹层双主题（上）。
 
 诚实边界：① 会话级状态点（运行中/待批准）没做——SessionSummary 无运行状态字段，单宿主单活动会话，不造假数据；② HoverCard 富浮卡用 data-tip（标题+快捷键）近似；③ dsh 的行进出场动画（AnimatedRows）与远端内容搜索不搬；④ 会话拖拽只在「手动排序」档生效（与 dsh 一致）。
+
+## 阶段 41：收组回弹、消息样式误伤与孤儿 tool_calls 三连修（0.6.23）
+
+用户实测 0.6.21/0.6.22 报三问题：① 选中一个工作区后再点收不起来；② AI 消息整段变蓝带下划线；③ 发消息报 HTTP 400「assistant 带 tool_calls 必须有跟随的 tool 消息」。
+
+**① 收组回弹（0.6.22 回归）**：`Sidebar.tsx` 当前组自动展开 effect 的守卫写反——`explicit !== true` 把用户显式收起（记录 false）也强制翻回展开，而 effect 依赖的 groups 随会话列表推送不断重建，强制展开反复重放。对齐 dsh 的 `Object.hasOwn` 语义：`explicit === undefined` 才补展开，有记录（无论开/收）一律尊重。副作用与 dsh 一致：切回之前收起的组保持收起。
+
+**② 消息样式误伤（0.6.21 引入）**：505f443 把消息 markdown 版式扩展到文件预览 `.file-md` 时，15 组选择器每组丢了 `.entry-text .markdown` 的后代段，裸选择器命中容器本身——`a` 规则让整段 accent 蓝、`a:hover` 的 `text-decoration` 传播到全部内联后代、`th/td` 给容器加边框、`pre/code` 加代码底色与等宽字体。逐组补回后代段（`.entry-text .markdown p, .file-md p` 等），消息侧与文件预览侧版式同时恢复。
+
+**③ 孤儿 tool_calls（历史健壮性缺口，非本轮回归）**：进程在「assistant 的 tool_calls 已落盘、工具结果还没写」之间被杀（崩溃/强退），日志永久留下孤儿调用；`Session.load` 原样重建后**每次请求都被网关 400 拒掉，用户无自救手段**。运行中打断不需要管（loop.ts 已给没跑完的调用补合成结果），compact 的 safeCut 只防切界。修法：`llm.ts` 导出纯函数 `sanitizeToolOrphans`（没有回应的调用剔除；剔空后正文也空的消息整条删；找不到所属调用的 tool 消息删），接在 `streamOnce` 组包处（serializeMessages 之前）——离 wire 最近的统一守门，循环轮次与压缩等所有调用方自动受益；清洗只动请求副本，落盘历史保持原样，损坏的会话恢复后即可直接继续用。
+
+回归顺手修活：`shots/compact-check.mjs` 还按 0.6.21 之前的 compactSession 旧签名传参（把 signal 当 stream 传），补上适配器派发小函数（按 api 查表 → streamChat）后 53/53 恢复全绿；`shots/llm-adapter-check.mjs` 新增 sanitizeToolOrphans 七条纯函数断言（配对原样保留/不动输入/孤儿调用剔/剔空留正文/剔空删条/部分回应只剔缺的/孤儿回应删），18/18。
+
+验收：根 build + desktop typecheck 0 错；回归七脚本全绿（dock-model / integration / team / settings-sections / llm-retry 10/10 / llm-adapter 18/18 / compact 53/53）；实机探针——收起当前工作区 `got=false settled=false`（3 秒会话推送后不回弹）、消息容器 `color=近白正文色 accent=#5686fe deco=none border=0px`（截图目检正常）、构造孤儿 tool_calls 临时会话恢复后发送 `restored=true has400=false`（请求过协议校验，模型正常接单；探针轮次恰逢平台限流，与修复目标无关），探针数据（构造会话目录、settings.json、临时截图）用后全部清理。
+
+诚实边界：① 恢复会话里的孤儿调用在界面上仍显示为一张「正在执行」的工具卡（重放无结果），只影响历史展示不影响请求；② 自检脚本 `delay − EVAL_LEAD ≥ 16000ms` 时预跑脚本不触发（dev 模式下主进程长定时器异常，成因未深究），本轮脚本全部改用 2-7 秒的预跑窗口；③ 打包件未重做（修复全部在渲染层与 lib，打包流程与 0.6.22 相同）。

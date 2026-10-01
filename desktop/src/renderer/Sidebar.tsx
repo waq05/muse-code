@@ -304,7 +304,9 @@ export function Sidebar(props: {
     const patch: Record<string, boolean> = {}
     for (const key of chain) {
       const explicit = localExpansion[key] ?? props.uiPrefs.sessionExpansion[key]
-      if (explicit !== true) patch[key] = true
+      // dsh 的 Object.hasOwn 守卫：没有记录才补展开；用户显式收起过（记录 false）
+      // 的组必须尊重，否则会话列表一刷新 effect 重跑就把收起弹回去了（0.6.22 实测）。
+      if (explicit === undefined) patch[key] = true
     }
     if (Object.keys(patch).length === 0) return
     setLocalExpansion((current) => ({ ...current, ...patch }))
