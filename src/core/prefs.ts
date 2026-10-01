@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { ApprovalPolicy, ArchivedFilter, EffortLevel, MarketSource, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiPrefsView, UiProcessFold } from '../contract.js'
+import { isHttpUrl } from './remote/notify.js'
 
 export const DSC_SETTINGS_JSON = join(homedir(), '.dsc', 'settings.json')
 
@@ -36,7 +37,7 @@ export interface DscPrefs {
   remote: RemotePrefs
 }
 
-/** 远程控制的三项开关（设置 → 远程控制）。 */
+/** 远程控制的开关（设置 → 远程控制）。 */
 export interface RemotePrefs {
   /** true = 本机起 HTTP+WS 服务；false = 一个字节都不监听。 */
   enabled: boolean
@@ -44,6 +45,18 @@ export interface RemotePrefs {
   port: number
   /** true = 绑 0.0.0.0（同一个 Wi-Fi 的手机能连）；false = 只绑 127.0.0.1。 */
   lan: boolean
+  /**
+   * 浏览器推送（Web Push）总开关，默认关。
+   * 关着时：WS hello 里的 pushPublicKey 报 null、订阅端点回 403、一条推送都不发，
+   * 也不会为了它生成 VAPID 密钥。
+   */
+  push: boolean
+  /**
+   * 通知 Webhook 地址，默认空串 = 关。
+   * 只认 http(s)；带 `{title}` / `{body}` / `{url}` 占位符时走 GET（Bark 风格），
+   * 不带时 POST JSON（ntfy 风格）。读档时非 http(s) 的一律回落空串。
+   */
+  notifyWebhook: string
 }
 
 /** 远程控制端口范围与缺省值（17321 是随手挑的高位口，不与常见服务撞）。 */
@@ -147,6 +160,21 @@ function readRemotePort(value: unknown): number {
   return Math.min(REMOTE_PORT_MAX, Math.max(REMOTE_PORT_MIN, Math.round(value)))
 }
 
+/**
+ * 把存档里的通知 Webhook 读成合法地址。
+ *
+ * 只认 http(s)；手改坏的值（`javascript:`、`ftp://`、域名缺协议、数字、null）一律回落空串
+ * （空串 = 关）。这里用回落而不是夹取：一个发不出去的地址留着只会每次推送都失败一次。
+ *
+ * @param value settings.json 里 `remote.notifyWebhook` 的原始值
+ * @returns 可直接发请求的地址，或空串
+ */
+function readNotifyWebhook(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  return isHttpUrl(trimmed) ? trimmed : ''
+}
+
 /** 读偏好（文件缺失或损坏按默认处理，绝不因为偏好坏掉起不来）。 */
 export function readPrefs(): DscPrefs {
   const prefs: DscPrefs = {
@@ -169,7 +197,7 @@ export function readPrefs(): DscPrefs {
       reasoningDefaultOpen: false,
       toolDefaultOpen: false,
     },
-    remote: { enabled: false, port: REMOTE_PORT_DEFAULT, lan: false },
+    remote: { enabled: false, port: REMOTE_PORT_DEFAULT, lan: false, push: false, notifyWebhook: '' },
   }
   if (!existsSync(DSC_SETTINGS_JSON)) return prefs
   try {
@@ -245,6 +273,10 @@ export function readPrefs(): DscPrefs {
       if (typeof remote.enabled === 'boolean') prefs.remote.enabled = remote.enabled
       if (typeof remote.lan === 'boolean') prefs.remote.lan = remote.lan
       if (remote.port !== undefined) prefs.remote.port = readRemotePort(remote.port)
+      // 浏览器推送默认关：只认真正的布尔
+      if (typeof remote.push === 'boolean') prefs.remote.push = remote.push
+      // 通知 Webhook 默认空串：非 http(s) 的坏值回落空串（关掉），不让它每次推送都失败一次
+      if (remote.notifyWebhook !== undefined) prefs.remote.notifyWebhook = readNotifyWebhook(remote.notifyWebhook)
     }
     return prefs
   } catch {

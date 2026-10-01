@@ -1,0 +1,27 @@
+{
+  "name": "Muse Code",
+  "short_name": "Muse Code",
+  "description": "Muse Code 遥控端：在手机上跟电脑端的会话。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0f1013",
+  "background_color": "#0f1013",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

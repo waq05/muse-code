@@ -1,5 +1,6 @@
 node_modules/
-lib/
+# 只忽略根目录的构建产物 lib/；不锚定会连带吞掉 remote-web/src/lib/ 这类源码目录
+/lib/
 *.tsbuildinfo
 # 自检截图（DSC_DESKTOP_SHOT 的输出目录）
 shots/

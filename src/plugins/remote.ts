@@ -1,7 +1,7 @@
 /**
  * remote 插件：把这一条会话开给局域网里的手机浏览器（「远程操控」的宿主半边）。
  *
- * 三件事：**谁伺服**、**谁能进来**、**进来之后能干什么**。
+ * 四件事：**谁伺服**、**谁能进来**、**进来之后能干什么**、**不看屏幕也能知道有事发生**。
  *
  * 1. 谁伺服：同一台机器上可能有不止一个 Muse Code 进程（桌面端一个、终端一个），
  *    而一个端口只能被一个进程听，所以先抢 `~/.dsc/remote/.owner.json` 主控位（pid + 启动
@@ -16,6 +16,20 @@
  * 3. 能干什么：只开一份白名单（见 REMOTE_METHODS），凭据类与宿主生命周期相关的操作
  *    （saveProvider / setProviderKey / setSettingValue / runSettingAction / dock / exit……）
  *    一律不开放。派发与 host-stdio 同一套反射惯例，走 ctx.ui（DscRuntime）。
+ *
+ * 4. 不看屏幕也能知道：审批卡从无到有、一轮跑完 → Web Push + 通知 Webhook 同时发
+ *    （设置里的 `remote.push` 与 `remote.notifyWebhook`）。推送全挂在插件已有的
+ *    订阅与事件上，内核一条新事件都不用加。
+ *
+ * **帧协议 v3**（批 B 的手机界面按这一份认版本）：
+ *
+ *   - seq 是**宿主级全局单调递增**的（跨连接、跨重连连续），不再每条连接各自从 1 数；
+ *   - 快照不再每帧全量：与上一帧相比按条目 `id` 做 diff，只发 `added` / `updated` /
+ *     `removedIds`，其余字段打成 `meta` 每帧全量带（规则与锚帧见 core/remote/frames.ts）；
+ *   - 最近 120 帧进环形缓冲（**原样存 JSON 字符串**，重发不重算）。客户端在升级 URL 上带
+ *     `&lastSeq=N`：N 落在缓冲窗口内就照原样补发 N 之后的所有帧再转实时（补发不节流），
+ *     否则 `hello` + 一帧全量；
+ *   - 上行（invoke）与静态资源一如既往；上传与推送订阅走 HTTP，不进 invoke 白名单。
  *
  * 静态资源目录是 `lib/remote/assets`（批 B 的 vite 产物落点，见 remote-web/vite.config.ts）；
  * 目录不存在（还没构建界面）时 `/` 返回一张「资产未构建」的占位页。
@@ -35,27 +49,45 @@ import { errText } from '../adapter/transcript.js'
 import { INVOKABLE_METHODS } from '../core/host-methods.js'
 import { REMOTE_PORT_MAX, REMOTE_PORT_MIN, type RemotePrefs } from '../core/prefs.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
+import { RemoteFrameHub, type BuiltFrame } from '../core/remote/frames.js'
+import { isHttpUrl, sendWebhook, webhookHasPlaceholder, type WebhookMessage, type WebhookResult } from '../core/remote/notify.js'
 import { RemoteOwnerLock } from '../core/remote/owner.js'
 import { RemotePairing } from '../core/remote/pairing.js'
+import { RemotePush, type PushSendResult, type PushSubscribeOutcome } from '../core/remote/push.js'
 import { TicketStore, TICKET_TTL_MS } from '../core/remote/tickets.js'
+import { RemoteUploads, UPLOAD_MAX_BYTES } from '../core/remote/uploads.js'
 import { DSC_VERSION } from '../core/version.js'
-import type { RuntimeSnapshot, SettingsField } from '../contract.js'
+import type { RuntimeSnapshot, SettingsField, StatusView } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'remote'
 
-/** WS 协议版本：批 B 的界面按它认版本，破坏性变更时递增。 */
-export const REMOTE_PROTOCOL_VERSION = 1
+/** WS 协议版本：批 B 的界面按它认版本，破坏性变更时递增（v3 = 全局 seq + 增量帧 + 补帧）。 */
+export const REMOTE_PROTOCOL_VERSION = 3
 
 /** 快照推送节流间隔的缺省值（与 host-stdio 同一个口径）。 */
 const DEFAULT_SNAPSHOT_THROTTLE_MS = 80
 
-/** 请求体上限：配对与取票据都只有几十个字节，64KB 已经宽得离谱了。 */
+/** 常规请求体上限：配对、取票据、推送订阅都只有几十个字节，64KB 已经宽得离谱了。 */
 const MAX_BODY_BYTES = 64 * 1024
 
 /** 休眠时回头看一眼主控位的间隔。 */
 const OWNER_RETRY_MS = 30_000
+
+/** 同类推送的节流窗口：审批卡连着弹、轮结束连着来的时候，手机上别炸一串。 */
+const NOTIFY_THROTTLE_MS = 10_000
+
+/** 多短的一轮不值得通报（用过 15 秒以上，或者这一轮出现过审批卡，才发「轮完成」）。 */
+const TURN_NOTIFY_MIN_MS = 15_000
+
+/** 解析 lastSeq 查询参数：缺省、非数字、负数、0 一律 0（= 要全量）。 */
+function readLastSeq(raw: string | null): number {
+  if (raw === null) return 0
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) return 0
+  return Math.trunc(value)
+}
 
 /**
  * 远程开放的 `DscRuntime` 方法：只是共享白名单（core/host-methods.ts）里的一个子集。
@@ -69,6 +101,9 @@ const OWNER_RETRY_MS = 30_000
  *   - dock / runCommand / goalAction / forkSession / purgeSessions / restoreSessions：
  *     宿主生命周期与不可逆的会话操作；
  *   - setPluginEnabled / setPolicy / setUiPrefs / setModel / runCommand 之外的管理动作同理。
+ *
+ * 上传（POST /api/upload）与推送订阅（POST /api/push-subscribe）不在这一份里：
+ * 它们是 HTTP 路由，不是 RPC 方法。
  */
 export const REMOTE_METHODS = [
   'submit',
@@ -225,14 +260,24 @@ interface RemoteServerDeps {
   assetsDir: string
   pairing: RemotePairing
   tickets: TicketStore
+  /** 上传落盘（POST /api/upload）。 */
+  uploads: RemoteUploads
   /** 派发一个白名单方法（调用方已做过白名单与来源标注）。 */
   invoke(method: string, args: unknown[]): Promise<unknown>
   /** 当前全量快照（批 B 契约的形状：entries 已定稿 + liveEntries 直播尾分开给）。 */
   snapshot(): RemoteSnapshot
   /** 订阅会话流变化（返回退订函数）。 */
   subscribe(listener: () => void): () => void
-  /** 往桌面端的对话流写一句话（配对、吊销这类事件）。 */
+  /** 往桌面端的对话流写一句话（配对、吊销、上传这类事件）。 */
   notice(text: string): void
+  /** Web Push 总开关（关着时订阅端点回 403、hello 里的公钥报 null）。 */
+  pushEnabled(): boolean
+  /** VAPID 公钥（Web Push 关着或不可用时 null）。 */
+  pushPublicKey(): string | null
+  /** 浏览器订阅入库（按 endpoint 去重）。 */
+  pushSubscribe(payload: unknown, deviceId: string): PushSubscribeOutcome
+  /** 按 endpoint 删订阅。 */
+  pushUnsubscribe(endpoint: string): boolean
 }
 
 /** 批 B 契约里的快照：宿主 RuntimeSnapshot 加上会话身份，并把直播尾拆出来。 */
@@ -266,12 +311,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * 读请求体。
+ * 读请求体的原始字节。
  *
  * 超过上限时不再累积字节、只 reject 一次，让调用方回一个 413：
  * 这里**不能** destroy 请求——那会把连接直接掐掉，413 还没写出去客户端就看到 socket hang up。
+ *
+ * @param limit - 这一次读最多收多少字节（JSON 路由 64KB，上传路由 20MB）
  */
-function readBody(req: IncomingMessage): Promise<string> {
+function readBodyBytes(req: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolveBody, rejectBody) => {
     const chunks: Buffer[] = []
     let size = 0
@@ -279,20 +326,26 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('data', (chunk: Buffer) => {
       if (overLimit) return // 已经超了：后面的字节丢掉，等 handler 回 413
       size += chunk.length
-      if (size > MAX_BODY_BYTES) {
+      if (size > limit) {
         overLimit = true
-        rejectBody(new Error(`请求体超过 ${String(MAX_BODY_BYTES / 1024)}KB`))
+        const shown = limit >= 1024 * 1024 ? `${String(Math.round(limit / 1024 / 1024))}MB` : `${String(Math.round(limit / 1024))}KB`
+        rejectBody(new Error(`请求体超过 ${shown}`))
         return
       }
       chunks.push(chunk)
     })
     req.on('end', () => {
-      if (!overLimit) resolveBody(Buffer.concat(chunks).toString('utf8'))
+      if (!overLimit) resolveBody(Buffer.concat(chunks))
     })
     req.on('error', (error) => {
       if (!overLimit) rejectBody(error)
     })
   })
+}
+
+/** 读一个 JSON 请求体（按 UTF-8 解码）。 */
+async function readBody(req: IncomingMessage): Promise<string> {
+  return (await readBodyBytes(req, MAX_BODY_BYTES)).toString('utf8')
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
@@ -328,6 +381,8 @@ function rejectUpgrade(socket: Duplex, status: number, reason: string, error: st
 /**
  * 起一个 HTTP + WebSocket 服务。返回的是句柄而不是 Promise：listen 是异步的，
  * 调用方在 `ready` 上收结果，句柄本身立刻可用（`close` 随时能收）。
+ *
+ * 帧流是**宿主级一份**：一个节流定时器 + 一个 {@link RemoteFrameHub}，所有连接收同一串帧。
  */
 export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
   const assetsDir = deps.assetsDir
@@ -337,6 +392,16 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
   const cleanups = new Map<WebSocket, () => void>()
   /** 每条连接是哪台设备的（吊销设备时要按这个把人踢下线）。 */
   const sessionDevice = new Map<WebSocket, string>()
+
+  /** 全局帧流：seq 跨连接连续，最近 120 帧进环形缓冲。 */
+  const hub = new RemoteFrameHub()
+  let frameTimer: NodeJS.Timeout | null = null
+  let framePending = false
+  /**
+   * 一条连接都没有的时候发生的会话变化：帧流那时不前进（没人看，白算），
+   * 所以下一条连接补完缓冲里的帧之后，必须再补一帧全量把这段时间的变化对上。
+   */
+  let missedWhileIdle = false
 
   /** 断开连接：只断指定设备，或全断。返回断了几条。 */
   function closeDevices(deviceId?: string): number {
@@ -353,6 +418,48 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
     }
     return count
   }
+
+  const sendText = (ws: WebSocket, text: string): void => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(text)
+  }
+
+  /** 造下一帧、进环形缓冲、发给所有连接。 */
+  const emitFrame = (forceFull: boolean): BuiltFrame => {
+    const frame = hub.build(deps.snapshot(), forceFull)
+    for (const ws of sockets) sendText(ws, frame.text)
+    missedWhileIdle = false
+    return frame
+  }
+
+  /** 会话流有变化：攒到下一次节流到点，合成一帧。 */
+  const scheduleFrame = (): void => {
+    if (sockets.size === 0) {
+      // 没人连着：不造帧（造了也没人收），但要记住「这段时间变过」
+      missedWhileIdle = true
+      return
+    }
+    framePending = true
+    if (frameTimer !== null) return
+    frameTimer = setTimeout(() => {
+      frameTimer = null
+      if (!framePending) return
+      framePending = false
+      if (sockets.size === 0) {
+        missedWhileIdle = true
+        return
+      }
+      emitFrame(false)
+    }, deps.throttleMs)
+  }
+
+  const stopFrames = (): void => {
+    if (frameTimer !== null) clearTimeout(frameTimer)
+    frameTimer = null
+    framePending = false
+  }
+
+  /** 宿主级订阅：帧流是共享的，所以只订一次（不是每条连接一份）。 */
+  const unsubscribeStream = deps.subscribe(scheduleFrame)
 
   const serveStatic = (res: ServerResponse, pathname: string): void => {
     const rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).replace(/^\/+/, '')
@@ -381,25 +488,40 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('没有这个文件')
   }
 
-  /** 配对：码换设备 token。 */
-  const handlePair = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+  /** 从 Authorization 头认设备；认不出给 null。 */
+  const deviceOf = (req: IncomingMessage) => {
+    const token = bearerToken(req.headers.authorization)
+    return token === null ? null : deps.pairing.verifyToken(token)
+  }
+
+  /** 请求体读不动（超限 / 连接断了）时的统一回应：让这一条连接用完就关。 */
+  const failBody = (res: ServerResponse, status: number, error: unknown): void => {
+    res.setHeader('connection', 'close')
+    sendJson(res, status, { ok: false, error: errText(error) })
+  }
+
+  /** 读一个 JSON 体；不是 JSON 或读不动时自己回话并返回 null（包一层是为了跟「body 就是 null」区分开）。 */
+  const readJsonBody = async (req: IncomingMessage, res: ServerResponse): Promise<{ value: unknown } | null> => {
     let body: string
     try {
       body = await readBody(req)
     } catch (error) {
-      // 体没读完就回话：让这一条连接用完就关，别把没读掉的字节留在 keep-alive 上错位
-      res.setHeader('connection', 'close')
-      sendJson(res, 413, { ok: false, error: errText(error) })
-      return
+      failBody(res, 413, error)
+      return null
     }
-    let parsed: unknown = null
     try {
-      parsed = JSON.parse(body === '' ? '{}' : body)
+      return { value: JSON.parse(body === '' ? '{}' : body) }
     } catch {
       sendJson(res, 400, { ok: false, error: '请求体不是 JSON' })
-      return
+      return null
     }
-    const doc = isRecord(parsed) ? parsed : {}
+  }
+
+  /** 配对：码换设备 token。 */
+  const handlePair = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const parsed = await readJsonBody(req, res)
+    if (parsed === null) return
+    const doc = isRecord(parsed.value) ? parsed.value : {}
     const code = typeof doc['code'] === 'string' ? doc['code'] : ''
     const name =
       typeof doc['deviceName'] === 'string' ? doc['deviceName'] : typeof doc['name'] === 'string' ? doc['name'] : ''
@@ -415,8 +537,7 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
 
   /** 取票据：设备 token 换一张 30 秒的一次性 WS 票据。 */
   const handleTicket = (req: IncomingMessage, res: ServerResponse): void => {
-    const token = bearerToken(req.headers.authorization)
-    const device = token === null ? null : deps.pairing.verifyToken(token)
+    const device = deviceOf(req)
     if (device === null) {
       sendJson(res, 401, { ok: false, error: '设备凭据无效或已被吊销，请重新配对' })
       return
@@ -438,8 +559,94 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
     sendJson(res, 200, { ok: true, revoked: revoked !== null })
   }
 
+  /**
+   * 上传：`POST /api/upload?filename=<urlencoded>`，body 是原始字节。
+   *
+   * 这条路由**不受 64KB 请求体上限约束**（上限由 uploads.ts 的 20MB 说了算），
+   * 但要过和其它路由一样的 Host 检查与设备 token 检查。
+   */
+  const handleUpload = async (url: URL, req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const device = deviceOf(req)
+    if (device === null) {
+      sendJson(res, 401, { ok: false, error: '设备凭据无效或已被吊销，请重新配对' })
+      return
+    }
+    let data: Buffer
+    try {
+      data = await readBodyBytes(req, UPLOAD_MAX_BYTES)
+    } catch (error) {
+      failBody(res, 413, error)
+      return
+    }
+    const filename = url.searchParams.get('filename') ?? ''
+    if (filename.trim() === '') {
+      sendJson(res, 400, { ok: false, error: '要上传的文件得带上 ?filename=…' })
+      return
+    }
+    let outcome
+    try {
+      outcome = deps.uploads.save(filename, data)
+    } catch (error) {
+      sendJson(res, 500, { ok: false, error: `写盘失败：${errText(error)}` })
+      return
+    }
+    if (!outcome.ok) {
+      sendJson(res, 400, { ok: false, error: outcome.error })
+      return
+    }
+    deps.notice(`远程设备「${device.name}」上传了 ${outcome.name}（${String(outcome.size)} 字节）`)
+    sendJson(res, 200, outcome)
+  }
+
+  /** VAPID 公钥：只要 Host 检查，不要 token（浏览器订阅前得先拿到它）。 */
+  const handlePushKey = (res: ServerResponse): void => {
+    if (!deps.pushEnabled()) {
+      sendJson(res, 200, { ok: true, publicKey: null })
+      return
+    }
+    sendJson(res, 200, { ok: true, publicKey: deps.pushPublicKey() })
+  }
+
+  /** 浏览器订阅入库（按 endpoint 去重）。 */
+  const handlePushSubscribe = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (!deps.pushEnabled()) {
+      sendJson(res, 403, { ok: false, error: '浏览器推送没开：先在电脑上「设置 → 远程控制」里打开' })
+      return
+    }
+    const device = deviceOf(req)
+    if (device === null) {
+      sendJson(res, 401, { ok: false, error: '设备凭据无效或已被吊销，请重新配对' })
+      return
+    }
+    const payload = await readJsonBody(req, res)
+    if (payload === null) return
+    const outcome = deps.pushSubscribe(payload.value, device.deviceId)
+    sendJson(res, outcome.ok ? 200 : 400, outcome)
+  }
+
+  /** 退订：body `{endpoint}`。 */
+  const handlePushUnsubscribe = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (!deps.pushEnabled()) {
+      sendJson(res, 403, { ok: false, error: '浏览器推送没开：先在电脑上「设置 → 远程控制」里打开' })
+      return
+    }
+    const device = deviceOf(req)
+    if (device === null) {
+      sendJson(res, 401, { ok: false, error: '设备凭据无效或已被吊销，请重新配对' })
+      return
+    }
+    const payload = await readJsonBody(req, res)
+    if (payload === null) return
+    const endpoint = isRecord(payload.value) && typeof payload.value['endpoint'] === 'string' ? payload.value['endpoint'] : ''
+    if (endpoint.trim() === '') {
+      sendJson(res, 400, { ok: false, error: 'body 里要带 {endpoint}' })
+      return
+    }
+    sendJson(res, 200, { ok: true, removed: deps.pushUnsubscribe(endpoint) })
+  }
+
   const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    // 所有路由（含静态页面）先过 Host 检查：DNS rebinding 就是从这一条进来的
+    // 所有路由（含静态页面与上传）先过 Host 检查：DNS rebinding 就是从这一条进来的
     if (!hostHeaderAllowed(req.headers.host, deps.port)) {
       sendJson(res, 403, { ok: false, error: 'Host 头不是本机地址，拒绝服务' })
       return
@@ -455,6 +662,22 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
     }
     if (req.method === 'POST' && url.pathname === '/api/revoke') {
       handleRevoke(url, req, res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/upload') {
+      await handleUpload(url, req, res)
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/push-key') {
+      handlePushKey(res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/push-subscribe') {
+      await handlePushSubscribe(req, res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/push-unsubscribe') {
+      await handlePushUnsubscribe(req, res)
       return
     }
     if (req.method === 'GET' || req.method === 'HEAD') {
@@ -479,31 +702,38 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
   })
 
   /** 一条连接的握手与消息循环。 */
-  const openSession = (ws: WebSocket, deviceId: string): void => {
+  const openSession = (ws: WebSocket, deviceId: string, lastSeq: number): void => {
     sockets.add(ws)
     sessionDevice.set(ws, deviceId)
-    let seq = 0
-    let timer: NodeJS.Timeout | null = null
-    let pendingSnapshot = false
 
     const send = (message: Record<string, unknown>): void => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message))
+      sendText(ws, JSON.stringify(message))
     }
 
-    // 快照节流：照搬 host-stdio 的写法（80ms 一帧的全量快照，两次变化合一次推送）
-    const scheduleSnapshot = (): void => {
-      pendingSnapshot = true
-      if (timer !== null) return
-      timer = setTimeout(() => {
-        timer = null
-        if (!pendingSnapshot) return
-        pendingSnapshot = false
-        seq += 1
-        send({ type: 'snapshot', seq, ...deps.snapshot() })
-      }, deps.throttleMs)
+    // 握手：hello 先报身份（协议版本、端口、开放方法、VAPID 公钥），再按 lastSeq 决定补帧还是全量
+    const snapshot = deps.snapshot()
+    send({
+      type: 'hello',
+      protocolVersion: REMOTE_PROTOCOL_VERSION,
+      app: 'muse-code',
+      version: DSC_VERSION,
+      port: deps.port,
+      lan: deps.lan,
+      sessionId: snapshot.sessionId,
+      cwd: snapshot.cwd,
+      methods: [...REMOTE_METHODS],
+      pushPublicKey: deps.pushPublicKey(),
+    })
+    const replay = hub.resume(lastSeq)
+    if (replay === null) {
+      // 接不上（没带 lastSeq、缓冲是空的、或者客户端的号在窗口外）：hello + 一帧全量
+      emitFrame(true)
+    } else {
+      // 补发不节流：缓冲里存的就是原样的 JSON 字符串，直接照发
+      for (const text of replay) sendText(ws, text)
+      // 断线期间一条连接都没有、那时发生的变化没进帧流：补一帧全量把它对上
+      if (missedWhileIdle) emitFrame(true)
     }
-
-    const unsubscribe = deps.subscribe(scheduleSnapshot)
 
     const handleMessage = async (data: unknown): Promise<void> => {
       const raw = typeof data === 'string' ? data : Buffer.isBuffer(data) ? data.toString('utf8') : String(data)
@@ -537,9 +767,6 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
       cleanups.delete(ws)
       sessionDevice.delete(ws)
       sockets.delete(ws)
-      unsubscribe()
-      if (timer !== null) clearTimeout(timer)
-      timer = null
     }
     cleanups.set(ws, cleanup)
 
@@ -548,22 +775,6 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
     })
     ws.on('close', cleanup)
     ws.on('error', cleanup)
-
-    // 握手：hello 先报身份，紧接着一帧全量快照（首发不节流，界面立刻有内容可画）
-    const snapshot = deps.snapshot()
-    send({
-      type: 'hello',
-      protocolVersion: REMOTE_PROTOCOL_VERSION,
-      app: 'muse-code',
-      version: DSC_VERSION,
-      port: deps.port,
-      lan: deps.lan,
-      sessionId: snapshot.sessionId,
-      cwd: snapshot.cwd,
-      methods: [...REMOTE_METHODS],
-    })
-    seq += 1
-    send({ type: 'snapshot', seq, ...snapshot })
   }
 
   server.on('upgrade', (req, socket, head) => {
@@ -583,8 +794,9 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
       rejectUpgrade(socket, 401, 'Unauthorized', '票据无效或已用过，请重新取一张')
       return
     }
+    const lastSeq = readLastSeq(url.searchParams.get('lastSeq'))
     wss.handleUpgrade(req, socket, head, (ws) => {
-      openSession(ws, grant.deviceId)
+      openSession(ws, grant.deviceId, lastSeq)
     })
   })
 
@@ -600,6 +812,8 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
     lan: deps.lan,
     ready,
     close(): void {
+      unsubscribeStream()
+      stopFrames()
       for (const ws of [...sockets]) {
         cleanups.get(ws)?.()
         try {
@@ -616,12 +830,29 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
     },
     broadcast(message: Record<string, unknown>): void {
       const text = JSON.stringify(message)
-      for (const ws of sockets) {
-        if (ws.readyState === WebSocket.OPEN) ws.send(text)
-      }
+      for (const ws of sockets) sendText(ws, text)
     },
     closeDevices,
   }
+}
+
+// ── 推送 ──────────────────────────────────────────────────────────────────────
+
+/** 一次推送的两条腿各自的结果（测试按钮要把真实结果说清楚，所以留着细节）。 */
+interface NotifyOutcome {
+  push: PushSendResult | null
+  pushSkipped: string | null
+  webhook: WebhookResult | null
+  webhookSkipped: string | null
+}
+
+/** 审批卡在快照里能给的那点标题信息：参数摘要最好用，退而求其次用工具名。 */
+function approvalHeadline(approval: RuntimeSnapshot['surfaces']['pendingApproval']): string {
+  if (approval === null) return '打开手机确认'
+  const summary = approval.argsSummary.trim()
+  if (summary !== '') return summary
+  const tool = approval.toolName.trim()
+  return tool === '' ? '打开手机确认' : tool
 }
 
 // ── 插件 ──────────────────────────────────────────────────────────────────────
@@ -637,10 +868,15 @@ export const remotePlugin: Plugin.Object = {
     const pairing = new RemotePairing()
     const owner = new RemoteOwnerLock()
     const tickets = new TicketStore()
+    /** 上传落盘与浏览器推送：数据文件都在 `~/.dsc/remote`（自检换 HOME 就整体隔离）。 */
+    const uploads = new RemoteUploads()
+    const pushStore = new RemotePush()
 
     let server: RemoteServerHandle | null = null
     let retryTimer: NodeJS.Timeout | null = null
     let lastProblem: string | null = null
+    /** 推送密钥取不到时只提醒一次（每次连接都提醒会刷屏）。 */
+    let pushProblem: string | null = null
     /** 「退出主控」按过之后不再自动抢回来（重新开关一次「开启远程控制」才解除）。 */
     let yielded = false
 
@@ -664,6 +900,13 @@ export const remotePlugin: Plugin.Object = {
     const clearRetry = (): void => {
       if (retryTimer !== null) clearTimeout(retryTimer)
       retryTimer = null
+    }
+
+    const addressText = (): string => {
+      const prefs = ctx.settings.prefs().remote
+      const port = server?.port ?? prefs.port
+      const ip = prefs.lan ? lanAddress() : null
+      return `http://${ip ?? '127.0.0.1'}:${String(port)}/`
     }
 
     /** 派发：审批答案带来源；其余方法照 host-stdio 的反射惯例展开实参。 */
@@ -690,6 +933,116 @@ export const remotePlugin: Plugin.Object = {
       }
     }
 
+    /** 把 VAPID 公钥给出去（关着时 null）。取不到只提醒一次，然后一直报 null。 */
+    const pushPublicKey = (): string | null => {
+      if (!ctx.settings.prefs().remote.push) return null
+      const key = pushStore.publicKey()
+      if (key === null && pushProblem === null) {
+        pushProblem = '浏览器推送的 VAPID 密钥读不出来（也不能生成），推送先按不可用处理'
+        ctx.emit('dsc/notice', pushProblem)
+      }
+      return key
+    }
+
+    // ── 推送：Web Push 与通知 Webhook 同一触发点同时发，互不影响 ─────────────
+
+    /** 同类推送 10 秒节流（键是触发类别：approval / turn-end）。 */
+    const lastNotifyAt: Record<string, number> = {}
+
+    /**
+     * 发一条通知（两条腿：浏览器推送 + Webhook）。
+     *
+     * 任何一条腿失败都只写一条 notice，绝不抛——推送发不出去不该影响宿主干活；
+     * 两条腿互相独立，Web Push 没开不影响 Webhook 照发，反之亦然。
+     */
+    const notify = async (kind: string, message: WebhookMessage, throttle: boolean): Promise<NotifyOutcome> => {
+      const outcome: NotifyOutcome = { push: null, pushSkipped: null, webhook: null, webhookSkipped: null }
+      const prefs = ctx.settings.prefs().remote
+      if (throttle) {
+        const now = Date.now()
+        const last = lastNotifyAt[kind] ?? 0
+        if (now - last < NOTIFY_THROTTLE_MS) {
+          outcome.pushSkipped = '10 秒内已经发过同类推送'
+          outcome.webhookSkipped = outcome.pushSkipped
+          return outcome
+        }
+        lastNotifyAt[kind] = now
+      }
+      if (prefs.push) {
+        try {
+          const result = await pushStore.send({ title: message.title, body: message.body, url: message.url })
+          outcome.push = result
+          if (result.attempted > result.sent) {
+            const why = result.errors[0] ?? '订阅已失效，已从库里清掉'
+            ctx.emit(
+              'dsc/notice',
+              `浏览器推送：${String(result.sent)}/${String(result.attempted)} 台成功，没发出去的原因：${why}`,
+            )
+          }
+        } catch (error) {
+          outcome.pushSkipped = errText(error)
+          ctx.emit('dsc/notice', `浏览器推送失败：${outcome.pushSkipped}`)
+        }
+      } else {
+        outcome.pushSkipped = '浏览器推送没开'
+      }
+      const webhook = prefs.notifyWebhook.trim()
+      if (webhook !== '') {
+        const result = await sendWebhook(webhook, message)
+        outcome.webhook = result
+        if (!result.ok) ctx.emit('dsc/notice', `通知 Webhook 没发出去：${result.error}`)
+      } else {
+        outcome.webhookSkipped = '没配通知 Webhook'
+      }
+      return outcome
+    }
+
+    // ── 推送触发：全在现有订阅与事件里，内核一条新事件都不用加 ───────────────
+
+    /** 上一帧的审批卡 id（判「从无到有」）。 */
+    let prevApprovalId: string | null = null
+    /** 上一帧的回合状态（判「一轮开始了」）。 */
+    let prevTurnState: StatusView['turnState'] = 'idle'
+    /** 这一轮什么时候开始的（推送里要报「用时 Xs」，宿主没有 turn-start 事件，插件自己记）。 */
+    let turnStartedAt = 0
+    /** 这一轮里出现过审批卡没有（短轮也值得通报的第二条条件）。 */
+    let turnHadApproval = false
+
+    /** 会话流一变就看一眼快照：审批卡从无到有 → 推送；回合从 idle 起来 → 记开始时刻。 */
+    const watchTransitions = (): void => {
+      const current = runtime.getSnapshot()
+      const state = current.status.turnState
+      if (state !== 'idle' && prevTurnState === 'idle') {
+        turnStartedAt = Date.now()
+        turnHadApproval = false
+      }
+      prevTurnState = state
+      const approval = current.surfaces.pendingApproval
+      const approvalId = approval === null ? null : approval.id
+      if (approval !== null && approvalId !== null && prevApprovalId === null) {
+        turnHadApproval = true
+        void notify(
+          'approval',
+          { title: 'Muse Code 等待审批', body: approvalHeadline(approval), url: addressText() },
+          true,
+        )
+      }
+      prevApprovalId = approvalId
+    }
+    const offTransitions = ctx.transcript.subscribe(watchTransitions)
+
+    /** 一轮结束：用过 15 秒以上、或者这一轮出现过审批卡，才值得推一条。 */
+    const onTurnEnd = (): void => {
+      const elapsedMs = turnStartedAt === 0 ? 0 : Date.now() - turnStartedAt
+      const hadApproval = turnHadApproval
+      turnStartedAt = 0
+      turnHadApproval = false
+      if (elapsedMs < TURN_NOTIFY_MIN_MS && !hadApproval) return
+      const seconds = Math.max(0, Math.round(elapsedMs / 1000))
+      void notify('turn-end', { title: 'Muse Code 轮完成', body: `用时 ${String(seconds)}s`, url: addressText() }, true)
+    }
+    ctx.on('dsc/turn-end', onTurnEnd)
+
     const stopServer = (): void => {
       const instance = server
       server = null
@@ -712,10 +1065,15 @@ export const remotePlugin: Plugin.Object = {
         assetsDir: readAssetsDir(passed),
         pairing,
         tickets,
+        uploads,
         invoke,
         snapshot,
         subscribe: (listener) => ctx.transcript.subscribe(listener),
         notice: (text) => ctx.emit('dsc/notice', text),
+        pushEnabled: () => ctx.settings.prefs().remote.push,
+        pushPublicKey,
+        pushSubscribe: (payload, deviceId) => pushStore.add(payload, deviceId),
+        pushUnsubscribe: (endpoint) => pushStore.remove(endpoint),
       })
       server = instance
       instance.ready.then(
@@ -774,11 +1132,20 @@ export const remotePlugin: Plugin.Object = {
       return yielded ? '已让出主控位：重新开关一次「开启远程控制」可以拿回来' : '休眠：正在等主控位空出来（每 30 秒重试）'
     }
 
-    const addressText = (): string => {
+    /** 时间戳给设置页看的样子；0（没记过）说「未知」。 */
+    const timeText = (at: number): string => (at > 0 ? new Date(at).toLocaleString('zh-CN') : '未知')
+
+    const pushStatusText = (): string => {
       const prefs = ctx.settings.prefs().remote
-      const port = server?.port ?? prefs.port
-      const ip = prefs.lan ? lanAddress() : null
-      return `http://${ip ?? '127.0.0.1'}:${String(port)}/`
+      if (!prefs.push) return '没开'
+      const key = pushPublicKey()
+      return key === null ? '开着，但 VAPID 密钥不可用' : `开着，已订阅 ${String(pushStore.count())} 台`
+    }
+
+    const webhookStatusText = (): string => {
+      const raw = ctx.settings.prefs().remote.notifyWebhook.trim()
+      if (raw === '') return '没配'
+      return raw.includes('{') && webhookHasPlaceholder(raw) ? `${raw}（占位符模式：GET）` : `${raw}（JSON POST 模式）`
     }
 
     const section: SettingsSectionSpec = {
@@ -789,7 +1156,7 @@ export const remotePlugin: Plugin.Object = {
       fields(): SettingsField[] {
         const prefs = ctx.settings.prefs().remote
         const devices = pairing.devices()
-        return [
+        const rows: SettingsField[] = [
           {
             type: 'switch',
             key: 'enabled',
@@ -813,10 +1180,52 @@ export const remotePlugin: Plugin.Object = {
           { type: 'info', label: '伺服状态', text: statusText() },
           { type: 'info', label: '访问地址', text: addressText(), mono: true, copyable: true },
           {
+            type: 'switch',
+            key: 'push',
+            label: '浏览器推送（Web Push）',
+            help: '手机把这个页面「添加到主屏幕」之后才能收到系统通知（iOS 必须加主屏幕）；关着时不生成 VAPID 密钥、不接受订阅、也不发推送',
+          },
+          { type: 'info', label: '推送状态', text: pushStatusText() },
+          {
+            type: 'text',
+            key: 'notifyWebhook',
+            label: '通知 Webhook',
+            placeholder: 'https://api.day.app/你的KEY/{title}/{body}',
+            help:
+              '留空 = 关。带 {title}/{body}/{url} 占位符的地址按 GET 发（Bark：https://api.day.app/你的KEY/{title}/{body}?url={url}）；' +
+              '不带占位符的地址按 POST JSON 发（ntfy：https://ntfy.sh/你的主题，body 是 {"title":…,"body":…,"url":…}）',
+          },
+          { type: 'info', label: 'Webhook 状态', text: webhookStatusText(), mono: true },
+          {
+            type: 'button',
+            action: 'test-push',
+            label: '发送测试推送',
+            style: 'primary',
+            help: '浏览器推送与 Webhook 各发一条测试消息，结果就写在这个按钮下面',
+          },
+          {
             type: 'info',
             label: '已配对设备',
             text: devices.length === 0 ? '还没有设备' : `${String(devices.length)} 台：${devices.map((item) => item.name).join('、')}`,
           },
+        ]
+        // 每台设备两行：一行身份（名字 + 最近活跃 + 创建时间），一行「吊销」按钮。
+        // fields() 是每次刷新都重新调的，所以吊销完下一刷就少一台，不用自己再通知界面。
+        for (const device of devices) {
+          rows.push({
+            type: 'info',
+            label: device.name,
+            text: `最近活跃 ${timeText(device.lastSeenAt)} · 创建于 ${timeText(device.createdAt)}`,
+          })
+          rows.push({
+            type: 'button',
+            action: `revoke-device:${device.deviceId}`,
+            label: '吊销',
+            style: 'ghost',
+            help: `吊销「${device.name}」：它已经建立的连接当场断开，旧 token 再也换不到票据`,
+          })
+        }
+        rows.push(
           {
             type: 'button',
             action: 'regenerate-code',
@@ -832,11 +1241,18 @@ export const remotePlugin: Plugin.Object = {
             style: 'ghost',
             help: '把伺服位让给别的 Muse Code 进程（本进程不再监听，直到你重新开关一次远程控制）',
           },
-        ]
+        )
+        return rows
       },
       values() {
         const prefs = ctx.settings.prefs().remote
-        return { enabled: prefs.enabled, port: prefs.port, lan: prefs.lan }
+        return {
+          enabled: prefs.enabled,
+          port: prefs.port,
+          lan: prefs.lan,
+          push: prefs.push,
+          notifyWebhook: prefs.notifyWebhook,
+        }
       },
       save(key, value) {
         const prefs = ctx.settings.prefs().remote
@@ -858,9 +1274,21 @@ export const remotePlugin: Plugin.Object = {
           ctx.settings.setPrefs({ remote: { ...prefs, lan: value === true } })
           return
         }
+        if (key === 'push') {
+          ctx.settings.setPrefs({ remote: { ...prefs, push: value === true } })
+          return
+        }
+        if (key === 'notifyWebhook') {
+          const raw = String(value ?? '').trim()
+          if (raw !== '' && !isHttpUrl(raw)) {
+            throw new Error('通知 Webhook 要填 http:// 或 https:// 开头的地址；留空 = 关掉')
+          }
+          ctx.settings.setPrefs({ remote: { ...prefs, notifyWebhook: raw } })
+          return
+        }
         throw new Error(`未知的设置项 ${key}`)
       },
-      action(name) {
+      async action(name) {
         if (name === 'regenerate-code') {
           const issued = pairing.issueCode()
           if (issued === null) {
@@ -875,6 +1303,51 @@ export const remotePlugin: Plugin.Object = {
           // 已经在线的手机当场断线，不是等它们下次重连才发现凭据没了
           server?.closeDevices()
           return count === 0 ? '本来就没有已经配对的设备' : `已吊销 ${String(count)} 台设备，手机需要重新配对`
+        }
+        if (name.startsWith('revoke-device:')) {
+          const deviceId = name.slice('revoke-device:'.length)
+          const revoked = pairing.revokeDevice(deviceId)
+          if (revoked === null) return '这台设备已经不在了（可能刚被别的地方吊销掉）'
+          const closed = server?.closeDevices(deviceId) ?? 0
+          return `已吊销「${revoked.name}」${closed > 0 ? `，断开 ${String(closed)} 条连接` : ''}`
+        }
+        if (name === 'test-push') {
+          const prefs = ctx.settings.prefs().remote
+          const message: WebhookMessage = {
+            title: 'Muse Code 测试推送',
+            body: '这条消息来自电脑上「设置 → 远程控制」的测试按钮',
+            url: addressText(),
+          }
+          const lines: string[] = []
+          if (prefs.push) {
+            try {
+              const result = await pushStore.send({ ...message })
+              if (result.attempted === 0) lines.push('浏览器推送：库里还没有订阅的设备（手机要先把页面加到主屏幕）')
+              else {
+                lines.push(
+                  `浏览器推送：${String(result.sent)}/${String(result.attempted)} 台成功` +
+                    (result.dropped > 0 ? `，${String(result.dropped)} 台订阅已失效（已清理）` : '') +
+                    (result.errors.length > 0 ? `，失败原因：${result.errors.join('；')}` : ''),
+                )
+              }
+            } catch (error) {
+              lines.push(`浏览器推送：失败（${errText(error)}）`)
+            }
+          } else {
+            lines.push('浏览器推送：没开（开关关着，一条都没发）')
+          }
+          const webhook = prefs.notifyWebhook.trim()
+          if (webhook === '') {
+            lines.push('通知 Webhook：没配（留空 = 关）')
+          } else {
+            const result = await sendWebhook(webhook, message)
+            lines.push(
+              result.ok
+                ? `通知 Webhook：已发送（${result.mode === 'get' ? '占位符 GET 模式' : 'JSON POST 模式'}）`
+                : `通知 Webhook：失败（${result.error}）`,
+            )
+          }
+          return lines.join('；')
         }
         if (name === 'release-owner') {
           yielded = true
@@ -908,6 +1381,7 @@ export const remotePlugin: Plugin.Object = {
       process.removeListener('exit', onProcessExit)
       offSection()
       offPrefs()
+      offTransitions()
       clearRetry()
       stopServer()
       owner.release()

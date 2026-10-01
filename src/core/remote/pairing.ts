@@ -267,6 +267,24 @@ export class RemotePairing {
     return devices.length
   }
 
+  /**
+   * 按 deviceId 吊销一台设备（设置页里每台设备一个「吊销」按钮走这条）。
+   *
+   * 为什么不是只留 `revoke(token)`：设置页手上只有 deviceId（token 本体从不落盘，
+   * 界面上也看不到），所以「逐台吊销」必须能按 identity 定位，而不是按凭据定位。
+   *
+   * @returns 被吊销的那台设备；本来就不在清单里时 null
+   */
+  revokeDevice(deviceId: string): DeviceRecord | null {
+    if (deviceId === '') return null
+    const devices = this.loadDevices()
+    const hit = devices.find((device) => device.deviceId === deviceId)
+    if (hit === undefined) return null
+    this.saveDevices(devices.filter((device) => device !== hit))
+    this.lastSeenWritten.delete(hit.deviceId)
+    return hit
+  }
+
   /** 已配对设备清单（给设置分区显示；不含 token 哈希）。 */
   devices(): Array<{ deviceId: string; name: string; createdAt: number; lastSeenAt: number }> {
     return this.loadDevices().map((device) => ({

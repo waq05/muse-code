@@ -1,20 +1,34 @@
 /**
- * 遥控端与宿主之间的那一条 WebSocket：取票据 → 连接 → 收快照 → 调方法 → 断了自动重连。
+ * 遥控端与宿主之间的那一条 WebSocket：取票据 → 连接 → 收帧 → 调方法 → 断了自动重连。
  *
  * 为什么不用 React 状态直接管连接：连接的生命周期比组件长（切页面、锁屏、软键盘弹起
  * 都不该断），所以状态放在这个与 React 无关的类里，界面用 useSyncExternalStore 订阅。
  *
- * 协议（批 A 的宿主插件）：
+ * 协议（v3 的宿主插件）：
  *   上行  {type:'invoke', id, method, args?}
- *   下行  {type:'hello', ...} / {type:'snapshot', seq, cwd, sessionId, ...}
+ *   下行  {type:'hello', protocolVersion:3, pushPublicKey, ...}
+ *         {type:'snapshot', seq, full:true, ...快照字段}   ← 全量
+ *         {type:'delta', seq, full:false, meta, added, updated, removedIds, liveEntries}
  *         {type:'result', id, ok|error} / {type:'ui', method:'open-picker'} / {type:'turn', ...}
  *
- * 断线重连策略：重新 POST /api/ticket 换一张新票据 → 新 WS → 首发快照重建整个视图。
- * 不做增量补发——快照是全量的，重建比对齐便宜。
+ * 断线重连：重新 POST /api/ticket 换一张新票据 → 新 WS（带上 `&lastSeq=<本地最大帧号>`）。
+ * 宿主补帧窗口够就先补发缺的帧，不够就直接发全量；两种情况客户端都只是逐帧 applyFrame，
+ * 不需要区分（见 reduce.ts）。lastSeq 落在 localStorage 里，刷新页面也接得上。
  */
 
-import { ApiError, baseUrl, fetchTicket, wsUrl } from './api.js'
-import { allEntries, normalizeSnapshot, normalizeSessions } from './protocol.js'
+import {
+  ApiError,
+  baseUrl,
+  fetchTicket,
+  pushSubscribe as pushSubscribeRequest,
+  pushUnsubscribe as pushUnsubscribeRequest,
+  uploadFile,
+  wsUrl,
+  type UploadResult,
+} from './api.js'
+import { allEntries, normalizeSessions } from './protocol.js'
+import { applyFrame, isFullFrame, readFrameSeq } from './reduce.js'
+import { clearLastSeq, loadLastSeq, saveLastSeq } from './storage.js'
 import type { RemoteSnapshot, SessionSummary } from './types.js'
 import { asSingleValue, encodeArgs } from './wire.js'
 
@@ -32,6 +46,10 @@ export interface ClientState {
   snapshot: RemoteSnapshot | null
   /** hello 消息原文（宿主版本、工作目录之类，界面只用来兜底显示）。 */
   server: Record<string, unknown> | null
+  /** hello 里的协议版本（v3 起才发；认不出就是 null）。 */
+  protocolVersion: number | null
+  /** hello 里的推送公钥；宿主推送开关关着时是 null（界面据此隐藏推送按钮）。 */
+  pushPublicKey: string | null
   /** 最近一次失败的原因（人话），连接正常时为 null。 */
   lastError: string | null
   /** 当前这一轮在跑（决定「排队中」提示与「打断」按钮）。 */
@@ -112,6 +130,8 @@ export class RemoteClient {
     epoch: 0,
     snapshot: null,
     server: null,
+    protocolVersion: null,
+    pushPublicKey: null,
     lastError: null,
     busy: false,
     stopping: false,
@@ -125,7 +145,12 @@ export class RemoteClient {
   private busyTimer: number | null = null
   private pending = new Map<string, Pending>()
   private nextId = 1
+  /** 已应用的最后一帧的 seq；-1 = 本地没有历史（重连时不带 lastSeq，等宿主发全量）。 */
   private lastSeq = -1
+  /** 这条连接上的第一帧还没处理完（用来认出「重连后宿主直接发全量」）。 */
+  private firstFrameOfConnection = true
+  /** 位点不可信时最多自愈几次（清零位点重连，让宿主发全量）。 */
+  private seqRecoveryLeft = 2
   /** 投递 submit 那一刻的快照 seq：用来识别「快照还没更新」的陈旧 idle。 */
   private seqAtSubmit: number | null = null
   private busySince = 0
@@ -134,6 +159,8 @@ export class RemoteClient {
   constructor(options: RemoteClientOptions) {
     this.token = options.token
     this.onUnauthorized = options.onUnauthorized
+    // 刷新页面、锁屏被杀之后重连，从本地接着上次的位点补帧。
+    this.lastSeq = loadLastSeq() ?? -1
   }
 
   // ── 订阅 ─────────────────────────────────────────────────────────────────
@@ -201,11 +228,7 @@ export class RemoteClient {
     try {
       ticket = await fetchTicket(this.base, this.token)
     } catch (error) {
-      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-        this.patch({ conn: 'closed', lastError: '登录已失效，请重新配对设备', unauthorized: true })
-        this.onUnauthorized?.()
-        return
-      }
+      if (this.noteAuthError(error, true)) return
       this.scheduleReconnect(errorMessage(error))
       return
     }
@@ -213,13 +236,16 @@ export class RemoteClient {
 
     let socket: WebSocket
     try {
-      socket = new WebSocket(wsUrl(this.base, ticket))
+      // 带上本地最大帧号：宿主据此先把缺失的帧补发过来（窗口不够它自己会改发全量）。
+      socket = new WebSocket(wsUrl(this.base, ticket, this.lastSeq))
     } catch (error) {
       this.scheduleReconnect(errorMessage(error))
       return
     }
     this.socket = socket
     socket.addEventListener('open', () => {
+      // 第一条连接的补帧位点就是「重连后第一帧」的判定点，见 handleFrame。
+      this.firstFrameOfConnection = true
       this.patch({ conn: 'open', attempt: 0, retryAt: null, lastError: null, epoch: this.state.epoch + 1 })
     })
     socket.addEventListener('message', (event: MessageEvent) => {
@@ -276,11 +302,20 @@ export class RemoteClient {
     const type = typeof message['type'] === 'string' ? (message['type'] as string) : ''
 
     switch (type) {
-      case 'hello':
-        this.patch({ server: message })
+      case 'hello': {
+        const version = message['protocolVersion']
+        const key = message['pushPublicKey']
+        this.patch({
+          server: message,
+          protocolVersion: typeof version === 'number' && Number.isFinite(version) ? version : null,
+          // 宿主推送开关关着时这里是 null（或干脆没有这个字段）——两种情况界面都不显示按钮。
+          pushPublicKey: typeof key === 'string' && key !== '' ? key : null,
+        })
         return
+      }
       case 'snapshot':
-        this.handleSnapshot(message)
+      case 'delta':
+        this.handleFrame(message)
         return
       case 'result':
         this.handleResult(message)
@@ -300,15 +335,50 @@ export class RemoteClient {
     }
   }
 
-  private handleSnapshot(message: Record<string, unknown>): void {
-    const snapshot = normalizeSnapshot(message)
-    if (snapshot === null) return
-    // seq 单调：迟到的旧快照直接丢，避免视图被回滚。
-    if (typeof message['seq'] === 'number' && snapshot.seq < this.lastSeq) return
-    this.lastSeq = snapshot.seq
+  /**
+   * 收一帧（全量或增量）并进当前快照。
+   *
+   * seq 的规矩（契约：全局单调）：
+   *   - 同一条连接里只会越来越大，所以「不大于本地记着的 lastSeq」的帧一律丢（重复帧、更旧的帧）；
+   *   - 例外一：**重连后的第一帧**且它是**全量帧**——宿主说「补帧窗口不够，整份重建」时无条件收下。
+   *     顺手也兼容了「宿主进程重启、seq 从头开始」；
+   *   - 例外二：重连后的第一帧是**增量帧**却比本地位点旧——说明本地记的位点不可信（宿主重启过），
+   *     丢这一帧救不回来（后面的帧只会更旧），清掉位点重连一次让宿主发全量（见 recoverFromStaleSeq）；
+   *   - 应用成功后把帧号写回本地（只写应用过的帧，写早了会漏帧）。
+   */
+  private handleFrame(message: Record<string, unknown>): void {
+    const seq = readFrameSeq(message)
+    const firstFrame = this.firstFrameOfConnection
+    const fullFrame = isFullFrame(message)
+    if (seq !== null && this.lastSeq >= 0 && seq <= this.lastSeq && !(fullFrame && firstFrame)) {
+      if (firstFrame) this.recoverFromStaleSeq()
+      return
+    }
+
+    const next = applyFrame(this.state.snapshot, message)
+    if (next === null) return
+
+    this.firstFrameOfConnection = false
+    this.lastSeq = next.seq
+    // 每次落地都写一次 localStorage：值就是十来个字节，而漏写会让下次重连少补帧。
+    saveLastSeq(next.seq)
     this.finishStopping()
-    this.patch({ snapshot })
-    this.recomputeBusy(snapshot, message)
+    this.patch({ snapshot: next })
+    this.recomputeBusy(next)
+  }
+
+  /**
+   * 本地位点比宿主发的帧还新：清掉位点重连一次，让宿主按「我没有历史」发全量。
+   * 只自愈有限次，免得和宿主互相踢（真出问题时不至于无限重连）。
+   */
+  private recoverFromStaleSeq(): void {
+    if (this.seqRecoveryLeft <= 0) return
+    this.seqRecoveryLeft -= 1
+    clearLastSeq()
+    this.lastSeq = -1
+    this.firstFrameOfConnection = true
+    this.closeSocket()
+    void this.openSocket()
   }
 
   private handleResult(message: Record<string, unknown>): void {
@@ -336,19 +406,17 @@ export class RemoteClient {
 
   /**
    * 判断「这一轮还在跑」：
-   *   1. 快照带 status.turnState 时以它为准（唯一权威口径）；
-   *   2. 刚投递 submit、宿主还没推新快照时，不能用同一份旧快照的 idle 把它判掉；
+   *   1. 快照带 status 时以它的 turnState 为准（唯一权威口径）；
+   *   2. 刚投递 submit、宿主还没推新帧时，不能用同一份旧快照的 idle 把它判掉；
    *   3. 完全没有 status 字段时退回「证据法」：投递过 submit（三分钟内）、
    *      最后一条是没答完的用户消息、或最后一张工具卡还在 running。
+   *
+   * 用归一化之后的 snapshot 而不是原始帧：增量帧的 status 在 meta 里，
+   * 而且 meta 没带 status 时归并后保留的是上一份——这正是想要的行为。
    */
-  private recomputeBusy(snapshot: RemoteSnapshot, raw: Record<string, unknown>): void {
-    const statusRaw = raw['status']
-    const turnState =
-      typeof statusRaw === 'object' && statusRaw !== null
-        ? (statusRaw as Record<string, unknown>)['turnState']
-        : undefined
-    if (typeof turnState === 'string') {
-      if (turnState !== 'idle') {
+  private recomputeBusy(snapshot: RemoteSnapshot): void {
+    if (snapshot.status !== null) {
+      if (snapshot.status.turnState !== 'idle') {
         this.setBusy(true)
         return
       }
@@ -357,7 +425,7 @@ export class RemoteClient {
       this.setBusy(false)
       return
     }
-    // 没有 status.turnState：只能靠证据推。证据说不忙时，只在「刚投递 submit、
+    // 完全没有 status：只能靠证据推。证据说不忙时，只在「刚投递 submit、
     // 快照还没换过」这一种情况下保留在跑；换了新快照就按证据走，
     // 免得一次乐观判定把界面永久锁在「排队中」。
     const inferred = this.inferBusy(snapshot)
@@ -411,6 +479,58 @@ export class RemoteClient {
     if (this.stoppingTimer !== null) {
       window.clearTimeout(this.stoppingTimer)
       this.stoppingTimer = null
+    }
+  }
+
+  // ── 附件与推送 ───────────────────────────────────────────────────────────
+
+  /**
+   * 带 Bearer 的请求失败了，判断是不是「凭据失效（该退回登录页）」。
+   *
+   * 只有 401 算凭据失效：宿主对「推送开关关着」回的是 **403**（`{ok:false, error:'浏览器推送没开…'}`），
+   * 把它当成凭据失效会把用户莫名其妙踢回配对页。上传路由的 403 同理（Host 检查那一层）。
+   * 取票据那条路是例外（`forbiddenToo = true`）：票据路由的 403 也是凭据/来源问题，
+   * 这是从上一版沿用下来的口径。
+   */
+  private noteAuthError(error: unknown, forbiddenToo = false): boolean {
+    if (!(error instanceof ApiError)) return false
+    const authFailed = error.status === 401 || (forbiddenToo && error.status === 403)
+    if (!authFailed) return false
+    this.patch({ conn: 'closed', lastError: '登录已失效，请重新配对设备', unauthorized: true })
+    this.onUnauthorized?.()
+    return true
+  }
+
+  /**
+   * 上传一个文件（原始字节），返回宿主给的路径。
+   * 走 HTTP 不走 WS：字节可能几 MB，塞进 WS 帧会把实时流一起卡住。
+   */
+  async upload(file: File): Promise<UploadResult> {
+    try {
+      return await uploadFile(this.base, this.token, file, file.name)
+    } catch (error) {
+      this.noteAuthError(error)
+      throw error
+    }
+  }
+
+  /** 把浏览器订阅结果登记到宿主（体就是 PushSubscription.toJSON()）。 */
+  async pushSubscribe(subscription: unknown): Promise<void> {
+    try {
+      await pushSubscribeRequest(this.base, this.token, subscription)
+    } catch (error) {
+      this.noteAuthError(error)
+      throw error
+    }
+  }
+
+  /** 让宿主忘掉这个端点。 */
+  async pushUnsubscribe(endpoint: string): Promise<void> {
+    try {
+      await pushUnsubscribeRequest(this.base, this.token, endpoint)
+    } catch (error) {
+      this.noteAuthError(error)
+      throw error
     }
   }
 

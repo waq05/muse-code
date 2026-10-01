@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { PushToggle } from '../components/PushToggle.js'
 import type { RemoteClient } from '../lib/client.js'
 import { formatWhen, pathTail, sessionTitle } from '../lib/format.js'
 import { normalizeArchivedPage, normalizeSessions } from '../lib/protocol.js'
@@ -23,6 +24,8 @@ export interface SessionsPageProps {
   /** 清掉本机凭据（= 这台设备退出登录）。 */
   onSignOut?: () => void
   deviceName?: string
+  /** hello 里的推送公钥；null = 宿主推送开关关着（推送按钮隐藏）。 */
+  pushPublicKey?: string | null
 }
 
 interface Group {
@@ -39,6 +42,7 @@ export function SessionsPage({
   onPick,
   onSignOut,
   deviceName,
+  pushPublicKey = null,
 }: SessionsPageProps): ReactNode {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [loading, setLoading] = useState(false)
@@ -190,6 +194,7 @@ export function SessionsPage({
               </button>
             ) : null}
           </div>
+          <PushToggle client={client} publicKey={pushPublicKey} />
           <p className="sessions-foot-note">
             凭据存在本机浏览器里，退出只是删掉它；要让某个设备彻底失效，请到电脑端设置的「远程操控」里移除该设备。
           </p>

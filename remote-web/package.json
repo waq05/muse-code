@@ -8,6 +8,7 @@
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "build": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit && vite build",
+    "selfcheck": "node selfcheck.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

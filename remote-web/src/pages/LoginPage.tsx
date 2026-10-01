@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { ApiError, PAIR_CODE_LENGTH, baseUrl, pair } from '../lib/api.js'
-import { loadDeviceName, saveCreds, type DeviceCreds } from '../lib/storage.js'
+import { loadDeviceName, saveCreds, clearLastSeq, type DeviceCreds } from '../lib/storage.js'
 
 /**
  * 登录页（配对页）：填配对码 + 设备名，换一个设备 token 存进 localStorage。
@@ -38,6 +38,8 @@ export function LoginPage({ onPaired, notice }: LoginPageProps): ReactNode {
         deviceName: deviceName.trim() === '' ? '我的设备' : deviceName.trim(),
       }
       saveCreds(creds)
+      // 协议 v3：刚配对的设备没有历史，帧序号清零（否则重连会拿旧宿主的位点去补帧）。
+      clearLastSeq()
       onPaired(creds)
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : '连不上宿主，检查地址与网络后重试')

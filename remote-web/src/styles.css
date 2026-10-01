@@ -1031,6 +1031,99 @@ button:disabled {
   gap: var(--sp-2);
 }
 
+/* 隐藏的文件选择器：由 📎 按钮代点（display:none 的 input 仍可被程序点开）。 */
+.composer-file {
+  display: none;
+}
+
+.composer-attach {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* ══════════════════ 附件 chips ══════════════════ */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  max-width: 100%;
+  padding: 2px var(--sp-1) 2px var(--sp-2);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-micro);
+}
+
+.chip-error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.chip-kind {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.chip-name {
+  overflow: hidden;
+  max-width: 150px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-size {
+  flex: 0 0 auto;
+  color: var(--fg-dim);
+}
+
+.chip-flag {
+  flex: 0 0 auto;
+  color: var(--danger);
+}
+
+/* 压缩 / 上传中的转圈：沿用工具卡的 spin 关键帧。 */
+.chip-spin {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip-spin {
+    animation: none;
+  }
+}
+
+.chip-x {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  color: var(--fg-muted);
+  font-size: 15px;
+  line-height: 1;
+}
+
 .composer-input {
   flex: 1;
   min-height: 40px;
@@ -1260,4 +1353,44 @@ button:disabled {
   color: var(--fg-dim);
   font-size: var(--fs-micro);
   line-height: 1.5;
+}
+
+/* ══════════════════ 推送开关 ══════════════════ */
+
+.pushrow {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.pushrow-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.pushrow-label {
+  color: var(--fg-muted);
+  font-size: var(--fs-small);
+}
+
+.pushrow-hint,
+.pushrow-note,
+.pushrow-error {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+
+.pushrow-hint {
+  color: var(--warn);
+}
+
+.pushrow-note {
+  color: var(--fg-dim);
+}
+
+.pushrow-error {
+  color: var(--danger);
 }

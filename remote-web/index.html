@@ -9,10 +9,17 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#101114" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#0f1013" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#f6f7fa" media="(prefers-color-scheme: light)" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Muse Code" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="format-detection" content="telephone=no" />
+    <!-- PWA：manifest 与图标由 vite 的 public 目录原样拷进产物根（见 vite.config.ts）。
+         主题色/底色取 styles.css 里深色档的 --bg（#0f1013），manifest 里没法写 CSS 变量。 -->
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236b86ff'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' fill='%23fff' text-anchor='middle'%3E%3E_%3C/text%3E%3C/svg%3E"

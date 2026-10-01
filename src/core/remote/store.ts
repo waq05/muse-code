@@ -1,9 +1,11 @@
 /**
- * 远程控制的数据文件：`~/.dsc/remote/` 下的三份 JSON。
+ * 远程控制的数据文件：`~/.dsc/remote/` 下的几份 JSON。
  *
- *   pending.json  还没被用掉的配对码（只存盐与哈希，明文码永不落盘）
- *   devices.json  已配对设备的 token 哈希、名字与时间
- *   .owner.json   主控位：哪个进程在伺服（pid + 启动指纹 + 端口）
+ *   pending.json     还没被用掉的配对码（只存盐与哈希，明文码永不落盘）
+ *   devices.json     已配对设备的 token 哈希、名字与时间
+ *   .owner.json      主控位：哪个进程在伺服（pid + 启动指纹 + 端口）
+ *   push-keys.json   Web Push 的 VAPID 密钥对（公钥给浏览器订阅，私钥只在本机）
+ *   push-subs.json   浏览器推送订阅（endpoint + 密钥 + 哪台设备）
  *
  * 写盘一律「先写同目录临时文件再 rename」：进程正好在写的那一刻挂掉时，
  * 读到的只可能是旧文件，不会是半个 JSON。
@@ -17,12 +19,14 @@ import { dirname, join } from 'node:path'
 /** 远程控制的数据目录。 */
 export const REMOTE_DIR = join(homedir(), '.dsc', 'remote')
 
-/** 三份文件的位置；`dir` 只在自检脚本里换（默认就是 `~/.dsc/remote`）。 */
+/** 几份文件的位置；`dir` 只在自检脚本里换（默认就是 `~/.dsc/remote`）。 */
 export interface RemoteFiles {
   dir: string
   pending: string
   devices: string
   owner: string
+  pushKeys: string
+  pushSubs: string
 }
 
 export function remoteFiles(dir: string = REMOTE_DIR): RemoteFiles {
@@ -31,6 +35,8 @@ export function remoteFiles(dir: string = REMOTE_DIR): RemoteFiles {
     pending: join(dir, 'pending.json'),
     devices: join(dir, 'devices.json'),
     owner: join(dir, '.owner.json'),
+    pushKeys: join(dir, 'push-keys.json'),
+    pushSubs: join(dir, 'push-subs.json'),
   }
 }
 

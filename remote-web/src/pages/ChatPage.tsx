@@ -94,11 +94,12 @@ export function ChatPage({ client, state, onOpenSessions }: ChatPageProps): Reac
         stopping={state.stopping}
         connected={state.conn === 'open'}
         error={state.lastError !== null && state.conn !== 'open' ? state.lastError : null}
-        onSend={(text) => {
-          void client.submit(text).catch((cause: unknown) => {
+        onSend={(text, images) => {
+          void client.submit(text, images.length > 0 ? images : undefined).catch((cause: unknown) => {
             setCardError(cause instanceof Error ? cause.message : String(cause))
           })
         }}
+        onUploadFile={(file) => client.upload(file).then((result) => result.path)}
         onInterrupt={() => {
           void client.interrupt().catch((cause: unknown) => {
             setCardError(cause instanceof Error ? cause.message : String(cause))

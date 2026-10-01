@@ -651,3 +651,37 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 ---
 
 ---
+
+## 阶段 28：远程操控宿主补全——增量帧、重连补帧、上传与推送（0.6.12 批 A）
+
+0.6.6 的 remote 插件（阶段 22）对**每条连接**各自节流推**全量**快照：手机每 80ms 收一次整份会话（几十 KB 起），弱网下流量高；断线重连只能重建一整帧，没有「补上我漏掉的那几帧」这条路。这一批按一份**两批并行开发共用的协议契约 v3**改造宿主半边：全局 seq（跨连接连续）、按条目 id 做 diff 的增量帧、最近 120 帧环形缓冲与 `&lastSeq=N` 重连补帧，另外补上上传端点、浏览器推送（Web Push）与通知 Webhook。**手机界面那一半（remote-web 的增量合并、上传入口、推送订阅与 Service Worker）由并行批次 B 承担，本批不碰 `remote-web/`。**
+
+契约 v3 的帧形状（宿主与界面两边都按这一份写代码）：
+
+```
+全量帧  {type:'snapshot', seq, full:true, ...快照字段（照 v2 铺平）}
+增量帧  {type:'delta', seq, full:false, meta:{除 entries/liveEntries 外的所有快照字段},
+         added:[条目], updated:[条目], removedIds:[number], liveEntries:[条目全量]}
+```
+
+| 决策 | 理由 |
+| --- | --- |
+| 帧流做成**宿主级一份**（一个节流定时器 + 一个 `RemoteFrameHub`），所有连接收同一串帧 | 增量 diff 必须有唯一的「上一帧」当基准。每条连接各自 diff 的话，两条连接看到的状态会各漂各的，重连补帧也没有共同参照；seq 也就没法「跨连接连续」 |
+| 环形缓冲**存原样的 JSON 字符串**（120 帧），重发不重算 | 客户端是按收到的字节解析并记 `lastSeq` 的。补帧若按当前状态重算，同一个 seq 会给出跟当时不一样的字节，客户端重放出来的历史与旁观连接对不上——自检里就是逐字节比对这一条 |
+| `liveEntries` 与 `meta` 每帧全量带，只对**定稿条目**（正 id）做 diff | 直播尾每几十毫秒整段改写，给它做 diff 只会更贵；`meta` 里是 status/surfaces/sessions，都很小且没有稳定身份可以拿来做 diff |
+| 全量锚三条：连续 50 帧 delta、距上一全量 30 秒、**会话切换立刻** | 增量是可以无限长的，一旦漏了一帧（进程被杀、缓冲被覆盖）就永远补不回来，锚帧是唯一的复位点。会话切换时条目 id 空间整体换了一套，diff 没有意义 |
+| 一条连接都没有时**不造帧**，改记一个「错过变化」标记；下一条连接补完缓冲帧之后再追一帧全量 | 没人看的时候按 80ms 造帧是白烧 CPU（一轮对话可能几万次变化）。但也不能让重连的客户端停在旧状态上（那段时间的变化没进缓冲），所以这个标记必须补一帧全量 |
+| `lastSeq` 落在窗口之外时回落 `hello` + 全量，**包括「比最新一帧还新」** | 「比最新还新」只会在宿主进程重启之后出现（seq 从头数，客户端的号是上一世的）。照字面「补 N 之后的帧」这里会一帧都不发，界面停在空白——契约给「接不上」的客户端准备的就是全量这条路 |
+| 上传落盘名 = 8 位随机十六进制 + 安全化文件名；目录按 `yyyymmdd` 分；总配额 100MB 按最旧淘汰 | 文件名完全不可信（可以带 `../`、控制字符、`CON` 这类 Windows 设备名）；随机前缀避免同名互相覆盖，按天分目录让人工翻的时候知道是哪天传的 |
+| 20MB 上限由上传这条路由**自己的读取器**说了算，JSON 路由仍是 64KB | 要传的是照片、日志、短音频，64KB 不够；但不能顺手把配对、取票据这些路由的上限一起放开（那里只有几十字节） |
+| Web Push 用 `web-push` + VAPID：密钥 `push-keys.json`、订阅 `push-subs.json`，都放 `~/.dsc/remote` | 与 `devices.json` 同一层，吊销与清理的边界一致；**首次用到才生成密钥**（装上插件不该顺手生成一对密钥）。`remote.push` 关着时公钥报 null、订阅端点回 403、一条推送都不发 |
+| 通知 Webhook 的两种格式**由 URL 自己决定**（带 `{title}`/`{body}`/`{url}` → GET 替换，否则 POST JSON） | 用户只要把地址粘进设置里，不用先选模式。Bark 的地址天生带占位符、ntfy 的主题地址天生不带，这条规则刚好把两家都认下来 |
+| 推送触发挂在插件**已有的** transcript 订阅与 `dsc/turn-end` 上 | 内核一条新事件都不用加。轮开始时刻没有现成事件，插件从快照的 `turnState` 由 idle 变非 idle 自己记（推送正文要报「用时 Xs」） |
+| 逐台吊销走 `deviceId`（新增 `pairing.revokeDevice`） | token 本体从不落盘、设置页上也看不到，界面手上只有 `deviceId`，所以「吊销这一台」必须能按身份定位而不是按凭据 |
+| 设备清单由 `fields()` 现算，每台设备两行（info + `revoke-device:<id>` 按钮） | `fields()` 本来就是每次刷新重新调的，吊销之后下一刷自然少一台，不用自己再往界面推事件 |
+
+验收：根 `pnpm run typecheck` 与 `pnpm run build` **0 错**；`node scripts/remote-host-test.mjs` **134/134 通过**（阶段 22 记的是 49 条；逐段条数：偏好 19、配对 22、票据 4、主控位 5、Host 头 8、桩服务页 4、白名单 2、帧流 diff 与锚帧 17、上传 11、Web Push 12、通知 Webhook 6、HTTP+WS 24）；`node scripts/remote-e2e.mjs` **78/78 通过**（阶段 22 记的是 47 条，真起宿主走全链：上传落盘→submit 带路径→增量帧 added→断线→带 `lastSeq` 重连逐字节补帧→`lastSeq=0` 回落全量→审批卡触发假 Webhook 收 JSON→轮完成第二条 Webhook→推送路由→设备清单两行与单独吊销当场断线）；`node shots/integration-check.mjs` 仍绿；真实 `~/.dsc` 跑完整套探针前后逐文件指纹零改动（两个探针都换 HOME 到 `scripts/.remote-*-home` 并在成功时自删）。
+
+诚实边界：① **手机界面那一半不在本批**：增量帧的合并、`lastSeq` 的记账与重连、上传入口、推送订阅与 Service Worker 的显示都由并行批次 B 做，本批只验宿主半边（自检里的「客户端重放视图」是我按契约写的可执行说明，不是批 B 的实现）。② **Web Push 的「真的送到手机」没法在自检里验**：host-test 注入假发送器验数据层与 404/410 清理，e2e 里验到的是路由（公钥、订阅入库去重、退订），真机上还得人工验一次（iOS 必须先把页面加到主屏幕）。③ 上传配额淘汰按 mtime 从旧到新，同一毫秒写入的文件之间顺序不稳定（生产上无所谓，自检里用 `utimesSync` 把时间钉死才可复现）。④ 一次推送的两条腿是**串行** await 的（先 Web Push 再 Webhook）：某台订阅超时会把它后面的 Webhook 推后最多 5 秒，没做并发，登记在 roadmap。⑤ 会话切换的「立即全量」靠 `sessionId` 变号；同一会话内的整体重排（压缩之类）不触发全量，靠 diff 自然收敛。⑥ `removedIds` 在常规流里很少出现（条目只在回滚/清空时消失），自检里是用合成快照逐格验的。⑦ 设置分区的「发送测试推送」在两条腿都关着时只会告诉你「没开 / 没配」，不会替你打开。
+
+发布（0.6.12）：手机界面那一半（批次 B）同批落地——`remote-web/src/lib/reduce.ts` 的帧归并（全量重置 / 增量按 id 合并）、`client.ts` 的 `lastSeq` 记账与补帧重连、上传入口（图片 canvas 压缩长边 1568 走 `images[]`，其它文件走 `/api/upload` 后拼「`[附件] <path>`」，总量 8MB）、PWA（manifest + Service Worker，`isSecureContext` 才注册）、推送订阅开关；`remote-web/selfcheck.mjs` **91/91**（归并 15 / 帧序号 6 / 假 socket 客户端 30+ / Web Push 12 / 附件 20 / PWA 产物 6）。批次 B 就地修掉一个跨批次口径坑：宿主在推送开关关着时回 403，客户端原先把 403 当凭据失效会踢回配对页——现在只有 401 算凭据失效，403 原样显示宿主的提示。`.webmanifest` 的 mime 宿主没配，界面用 `manifest.json`（application/json）绕开。汇总复验（Lead 本机）：host-test 134/134、e2e 78/78、selfcheck 91/91、根 typecheck/build 0 错、integration 95 / approval-floor 53 / sandbox 193 / compact 全绿。诚实边界：Web Push 只在 https（或 localhost）能注册——局域网明文 http 下界面会如实提示，锁屏送达靠 Webhook 那条腿（Bark/ntfy）；iOS 真机的通知权限、加主屏幕、大图压缩耗时待人工验收。

@@ -184,7 +184,8 @@ function normalizeCompaction(raw: unknown): { count: number } | undefined {
   return { count }
 }
 
-function normalizeEntries(raw: unknown): TranscriptEntry[] {
+/** 条目数组归一化：认不出的元素丢掉（增量帧的 added/updated/liveEntries 都走这里）。 */
+export function normalizeEntries(raw: unknown): TranscriptEntry[] {
   const out: TranscriptEntry[] = []
   for (const item of asArray(raw)) {
     const entry = normalizeEntry(item)
@@ -432,6 +433,43 @@ export function normalizeSnapshot(raw: unknown): RemoteSnapshot | null {
     surfaces: normalizeSurfaces(source['surfaces'] ?? source['surface']),
     sessions,
   }
+}
+
+/** 一张「什么都没有」的快照：增量帧第一次落地（本地还没有旧状态）时的起点。 */
+function emptySnapshot(): RemoteSnapshot {
+  return {
+    seq: 0,
+    cwd: null,
+    sessionId: null,
+    entries: [],
+    liveEntries: [],
+    status: null,
+    surfaces: normalizeSurfaces(null),
+    sessions: [],
+  }
+}
+
+/**
+ * 增量帧（v3 的 `delta`）里 `meta` 的归一化。
+ *
+ * 契约的写法是 `state = {...state, ...meta, liveEntries}`，也就是「meta 里有什么就覆盖什么」。
+ * 这里按同一口径实现，但用「字段在 meta 里出现过才覆盖」判断，而不是无条件覆盖：
+ * meta 是把快照字段打包过来的，宿主哪天漏带一个字段（比如 sessions），
+ * 无条件覆盖会把界面上的会话列表清成空，出现比契约窄的假象。
+ */
+export function normalizeMeta(raw: unknown, previous: RemoteSnapshot | null): RemoteSnapshot {
+  const source = asRecord(raw) ?? {}
+  const base = previous ?? emptySnapshot()
+  const next: RemoteSnapshot = { ...base }
+  if ('seq' in source) next.seq = pickNumber(source, 'seq') ?? base.seq
+  if ('cwd' in source) next.cwd = pickString(source, 'cwd')
+  if ('sessionId' in source) next.sessionId = pickString(source, 'sessionId')
+  if ('status' in source) next.status = normalizeStatus(source['status'])
+  if ('surfaces' in source || 'surface' in source) {
+    next.surfaces = normalizeSurfaces(source['surfaces'] ?? source['surface'])
+  }
+  if ('sessions' in source) next.sessions = normalizeSessions(source['sessions'])
+  return next
 }
 
 // ── 派生读取器 ─────────────────────────────────────────────────────────────

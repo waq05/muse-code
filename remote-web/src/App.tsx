@@ -107,6 +107,7 @@ function RemoteShell({
           onPick={() => setPage('chat')}
           onSignOut={() => onSignOut(null)}
           deviceName={creds.deviceName}
+          pushPublicKey={state.pushPublicKey}
         />
       ) : (
         <ChatPage client={client} state={state} onOpenSessions={() => setPage('sessions')} />
