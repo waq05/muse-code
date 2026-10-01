@@ -8763,3 +8763,339 @@ body.resizing iframe {
   color: var(--dsc-accent);
   flex: none;
 }
+
+/* ── 轮尾「文件已更改」聚合卡 + 右侧 diff 审查面板（对标 dsh ui-deliverables）──
+   数据全部来自宿主在 write/edit 执行层算好的 hunks；界面只聚合与渲染，不碰文件系统。 */
+
+/* 轮尾卡：填充头 + 文件行 + 底部放全钮（dsh ChangedFiles.module.css 的规格，
+   颜色全部映射到 --dsc-* 令牌）。 */
+.changes-card {
+  background: var(--dsc-neutral-card);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-block);
+  color: var(--dsc-text-primary);
+  display: flex;
+  flex-direction: column;
+  margin: 6px 0 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.changes-head {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  transition: background-color var(--dsc-dur) var(--dsc-ease);
+  width: 100%;
+}
+
+.changes-head:hover {
+  background: var(--dsc-row-hover-bg);
+}
+
+.changes-tile {
+  align-items: center;
+  background: color-mix(in srgb, var(--dsc-neutral-page) 50%, transparent);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-control);
+  display: grid;
+  flex: none;
+  height: 34px;
+  place-items: center;
+  width: 34px;
+}
+
+.changes-titles {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.changes-title {
+  font-size: var(--dsc-fs-body);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-stat {
+  align-items: center;
+  color: var(--dsc-text-tertiary);
+  display: inline-flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+}
+
+.changes-hint {
+  opacity: 0;
+  transition: opacity var(--dsc-dur) var(--dsc-ease);
+}
+
+.changes-head:hover .changes-hint,
+.changes-head:focus-visible .changes-hint {
+  opacity: 1;
+}
+
+/* 增删计数：绿 + 红 -（沿用 --dsc-green/--dsc-red 的既有语义色）。 */
+.changes-counts {
+  display: inline-flex;
+  flex: none;
+  font-family: var(--dsc-font-mono);
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.changes-added {
+  color: var(--dsc-green);
+}
+
+.changes-removed {
+  color: var(--dsc-red);
+}
+
+.changes-list {
+  border-top: 1px solid var(--dsc-stroke-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.changes-row-wrap {
+  align-items: center;
+  display: flex;
+  min-width: 0;
+}
+
+.changes-row {
+  background: none;
+  border: 0;
+  color: var(--dsc-text-secondary);
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  font: inherit;
+  gap: 10px;
+  justify-content: space-between;
+  min-height: 24px;
+  min-width: 0;
+  padding: 6px 8px 6px 14px;
+  text-align: left;
+}
+
+.changes-row:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.changes-path {
+  font-size: var(--dsc-fs-caption);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changes-act {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  padding-right: 8px;
+}
+
+.changes-act-single {
+  border-top: 1px solid var(--dsc-stroke-2);
+  justify-content: flex-end;
+  padding: 6px 10px;
+}
+
+.changes-btn {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-badge);
+  color: var(--dsc-text-secondary);
+  cursor: pointer;
+  font-size: var(--dsc-fs-caption);
+  padding: 2px 10px;
+  transition: color var(--dsc-dur) var(--dsc-ease), border-color var(--dsc-dur) var(--dsc-ease);
+}
+
+.changes-btn:hover {
+  border-color: var(--dsc-accent);
+  color: var(--dsc-accent);
+}
+
+.changes-toggle {
+  background: none;
+  border: 0;
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--dsc-fs-caption);
+  padding: 8px 14px;
+  text-align: left;
+}
+
+.changes-toggle:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-secondary);
+}
+
+/* 右侧审查面板：thread-zone 在 data-review 时变两列（左列 = 对话 + 输入区照旧，
+   右栏定宽画 diff）。column → row 后原来的纵向职责整体移交给 .thread-main。 */
+.thread-zone[data-review] {
+  flex-direction: row;
+}
+
+.thread-zone[data-review] .thread-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.diff-pane {
+  background: var(--dsc-neutral-page);
+  border-left: 1px solid var(--dsc-stroke-2);
+  display: flex;
+  flex: 0 0 clamp(380px, 42%, 720px);
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.diff-head {
+  align-items: center;
+  border-bottom: 1px solid var(--dsc-stroke-2);
+  display: flex;
+  flex: none;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 10px;
+}
+
+.diff-file-select {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-primary);
+  flex: 1;
+  font-size: var(--dsc-fs-caption);
+  min-width: 0;
+  padding: 3px 6px;
+}
+
+.diff-file-name {
+  color: var(--dsc-text-secondary);
+  flex: 1;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-tools {
+  align-items: center;
+  color: var(--dsc-text-tertiary);
+  display: inline-flex;
+  flex: none;
+  gap: 8px;
+}
+
+.diff-tool {
+  background: none;
+  border: 0;
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  font-size: var(--dsc-fs-caption);
+  padding: 2px 6px;
+}
+
+.diff-tool:hover {
+  color: var(--dsc-accent);
+}
+
+.diff-body {
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0 16px;
+}
+
+.diff-note {
+  color: var(--dsc-text-tertiary);
+  font-family: var(--dsc-font-ui);
+  margin: 0;
+  padding: 12px 16px;
+}
+
+.diff-hunk {
+  margin-bottom: 8px;
+}
+
+.diff-hunk-head {
+  color: var(--dsc-text-quaternary);
+  padding: 4px 16px;
+  white-space: pre;
+}
+
+/* 一行差异：旧行号 / 新行号 / 记号 / 内容。增删行着色（dsh 的 add/del 底色口径，
+   用既有 --dsc-green/--dsc-red 调透明度当底，行号列的色更深一档）。 */
+.diff-line {
+  display: grid;
+  grid-template-columns: 3.2em 3.2em 1.2em minmax(0, 1fr);
+  line-height: 1.55;
+  min-height: 22px;
+  white-space: pre;
+  width: max-content;
+  min-width: 100%;
+}
+
+.diff-no {
+  color: var(--dsc-text-quaternary);
+  padding-right: 8px;
+  text-align: right;
+  user-select: none;
+}
+
+.diff-sign {
+  text-align: center;
+  user-select: none;
+}
+
+.diff-text {
+  padding-right: 16px;
+}
+
+.diff-add {
+  background: var(--dsc-diff-add-bg);
+}
+
+.diff-add .diff-no,
+.diff-add .diff-sign {
+  color: var(--dsc-green);
+}
+
+.diff-del {
+  background: var(--dsc-diff-remove-bg);
+}
+
+.diff-del .diff-no,
+.diff-del .diff-sign {
+  color: var(--dsc-red);
+}
+
+.diff-ctx .diff-text {
+  color: var(--dsc-text-secondary);
+}

@@ -152,5 +152,53 @@ check(
   JSON.stringify(aborted.entries),
 )
 
+// ── 7. 文件改动（tool/changes 事件）：实时折叠成条目，重放经 fileChanges 还原 ──
+const changes = new Transcript()
+const changeSample = {
+  path: 'D:\\proj\\a.ts',
+  added: 3,
+  removed: 1,
+  hunks: [
+    {
+      oldStart: 1,
+      oldCount: 4,
+      newStart: 1,
+      newCount: 6,
+      lines: [
+        { kind: 'context', text: 'a', oldLine: 1, newLine: 1 },
+        { kind: 'remove', text: 'b', oldLine: 2, newLine: null },
+        { kind: 'add', text: 'c', oldLine: null, newLine: 2 },
+      ],
+    },
+  ],
+}
+changes.reduce({ type: 'user', text: '改一下' })
+changes.reduce({ type: 'tool/call', callId: 'cw', name: 'edit', args: '{}' })
+changes.reduce({ type: 'tool/result', callId: 'cw', text: '已编辑' })
+changes.reduce({ type: 'tool/changes', callId: 'cw', change: changeSample })
+const changesEntry = changes.entries.find((entry) => entry.kind === 'changes')
+check('tool/changes 折成 kind:changes 条目', changesEntry !== undefined)
+check('条目带上完整的变更事实（路径/增删/hunks）', JSON.stringify(changesEntry?.file) === JSON.stringify(changeSample))
+
+const replay = new Transcript()
+replay.replayHistory(
+  [
+    { role: 'user', content: '改一下' },
+    {
+      role: 'assistant',
+      content: '好的',
+      tool_calls: [{ id: 'cw', type: 'function', function: { name: 'edit', arguments: '{}' } }],
+    },
+    { role: 'tool', tool_call_id: 'cw', content: '已编辑' },
+    { role: 'assistant', content: '改完了' },
+  ],
+  new Map(),
+  new Map([['cw', changeSample]]),
+)
+check('重放经 fileChanges 还原出同样的 changes 条目', replay.entries.some((entry) => entry.kind === 'changes'))
+const noChanges = new Transcript()
+noChanges.replayHistory([{ role: 'user', content: '老会话' }])
+check('老会话日志没有变更数据就不出卡条目', !noChanges.entries.some((entry) => entry.kind === 'changes'))
+
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 项失败`)
 process.exit(failures === 0 ? 0 : 1)

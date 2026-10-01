@@ -20,7 +20,7 @@ import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryWriteResult, Writ
 import type { ProviderConfig } from '../core/config.js'
 import type { Session } from '../core/session.js'
 import type { ChatMessage, LlmAdapter, LlmRoute, StreamHandlers, StreamRequest, StreamResult } from '../core/llm.js'
-import type { ToolEntry } from '../core/tools.js'
+import type { FileChangeSummary, ToolEntry } from '../core/tools.js'
 import type { CoreEvent } from '../core/events.js'
 import type { SkillDefinition, SkillSummary } from '../core/skills.js'
 import type { DscPrefs } from '../core/prefs.js'
@@ -452,8 +452,14 @@ export interface TranscriptService {
    * 恢复会话时把历史消息重放为条目（启动恢复/session-open 场景）。
    * @param toolErrors 会话日志记的工具异常标记（`Session.toolErrors`），
    *                   决定了重放出来的工具卡是「已拒绝」「失败」还是「完成」。
+   * @param fileChanges 成功 write / edit 的实际改动（`Session.fileChanges`），
+   *                    决定轮尾「文件已更改」卡要不要出现。
    */
-  replayHistory(messages: readonly ChatMessage[], toolErrors?: ReadonlyMap<string, string>): boolean
+  replayHistory(
+    messages: readonly ChatMessage[],
+    toolErrors?: ReadonlyMap<string, string>,
+    fileChanges?: ReadonlyMap<string, FileChangeSummary>,
+  ): boolean
   subscribe(listener: () => void): () => void
   getSnapshot(): RuntimeSnapshot
   /** 手动失效快照缓存并通知订阅者。 */

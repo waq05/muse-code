@@ -5,6 +5,7 @@
  *
  * @module dsc/core/events
  */
+import type { FileChangeSummary } from './tools.js'
 
 /** MiniAgent 事件。 */
 export type CoreEvent =
@@ -32,6 +33,11 @@ export type CoreEvent =
    */
   | { type: 'tool/prepare'; name: string }
   | { type: 'tool/result'; callId: string; text: string; error?: string }
+  /**
+   * 一次成功的 write / edit 落盘后的实际改动（紧跟在同 callId 的 `tool/result` 之后）。
+   * adapter 折成 `kind: 'changes'` 条目，界面聚合成轮尾「文件已更改」卡。
+   */
+  | { type: 'tool/changes'; callId: string; change: FileChangeSummary }
   /** 这次模型请求失败、正要重试（对照 dsh 的 `model-retry` 节点）。 */
   | { type: 'model/retry'; attempt: number; reason: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number }

@@ -263,6 +263,12 @@ export type TranscriptEntry =
    * 独立节点——dsh 的规矩是「二级分组把模型重试视为分隔节点，但整轮折叠仍包含重试行」。
    */
   | { kind: 'model-retry'; id: number; attempt: number; text: string; ts?: number }
+  /**
+   * 一次成功的 write / edit 落盘后的实际改动（对照 dsh deliverables 的 produced 文件）。
+   * 界面把同一轮里的这些条目聚合成轮尾一张「文件已更改」卡；`hunks` 是算好的
+   * unified 差异段（结构见 {@link DiffHunkView}），审查面板直接渲染。
+   */
+  | { kind: 'changes'; id: number; file: ChangedFileView; ts?: number }
 
 /**
  * 一轮对话为什么结束（口径就是宿主 `turn/end` 事件的 reason，见 core/events.ts）。
@@ -273,6 +279,39 @@ export type TranscriptEntry =
  * 从事件折条目时把它丢了，于是界面上「跑挂了的一轮」和「好好答完的一轮」长得一模一样。
  */
 export type TurnEndReason = 'completed' | 'aborted' | 'error'
+
+/** 差异里的一行（与 core/diff-text.ts 的 DiffLine 同构，视图层零宿主依赖）。 */
+export interface DiffLineView {
+  kind: 'context' | 'remove' | 'add'
+  text: string
+  /** 这一行在旧文件里的行号；`add` 行为 null。 */
+  oldLine: number | null
+  /** 这一行在新文件里的行号；`remove` 行为 null。 */
+  newLine: number | null
+}
+
+/** 一段 hunk：`@@ -oldStart,oldCount +newStart,newCount @@` 加上它包含的行（同构 DiffHunk）。 */
+export interface DiffHunkView {
+  oldStart: number
+  oldCount: number
+  newStart: number
+  newCount: number
+  lines: DiffLineView[]
+}
+
+/** 一次成功的 write / edit 的实际改动（轮尾「文件已更改」卡与审查面板的数据）。 */
+export interface ChangedFileView {
+  /** 文件的绝对路径（打开预览用）。 */
+  path: string
+  /** 新增行数。 */
+  added: number
+  /** 删除行数。 */
+  removed: number
+  /** 算好的 unified 差异段；审查面板直接渲染，不再碰文件系统。 */
+  hunks: DiffHunkView[]
+  /** true = hunks 超过行数上限被砍过（面板据此提示「只显示前一部分」）。 */
+  truncated?: boolean
+}
 
 /** 会话累计 token 用量。 */
 export interface TokenUsageView {

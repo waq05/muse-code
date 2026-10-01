@@ -15,6 +15,7 @@
  */
 import type { CoreEvent } from '../core/events.js'
 import { contentImages, contentText, type ChatMessage } from '../core/llm.js'
+import type { FileChangeSummary } from '../core/tools.js'
 import { SUMMARY_BANNER } from '../core/compact-anchors.js'
 import type { CompactionMark, TokenUsageView, ToolCallView, ToolStatus, TranscriptEntry } from '../contract.js'
 
@@ -168,7 +169,7 @@ export class Transcript {
    * 时间戳跟着消息走（`ChatMessage.ts`，由会话日志重放时填回）：有就盖在条目上，
    * 没有（2026-09 之前的老日志）就传 null，条目干脆不带 ts，界面降级不显示时间。
    */
-  replayHistory(messages: readonly ChatMessage[], toolErrors?: ReadonlyMap<string, string>): boolean {
+  replayHistory(messages: readonly ChatMessage[], toolErrors?: ReadonlyMap<string, string>, fileChanges?: ReadonlyMap<string, FileChangeSummary>): boolean {
     let changed = false
     for (const message of messages) {
       const ts = message.ts ?? null
@@ -222,6 +223,11 @@ export class Transcript {
               },
               ts,
             ) || changed
+          // 成功的 write / edit 把轮尾卡的变更事实一并重放（日志 tool 记录里存着）
+          const change = fileChanges?.get(callId)
+          if (change !== undefined) {
+            changed = this.reduce({ type: 'tool/changes', callId, change }, ts) || changed
+          }
           break
         }
       }
@@ -438,6 +444,12 @@ export class Transcript {
             ...(durationMs === undefined ? {} : { durationMs }),
           },
         })
+        return true
+      }
+      case 'tool/changes': {
+        // 一次成功 write / edit 的实际改动：独立条目（渲染层把同一轮的聚合成轮尾一张卡）。
+        // 时间戳口径与工具卡一致：条目创建那一刻就是落盘完成那一刻。
+        this.list.push(this.stamp({ kind: 'changes', id: this.seq++, file: event.change }))
         return true
       }
       case 'usage':

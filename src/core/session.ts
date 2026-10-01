@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import type { ChatContentPart, ChatMessage, ToolCall } from './llm.js'
 import type { CollaborationMode, PlanView, TodoItemView } from '../contract.js'
 import type { GoalSnapshot } from './goal.js'
+import type { FileChangeSummary } from './tools.js'
 import { dropSessionMeta, patchSessionMeta, readSessionMeta } from './session-meta.js'
 import type { SessionMetaRecord } from './session-meta.js'
 
@@ -43,7 +44,21 @@ type SessionRecord =
    */
   | { type: 'user'; text: string; images?: string[]; ts?: number }
   | { type: 'assistant'; text: string; reasoning: string; toolCalls?: ToolCall[]; ts?: number }
-  | { type: 'tool'; callId: string; name: string; text: string; images?: string[]; error?: string; ts?: number }
+  | {
+      type: 'tool'
+      callId: string
+      name: string
+      text: string
+      images?: string[]
+      /**
+       * 成功的 write / edit 附带的实际改动（轮尾「文件已更改」卡的数据源）。
+       * 只活在日志里：内存的协议消息不带（透传给端点会被挑剔的网关判 400），
+       * 恢复会话时经 {@link Session.fileChanges} 旁路还原成条目。老日志没有这个字段。
+       */
+      changes?: FileChangeSummary
+      error?: string
+      ts?: number
+    }
   | {
       type: 'summary'
       text: string
@@ -149,6 +164,12 @@ export class Session {
    */
   readonly toolErrors = new Map<string, string>()
   /**
+   * 成功的 write / edit 的实际改动（callId → 变更摘要），轮尾「文件已更改」卡的数据源。
+   * 与 toolErrors 同一条旁路：不挂 `messages`（协议消息透传给端点），只在 jsonl 的
+   * tool 记录里存一份，重放历史时单独交给 transcript 折成 `kind: 'changes'` 条目。
+   */
+  readonly fileChanges = new Map<string, FileChangeSummary>()
+  /**
    * 会话状态条目（见 {@link SessionStateMap}）。
    * 不发进请求体，恢复历史会话时由 {@link Session.load} 逐行填回来。
    */
@@ -192,6 +213,7 @@ export class Session {
     let meta: SessionMeta | undefined
     const messages: ChatMessage[] = []
     const toolErrors = new Map<string, string>()
+    const fileChanges = new Map<string, FileChangeSummary>()
     const state = new Map<string, unknown>()
     const notes: SessionNote[] = []
     for (const line of lines) {
@@ -254,6 +276,7 @@ export class Session {
           // 状态取自 error 字段；早于该字段的老日志按固定回执文案把「已拒绝」补回来
           const error = record.error ?? (record.text === REJECTED_TOOL_TEXT ? REJECTED_TOOL_ERROR : undefined)
           if (error !== undefined) toolErrors.set(record.callId, error)
+          if (record.changes !== undefined) fileChanges.set(record.callId, record.changes)
           break
         }
         case 'summary': {
@@ -303,6 +326,7 @@ export class Session {
       notes,
     )
     for (const [callId, error] of toolErrors) session.toolErrors.set(callId, error)
+    for (const [callId, change] of fileChanges) session.fileChanges.set(callId, change)
     return session
   }
 
@@ -364,12 +388,13 @@ export class Session {
   appendTool(
     callId: string,
     name: string,
-    output: string | { text: string; images?: string[] },
+    output: string | { text: string; images?: string[]; changes?: FileChangeSummary },
     error?: string,
   ): void {
     const ts = Date.now()
     const text = typeof output === 'string' ? output : output.text
     const images = typeof output === 'string' ? undefined : output.images
+    const changes = typeof output === 'string' ? undefined : output.changes
     const content: string | ChatContentPart[] =
       images !== undefined && images.length > 0
         ? [
@@ -379,12 +404,16 @@ export class Session {
         : text
     this.messages.push({ role: 'tool', content, tool_call_id: callId, ts })
     if (error !== undefined) this.toolErrors.set(callId, error)
+    if (changes !== undefined) this.fileChanges.set(callId, changes)
     this.write({
       type: 'tool',
       callId,
       name,
       text,
       ...(images !== undefined && images.length > 0 ? { images } : {}),
+      // 内存消息不带 changes（协议消息透传给端点，多字段可能被挑剔的网关判 400）；
+      // 它只活在日志里，恢复会话时经 fileChanges 旁路还原成轮尾卡。
+      ...(changes !== undefined ? { changes } : {}),
       ...(error !== undefined ? { error } : {}),
       ts,
     })

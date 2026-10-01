@@ -5,8 +5,23 @@
  * @module dsc/core/tools
  */
 import { isAbsolute, resolve } from 'node:path'
+import type { DiffHunk } from './diff-text.js'
 
 export type ToolRisk = 'read' | 'write' | 'exec'
+
+/** 一次成功的落盘类调用（write / edit）对单个文件造成的实际改动。 */
+export interface FileChangeSummary {
+  /** 文件绝对路径。 */
+  path: string
+  /** 新增行数。 */
+  added: number
+  /** 删除行数。 */
+  removed: number
+  /** 算好的 unified 差异段（diff-text 的产物，逐行带新旧行号）。 */
+  hunks: DiffHunk[]
+  /** true = hunks 超出行数上限被砍过（界面据此提示「只显示前一部分」）。 */
+  truncated?: boolean
+}
 
 export interface ToolContext {
   cwd: string
@@ -22,6 +37,11 @@ export interface ToolContext {
 export interface ToolOutput {
   text: string
   images?: string[]
+  /**
+   * 落盘类工具（write / edit）附带的真实改动：循环会把它发成 `tool/changes` 事件、
+   * 随工具记录落盘（会话恢复时轮尾「文件已更改」卡据此还原）。执行失败时没有这一项。
+   */
+  changes?: FileChangeSummary
 }
 
 export interface ToolEntry {

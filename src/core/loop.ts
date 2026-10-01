@@ -17,7 +17,7 @@ import { LlmError } from './llm.js'
 import type { CoreEvent } from './events.js'
 import type { Session } from './session.js'
 import type { ToolGuardChain } from './tool-guards.js'
-import { callFacts, type ToolEntry } from './tools.js'
+import { callFacts, type FileChangeSummary, type ToolEntry } from './tools.js'
 
 export interface AgentDeps {
   /** 每次请求时动态读取（支持 /model 热切换）。 */
@@ -326,10 +326,15 @@ export class MiniAgent {
       // 工具结果里的密钥形状字符串不进会话日志，也不回显给模型（遮红挂在观察者链上）。
       const text = this.deps.guards.observe(call.name, rawText)
       const images = typeof output === 'string' ? undefined : output.images
-      const stored: string | { text: string; images?: string[] } =
-        text === rawText ? output : images !== undefined && images.length > 0 ? { text, images } : text
+      const changes = typeof output === 'string' ? undefined : output.changes
+      const stored: string | { text: string; images?: string[]; changes?: FileChangeSummary } =
+        text === rawText && changes === undefined
+          ? output
+          : images !== undefined && images.length > 0
+            ? { text, images, ...(changes === undefined ? {} : { changes }) }
+            : { text, ...(changes === undefined ? {} : { changes }) }
       const imageNote = images !== undefined && images.length > 0 ? `\n[附 ${images.length} 张截图]` : ''
-      return { text: text + imageNote, stored }
+      return { text: text + imageNote, stored, ...(changes === undefined ? {} : { changes }) }
     } catch (error) {
       const message = errText(error)
       return { text: message, stored: message, error: 'tool-error' }
@@ -345,6 +350,10 @@ export class MiniAgent {
       text: outcome.text,
       ...(outcome.error !== undefined ? { error: outcome.error } : {}),
     })
+    // 成功的落盘类调用随带真实改动：界面聚合成轮尾「文件已更改」卡
+    if (outcome.error === undefined && outcome.changes !== undefined) {
+      this.deps.emit({ type: 'tool/changes', callId: call.id, change: outcome.changes })
+    }
   }
 }
 
@@ -354,8 +363,10 @@ export { LlmError }
 type ToolOutcome = {
   /** 发给界面与模型的文本（已过遮红；带图时附截图说明）。 */
   text: string
-  /** 落进会话日志的形状（带图时是对象）。 */
-  stored: string | { text: string; images?: string[] }
+  /** 落进会话日志的形状（带图 / 带文件改动时是对象）。 */
+  stored: string | { text: string; images?: string[]; changes?: FileChangeSummary }
   /** undefined = 成功；tool-error = 执行失败；rejected = 被守卫拒绝。 */
   error?: 'tool-error' | 'rejected'
+  /** 成功的 write / edit 附带的真实改动（发 `tool/changes` 事件用）。 */
+  changes?: FileChangeSummary
 }

@@ -7,12 +7,16 @@
  */
 import { promises as fs } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
-import type { ToolEntry } from '../tools.js'
+import type { ToolEntry, ToolOutput } from '../tools.js'
+import { diffLines, type DiffHunk } from '../diff-text.js'
 import { noteRead, noteWrite, readBlockReason, staleOverwriteReason, writeHardBlockReason } from '../path-policy.js'
 import { sandboxPermissionProperties } from './sandbox-args.js'
 
-/** read 工具缺省一次读多少行（配置没给 readLineLimit 时用）。 */
+/** read 工具缺省一次读多少行（配置没给 readLineLimit 时用它）。 */
 export const READ_DEFAULT_LINE_LIMIT = 2000
+
+/** 变更摘要里 diff 段最多保留多少行（超出砍尾并标 truncated，防一次整篇重写撑爆条目与日志）。 */
+const CHANGE_DIFF_LINE_LIMIT = 800
 
 const abs = (cwd: string, p: unknown): string => {
   if (typeof p !== 'string' || p === '') throw new Error('path 必须是非空字符串')
@@ -22,6 +26,33 @@ const abs = (cwd: string, p: unknown): string => {
 const str = (v: unknown, name: string): string => {
   if (typeof v !== 'string') throw new Error(`${name} 必须是字符串`)
   return v
+}
+
+/**
+ * 把「改之前 / 改之后」的全文算成一份变更摘要（轮尾「文件已更改」卡的数据）。
+ *
+ * 什么时候没有摘要：新旧内容完全相同（覆盖写了个寂寞）——界面上没有可展示的改动，
+ * 事件与日志都不带。diff 段超过 {@link CHANGE_DIFF_LINE_LIMIT} 行时从前往后保留、
+ * 砍掉的部分标 `truncated`（整篇重写大文件的场景，面板会提示只显示了前一部分）。
+ */
+function summarizeChange(file: string, before: string, after: string): ToolOutput['changes'] {
+  const result = diffLines(before, after, 3)
+  if (result.identical || !result.ok || result.hunks.length === 0) return undefined
+  const kept: DiffHunk[] = []
+  let budget = CHANGE_DIFF_LINE_LIMIT
+  for (const hunk of result.hunks) {
+    if (budget <= 0) break
+    const lines = hunk.lines.length <= budget ? hunk.lines : hunk.lines.slice(0, budget)
+    kept.push(lines.length === hunk.lines.length ? hunk : { ...hunk, lines })
+    budget -= lines.length
+  }
+  return {
+    path: file,
+    added: result.added,
+    removed: result.removed,
+    hunks: kept,
+    ...(kept.length < result.hunks.length ? { truncated: true } : {}),
+  }
 }
 
 /**
@@ -89,10 +120,16 @@ export const writeTool: ToolEntry = {
     const stale = staleOverwriteReason(file)
     if (stale !== null) throw new Error(stale)
     const content = str(args.content, 'content')
+    // 旧内容拿不到（新建）就当空串：diff 呈现为整篇新增
+    const before = await fs.readFile(file, 'utf8').catch(() => '')
     await fs.mkdir(resolve(file, '..'), { recursive: true })
     await fs.writeFile(file, content, 'utf8')
     noteWrite(file)
-    return `已写入 ${file}（${content.length} 字符）`
+    const changes = summarizeChange(file, before, content)
+    return {
+      text: `已写入 ${file}（${content.length} 字符）`,
+      ...(changes === undefined ? {} : { changes }),
+    }
   },
 }
 
@@ -123,8 +160,13 @@ export const editTool: ToolEntry = {
     const first = raw.indexOf(oldText)
     if (first < 0) throw new Error('old 内容在文件中不存在')
     if (raw.indexOf(oldText, first + 1) >= 0) throw new Error('old 内容在文件中匹配多处，请加长上下文使其唯一')
-    await fs.writeFile(file, raw.slice(0, first) + newText + raw.slice(first + oldText.length), 'utf8')
+    const after = raw.slice(0, first) + newText + raw.slice(first + oldText.length)
+    await fs.writeFile(file, after, 'utf8')
     noteWrite(file)
-    return `已编辑 ${file}`
+    const changes = summarizeChange(file, raw, after)
+    return {
+      text: `已编辑 ${file}`,
+      ...(changes === undefined ? {} : { changes }),
+    }
   },
 }

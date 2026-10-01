@@ -1003,3 +1003,17 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 验收：根 build + desktop typecheck 0 错；回归七脚本全绿（dock-model / integration / team / settings-sections / llm-retry 10/10 / llm-adapter 18/18 / compact 53/53）；实机探针——收起当前工作区 `got=false settled=false`（3 秒会话推送后不回弹）、消息容器 `color=近白正文色 accent=#5686fe deco=none border=0px`（截图目检正常）、构造孤儿 tool_calls 临时会话恢复后发送 `restored=true has400=false`（请求过协议校验，模型正常接单；探针轮次恰逢平台限流，与修复目标无关），探针数据（构造会话目录、settings.json、临时截图）用后全部清理。
 
 诚实边界：① 恢复会话里的孤儿调用在界面上仍显示为一张「正在执行」的工具卡（重放无结果），只影响历史展示不影响请求；② 自检脚本 `delay − EVAL_LEAD ≥ 16000ms` 时预跑脚本不触发（dev 模式下主进程长定时器异常，成因未深究），本轮脚本全部改用 2-7 秒的预跑窗口；③ 打包件未重做（修复全部在渲染层与 lib，打包流程与 0.6.22 相同）。
+
+## 阶段 42：会话区「文件已更改」聚合卡 + diff 审查面板（0.6.24）
+
+对齐 dsh ui-deliverables：任务里改了文件，会话区每轮收尾处出现一张「N 个文件已更改 +x -y」聚合卡（每行文件 + 增删 + 审查/打开），点「审查」在主区右侧并排打开 diff 面板（文件切换 + 行号两列 + 红绿 diff 行），点「打开」直达文件预览页签。
+
+数据流（dsh 的 produced 语义）：diff 在**工具执行层**算——write/edit 的 `run` 在写盘前后各读一次文件，用现成的 `core/diff-text.ts`（LCS unified diff）算实际改动，超 800 行砍尾标 `truncated`，挂在 `ToolOutput.changes` 上；loop 的 `finishCall` 在 `tool/result` 之后 emit 新事件 `tool/changes`，并随 tool 记录落盘 jsonl（**内存协议消息不带**——serializeMessages 对 tool 是剥 ts 后整条透传，多字段会被挑剔的网关判 400；它只活在日志里，与 toolErrors 同一条旁路：`Session.fileChanges` callId 索引）。折叠器把事件折成 `kind:'changes'` 独立条目，`replayHistory` 加第三参重放（kernel 启动恢复、transcript 插件的 session-open——**后者首轮漏传，实机探针抓出**——与队友 peek 三处都传）。渲染层 ChatView 的座位计划把每轮 changes 条目抽出、在 TurnFooter 前聚合一张卡（dsh 的 turn-tail 位置，不参与整轮折叠，条目本身不上屏）；轨迹页视它为对话页专属数据不进时间线。
+
+界面（对照 dsh ChangedFiles/ReviewTab/FileDiff 规格）：单文件显示文件名卡头、多文件显示「N 个文件已更改」+ 展开列表（>4 行折起「展开全部」）；每行 [审查][打开]，审查开右栏（thread-zone 转 row 两列，对话列照旧、面板 `clamp(380px, 42%, 720px)`）；diff 行 22px、行号两列 3.2em、`+`/`-` 底色用既有 `--dsc-diff-add/remove-bg` token；换会话自动收起面板。只读视图（队友 peek）不传回调，审查/打开按钮整颗不画。
+
+回归补强：`transcript-usage-test.mjs` 新增 5 断言（tool/changes 折成条目且事实完整 / 重放经 fileChanges 还原 / 老日志不出卡）。
+
+验收：根 build + desktop typecheck 0 错；回归七脚本全绿（transcript-usage 含新断言、compact 53、llm-adapter 18、llm-retry 10、integration、team、settings-sections、dock-model）；宿主落盘链路 node 直测（jsonl 带 changes / load 回读 fileChanges / 内存消息不带 hunks）；实机探针（构造含 changes 的会话 jsonl 从磁盘恢复——同时验证重启恢复路径）：`card=1 counts="+2 -1" pane=open diffLines=5 add=2 del=1`，截图目检轮尾卡与右栏 diff 与 dsh 形态一致；探针数据（构造会话、临时文件）已清理。
+
+诚实边界：① 探针轮次恰逢平台限流未恢复，实时「模型真改文件」路径由宿主单测（工具 diff 计算）+ 构造会话重放（事件折叠/落盘/恢复）两段覆盖，未走端到端真模型；② 只认 write/edit 第一方调用（bash 改文件不算，与 dsh 口径一致）；③ v1 不做 split 双栏 diff、wrap 切换、原生系统打开、500ms 悬停预览、正文内联文件提及；④ 面板宽固定 clamp 不拖宽；⑤ 审查的是「那一刀」的快照——文件后来又变了面板不知道（dsh 的 turn-start/turn-end 双快照对比没搬）。

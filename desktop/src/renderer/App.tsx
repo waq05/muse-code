@@ -45,6 +45,8 @@ import { SubagentMenu, TeamPanel, matesOf } from './TeamPanel.js'
 import { TeammatePeek } from './TeammatePeek.js'
 import { ThreadResizer } from './ThreadResizer.js'
 import { TraceView } from './TraceView.js'
+import { DiffPane } from './DiffPane.js'
+import type { ChangedFileView } from '@dsc/runtime/contract.js'
 import {
   PANEL_KEYS,
   SIDEBAR_MAX,
@@ -73,6 +75,12 @@ export function App(): JSX.Element {
   // 正在只读查看的队友（标题旁下拉或团队面板点开）；它不是当前会话，切不走也改不了
   const [peek, setPeek] = useState<TeammateView | null>(null)
   const [peekEntries, setPeekEntries] = useState<TranscriptEntry[]>([])
+  // 轮尾「文件已更改」卡的审查面板：files 是那一轮的改动清单，index 是当前看的文件
+  const [review, setReview] = useState<{ files: ChangedFileView[]; index: number } | null>(null)
+  // 换会话就收起审查面板：它是「那一轮那一刀」的快照，跟着旧会话挂着只会误导
+  useEffect(() => {
+    setReview(null)
+  }, [snapshot?.status.sessionId])
   // 队友名册（智能体团队）：标题旁的「N 个子智能体」下拉与「智能体团队」面板共用这一份。
   // 清单是跨会话的，头部那颗要按会话 id 自己筛（见下面的 sessionMates）。
   const [mates, setMates] = useState<TeammateView[]>([])
@@ -713,7 +721,8 @@ export function App(): JSX.Element {
               )}
             </div>
 
-            <div className="thread-zone" ref={zoneRef}>
+            <div className="thread-zone" ref={zoneRef} data-review={review !== null || undefined}>
+              <div className="thread-main">
               {peek !== null ? (
                 <TeammatePeek teammate={peek} entries={peekEntries} onClose={() => setPeek(null)} />
               ) : tab === 'trace' ? (
@@ -728,6 +737,9 @@ export function App(): JSX.Element {
                   sessionPath={active?.id ?? null}
                   proxy={proxy}
                   onOpenSession={openSession}
+                  // 轮尾「文件已更改」卡：审查开右侧 diff 面板，打开进文件预览页签
+                  onReviewChanges={(files, index) => setReview({ files, index })}
+                  onOpenFile={(path) => dockActions.openPreview(path)}
                   // 过程折叠程度（设置 → 通用 → 过程折叠程度）：四档能力表在 appearance.ts，
                   // 渲染层只读能力。另两项是「单条思考 / 工具卡」的默认态（设置 → 通用）。
                   processFold={uiPrefs.processFold}
@@ -792,10 +804,11 @@ export function App(): JSX.Element {
                   </div>
                 )}
               </div>
+              </div>
 
               {/* 正文两侧的拖拽条只在真正在读对话时出现：欢迎页、轨迹页、看队友记录都没有
-                  一列正文可以对齐。 */}
-              {tab === 'chat' && peek === null && !empty ? (
+                  一列正文可以对齐；审查面板打开时右缘被面板占着，拖拽条一并让位。 */}
+              {tab === 'chat' && peek === null && !empty && review === null ? (
                 <ThreadResizer
                   zoneRef={zoneRef}
                   width={threadWidth}
@@ -803,6 +816,18 @@ export function App(): JSX.Element {
                   onReset={resetThread}
                 />
               ) : null}
+
+              {/* 轮尾「文件已更改」卡的审查面板：并排在正文右侧（对照 dsh 的右栏审查）。
+                  关闭即整体收起；下次点「审查」会带上那一轮的文件清单重新打开。 */}
+              {review !== null && (
+                <DiffPane
+                  files={review.files}
+                  index={review.index}
+                  onSelect={(index) => setReview((current) => (current === null ? current : { ...current, index }))}
+                  onOpen={(path) => dockActions.openPreview(path)}
+                  onClose={() => setReview(null)}
+                />
+              )}
             </div>
 
             <StatusBar status={snapshot.status} entries={snapshot.entries} contextWindow={contextWindow} />

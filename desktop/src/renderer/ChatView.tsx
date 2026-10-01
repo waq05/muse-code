@@ -66,7 +66,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { StatusView, TranscriptEntry, TurnEndReason, UiProcessFold } from '@dsc/runtime/contract.js'
+import type { ChangedFileView, StatusView, TranscriptEntry, TurnEndReason, UiProcessFold } from '@dsc/runtime/contract.js'
 import type { RuntimeProxy } from './bridge.js'
 import { processFoldPolicy } from './fold-policy.js'
 import { AT_BOTTOM_EPS, JumpStrip } from './JumpStrip.js'
@@ -76,6 +76,7 @@ import { ThinkingBlock } from './ThinkingBlock.js'
 import { ToolCard } from './ToolCard.js'
 import { TurnFooter } from './TurnFooter.js'
 import { TurnStatusLine } from './TurnStatusLine.js'
+import { ChangedFilesCard, sumChanges } from './ChangedFiles.js'
 import { isSessionMarker } from './session-marker.js'
 import { TURN_PROCESS_INDEPENDENT, groupSteps, type StepGroup, type StepGrouping } from './process-groups.js'
 import { readFold, stepGroupFoldKey, turnFoldKey, writeFold } from './fold-state.js'
@@ -145,6 +146,12 @@ interface RoundSeatPlan {
   process: ChatBlock[]
   /** 过程区之后那几条（最终回答、计划卡）：永远可见。 */
   after: ChatBlock[]
+  /**
+   * 这一轮成功 write / edit 的实际改动（changes 条目的聚合）。
+   * 条目本身不单独渲染——轮尾统一画一张「文件已更改」卡（dsh 的 turn-tail 位置），
+   * 不参与整轮折叠。
+   */
+  changes: ChangedFileView[]
   /** 页脚画在这一轮末尾吗（还没回复的轮次不画）。 */
   withFoot: boolean
 }
@@ -300,6 +307,15 @@ export function ChatView(props: {
   reasoningDefaultOpen?: boolean
   /** 工具卡默认展开吗（设置 → 通用 → 工具卡）。不传按 false。 */
   toolDefaultOpen?: boolean
+  /**
+   * 点轮尾卡上的「打开」：把文件放进预览页签。不传就不画「打开」（只读视图）。
+   */
+  onOpenFile?: (path: string) => void
+  /**
+   * 点轮尾卡上的「审查」：打开右侧 diff 面板，定位到这一轮的第 index 个文件。
+   * 不传 = 只读视图，审查入口整颗不画。
+   */
+  onReviewChanges?: (files: ChangedFileView[], index: number) => void
 }): JSX.Element {
   const scroller = useRef<HTMLDivElement | null>(null)
   const [feedback, setFeedback] = useState<Record<string, Feedback>>(loadFeedback)
@@ -979,6 +995,8 @@ export function ChatView(props: {
       const fold = roundFold.get(round.index)
       const process: ChatBlock[] = []
       const after: ChatBlock[] = []
+      // 这一轮的文件改动单独收走：条目不进过程区也不进 after，轮尾一张聚合卡代它出场
+      const changes: ChangedFileView[] = []
       let withFoldRow = false
       // 总开关画在过程区第一条之前。没有过程内容时（hasContent 为假）改画在用户消息之后——
       // dsh 的整轮控件位置就是「该轮所有起始输入之后、最终答案之前」，那种轮那一行照样出现，
@@ -989,11 +1007,19 @@ export function ChatView(props: {
       for (let at = round.startIndex + 1; at <= round.endIndex; at += 1) {
         const entry = props.entries[at]
         if (entry === undefined) continue
+        if (entry.kind === 'changes') {
+          changes.push(entry.file)
+          continue
+        }
         if (at === foldRowAt) withFoldRow = true
         const head = stepGrouping.headAt.get(at)
         if (head !== undefined) {
           const members: number[] = []
-          for (let member = head.startIndex; member <= head.endIndex; member += 1) members.push(member)
+          for (let member = head.startIndex; member <= head.endIndex; member += 1) {
+            members.push(member)
+            const memberEntry = props.entries[member]
+            if (memberEntry?.kind === 'changes') changes.push(memberEntry.file)
+          }
           process.push({ kind: 'group', group: head, members })
           // 组里那几条已经收进组体，跳过（组头只画一次，画在这个块上）
           at = head.endIndex
@@ -1014,6 +1040,7 @@ export function ChatView(props: {
         withFoldRow,
         process,
         after,
+        changes,
         withFoot: round.answered,
       })
     }
@@ -1214,6 +1241,9 @@ export function ChatView(props: {
             {`模型请求失败，正在重试（第 ${String(entry.attempt)} 次）：${entry.text}`}
           </div>
         )
+      case 'changes':
+        // 文件改动条目不在这里单独上屏：轮尾一张聚合卡代它们出场（见 renderSeat 的 seat.changes）。
+        return null
       default:
         return null
     }
@@ -1317,6 +1347,19 @@ export function ChatView(props: {
         )))}
         {/* 过程区之后那几条（最终回答、计划卡）：永远可见，不参与整轮折叠 */}
         {seat.after.map((block) => (block.kind === 'row' ? seatRow(block.index, false, reveal) : null))}
+        {/* 轮尾「文件已更改」卡（dsh 的 turn-tail 位置）：聚合这一轮成功 write / edit 的
+            实际改动，不参与整轮折叠。只读视图不传两个回调，卡退化成纯展示。 */}
+        {seat.changes.length > 0 && (
+          <ChangedFilesCard
+            total={sumChanges(seat.changes)}
+            onReview={
+              props.onReviewChanges === undefined
+                ? undefined
+                : (index) => props.onReviewChanges?.(seat.changes, index)
+            }
+            onOpen={props.onOpenFile}
+          />
+        )}
         {seat.withFoot && (
           <TurnFooter
             round={seat.round}
