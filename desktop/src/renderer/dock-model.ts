@@ -4,6 +4,7 @@
  *
  * 对照 dsh 右侧栏（ui-sidebar-right + ui-dockkit）收窄出来的能力面：
  *   - 页签多开：终端可无限多开；浏览器 / 文件 / Git 每个布局单例（已开则聚焦）；
+ *     文件预览页签（preview）按路径去重、每窗格至多 10 张（文件树单击文件的路径）；
  *   - 「开始」引导页（guide）：每个窗格至多一张，是「新标签页」的门面——
  *     入口卡选中后就地替换成那个页面（dsh 的 replaceTab: true）；
  *   - 分栏：上限两格（dsh 同款），格宽比 fraction 记在布局上；
@@ -19,12 +20,14 @@
  * @module desktop/renderer/dock-model
  */
 
-export type DockTabKind = 'guide' | 'terminal' | 'browser' | 'files' | 'git'
+export type DockTabKind = 'guide' | 'terminal' | 'browser' | 'files' | 'git' | 'preview'
 
 /** 一张页签：id 是毫秒 + 随机尾巴，进程内唯一即可（持久化恢复后也不与现存冲突）。 */
 export interface DockTab {
   id: string
   kind: DockTabKind
+  /** 仅 preview 页签：预览文件的绝对路径（chip 标题与预览体都从它来）。 */
+  path?: string
 }
 
 /** 一个窗格：一排页签 + 当前激活的那张。 */
@@ -54,6 +57,8 @@ export type DockSurfaces = Record<string, DockSurface>
 export interface DockActions {
   /** 开一张页签（`replaceGuide` = 开始页入口卡的就地替换路径）。 */
   openTab(kind: DockTabKind, options?: { replaceGuide?: boolean }): void
+  /** 开一张文件预览页签（同路径去重 = 聚焦；对齐 dsh 的 openResource）。 */
+  openPreview(path: string): void
   closeTab(tabId: string): void
   focusTab(tabId: string): void
   focusPane(paneId: string): void
@@ -69,6 +74,9 @@ export interface DockActions {
 
 /** 单例页签：一个布局里至多一张（已开再 openTab = 聚焦现成的）。 */
 const SINGLETON_KINDS: readonly DockTabKind[] = ['browser', 'files', 'git']
+
+/** 每窗格的预览页签上限：再开时自动关掉最旧的那张（页签条没有虚拟化，放不下无限多）。 */
+const PREVIEW_MAX = 10
 
 /** 分栏的宽度比夹取范围（对齐 dsh 的 minPaneFraction 0.2）。 */
 const FRACTION_MIN = 0.2
@@ -86,9 +94,9 @@ function freshPaneId(): string {
   return `p${freshId()}`
 }
 
-/** 造一张指定种类的页签。 */
-export function makeTab(kind: DockTabKind): DockTab {
-  return { id: freshId(), kind }
+/** 造一张指定种类的页签（preview 页签带文件路径）。 */
+export function makeTab(kind: DockTabKind, path?: string): DockTab {
+  return path === undefined ? { id: freshId(), kind } : { id: freshId(), kind, path }
 }
 
 /** 默认布局：一格、只有一张「开始」。新会话第一次打开右侧栏就是它。 */
@@ -139,6 +147,26 @@ export function openTab(surface: DockSurface, kind: DockTabKind, options?: { pan
   }
   const tab = makeTab(kind)
   const tabs = [...pane.tabs, tab]
+  return replacePane(surface, pane.id, { ...pane, tabs, activeTabId: tab.id })
+}
+
+/**
+ * 开一张文件预览页签（对齐 dsh 的 openResource → file: 页签）：同一份文件
+ * （按绝对路径认）在哪个窗格都只有一张，已开即聚焦；新开的追加到激活窗格
+ * 末尾；该窗格预览页签到上限时关掉最旧的一张，给新的让位。
+ */
+export function openPreview(surface: DockSurface, path: string): DockSurface {
+  const existing = surface.panes.flatMap((pane) => pane.tabs).find((tab) => tab.kind === 'preview' && tab.path === path)
+  if (existing !== undefined) return focusTab(surface, existing.id)
+  const pane = activePane(surface)
+  let tabs = [...pane.tabs]
+  const previews = tabs.filter((tab) => tab.kind === 'preview')
+  if (previews.length >= PREVIEW_MAX) {
+    const oldest = previews[0]!
+    tabs = tabs.filter((tab) => tab.id !== oldest.id)
+  }
+  const tab = makeTab('preview', path)
+  tabs = [...tabs, tab]
   return replacePane(surface, pane.id, { ...pane, tabs, activeTabId: tab.id })
 }
 
@@ -294,8 +322,14 @@ function parseSurface(value: unknown): DockSurface | null {
     for (const item of pane.tabs) {
       const entry = item as Partial<DockTab>
       if (typeof entry?.id !== 'string' || typeof entry?.kind !== 'string') return null
-      if (!['guide', 'terminal', 'browser', 'files', 'git'].includes(entry.kind)) return null
-      tabs.push({ id: entry.id, kind: entry.kind as DockTabKind })
+      if (!['guide', 'terminal', 'browser', 'files', 'git', 'preview'].includes(entry.kind)) return null
+      // preview 页签落盘要带路径；路径丢了这张页签就没有内容，整格作废重画
+      if (entry.kind === 'preview') {
+        if (typeof entry.path !== 'string' || entry.path === '') return null
+        tabs.push({ id: entry.id, kind: 'preview', path: entry.path })
+      } else {
+        tabs.push({ id: entry.id, kind: entry.kind as DockTabKind })
+      }
     }
     if (typeof pane.id !== 'string' || typeof pane.activeTabId !== 'string' || !tabs.some((tab) => tab.id === pane.activeTabId)) return null
     panes.push({ id: pane.id, tabs, activeTabId: pane.activeTabId })

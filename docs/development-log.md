@@ -930,3 +930,26 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 验收：typecheck 0 错；宿主 + 渲染层 build 通过；`shots/integration-check.mjs`、`shots/team-check.mjs`、`scripts/settings-sections-check.mjs`、`shots/dock-model-check.mjs` 全绿；实机截图四张——`open-dark`（chrome 两钮与顶栏行同高、顶栏钮已让位）、`collapsed`（探针 `toggle-visible=true dock-collapsed=true`，顶栏钮原位回来）、`browser-cycle`（探针 `holder-when-collapsed=0 holder-reopen=1 url=https://cn.bing.com/`——收起卸载、重开回填记忆地址）、`img-preview`（`desktop/build/icon.png` 真图渲染，棋盘格底 + 预览头）。
 
 诚实边界：① 富文档（PDF/Office）与音视频仍不预览，只加了图片类；② 文件/Git 页签在收起时会随之卸载（再展开重取，目录位置不保留）——和浏览器一个规则；③ `file-row` 的图片上限 5MB、文本 512KB 不变。
+
+## 阶段 39：文件面板完整对标 dsh——树形操作逻辑、彩色类型图标与多类型预览（0.6.21）
+
+用户拿 0.6.20 的文件面板与 dsh 对照：图标全是「·」、样式解析不了，要求完整对标——**操作逻辑也要对齐**（不只是视觉）。已确认档位：全套预览（md / 代码高亮 / JSON / CSV / XLSX / PDF / 图片 / 二进制兜底）+ Markdown 相对路径图片解析。
+
+操作逻辑对照 dsh（`ui-sidebar-files` 的 FilesBody/store）逐条移植：
+
+| # | dsh 的逻辑 | Muse Code 改法 |
+| --- | --- | --- |
+| 浏览模型 | 内联树：根常开，目录**单击展开/收起**，多级同屏、懒加载 | FilesPane 重写为递归 `TreeLevel`；删掉「↑ 上一级」按钮 |
+| 打开方式 | 单击文件 → 侧栏**新开预览页签**，文件树页签保留 | dock 页签新增 `kind:'preview'`（`DockTab.path` 记绝对路径）：同路径去重=聚焦、每窗格上限 10 张（超出关最旧）、落盘随布局恢复 |
+| 状态记忆 | 各层 listing/展开集/滚动位存 store，重挂原位恢复 | 新 `files-tree-store.ts`（模块级、按 cwd 一棵树、useSyncExternalStore 订阅）；FilesPane 收起重挂后展开态与 scrollTop 原样回来 |
+| 排序 | 目录在前 + `Intl.Collator(numeric, base)` | 移植 `orderEntries`（渲染侧排，宿主只管列） |
+| 行内状态 | 加载中/空/失败/**截断**提示行 | fs-list 加 `maxEntries`（对齐 dsh 默认 2000）+ `truncated` 回包；显示 dotfiles（去掉 `startsWith('.')` 过滤） |
+| 头部 | 根路径 + 刷新钮（重拉已展开各层） | files-bar 改相对路径 + `IconRefresh` |
+
+彩色图标（`file-icons.tsx`）：vscode-icons-js 解析图标名（VSCode 插件同款规则）→ `@iconify-json/vscode-icons` 全集（~4MB，动态 import 懒 chunk）**同步自渲染** `<svg>`。两个坑都在这里踩过：① iconify id 是插件原始名下划线转连字符（`file_type_markdown` → `file-type-markdown`），不转查不到；② 不用 `@iconify/react` 的 `<Icon>`——它的占位机制按需异步换 svg，离线整包下部分行会永远停在占位 span（实机探针 `svg-icons=1/33` 实锤），自渲染 + body 内渐变/裁剪 id 按实例加后缀（防同页串色）后 33/33 全画。目录行用琥珀色 `IconFolder/IconFolderOpen`（dsh folder 档色）。
+
+预览（`file-preview.tsx`，全部 dynamic import，点开才加载）：markdown = 会话流同款 ReactMarkdown + 相对路径图片走 fs-read 转 base64（模块级缓存）+ 代码块 shiki；代码/文本 = shiki（JS regex 引擎免 WASM）单例 highlighter，**显式字面量 import 表**（`@shikijs/langs` 的 exports 是固定枚举没有通配，模板串动态 import 运行时解析不了——build 警告实锤后改 ~59 条映射表），双主题 `github-light`/`one-dark-pro` `defaultColor:false` 出 CSS 变量按 `data-theme` 切换，CSS counter 画行号，>5000 行截断；csv/tsv = papaparse 表格；xlsx = SheetJS（dsh 同源 cdn tarball 0.20.3）多 sheet 页签 + 表格；pdf = pdfjs-dist 逐页 canvas（worker 走 `?url` 资产，≤50 页）；binary = 宿主 `BINARY_EXTS` 清单直接回 `kind:'binary'` 不读内容。宿主 fs-read 新增 `kind:'bytes'`（pdf/xlsx/xlsm base64 ≤10MB）。
+
+验收：desktop typecheck 0 错；宿主+渲染层 build 过（语法懒 chunk 逐语言产出，主包仅 +97KB 的映射数据）；四回归脚本全绿；实机截图十张——树（探针 `rows=33 svg-icons=33 dotfiles=true folder-icons=14`）、md（`md-img=512x512 md-shiki=1`——相对图片+高亮围栏+表格+引用全渲染）、csv 表格、xlsx（`sheets=进度|发布 rows=3`）、pdf（`pages=1 first=600x240`）、binary 占位、五预览页签并存（chip 各色彩色图标）、收起重挂恢复（`subtree-restored=true`）、浅色树（`theme=light rows=33`）。
+
+诚实边界：① doc/docx/ppt/pptx/老 xls 不预览（dsh 走服务端 Office→PDF 管道，Muse Code 无此管道）——占位提示；② HTML 按源码高亮，不进 iframe 沙箱渲染；③ PDF 无缩放/搜索、表格只读；④ 预览页签上限 10 张/窗格（dsh 无上限，页签条没有虚拟化）；⑤ 图标数据 ~4MB 懒 chunk，打包体积约涨 4MB（gzip 后 ~500KB），首屏不受影响。

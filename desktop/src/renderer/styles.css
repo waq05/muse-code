@@ -1084,38 +1084,49 @@
   line-height: var(--dsc-lh-prose);
 }
 
-.entry-text .markdown > :first-child {
+.entry-text .markdown,
+.file-md > :first-child {
   margin-top: 0;
 }
 
-.entry-text .markdown > :last-child {
+.entry-text .markdown,
+.file-md > :last-child {
   margin-bottom: 0;
 }
 
-.entry-text .markdown p {
+.entry-text .markdown,
+.file-md p {
   margin: 0.65em 0;
 }
 
-.entry-text .markdown h1,
-.entry-text .markdown h2,
-.entry-text .markdown h3,
-.entry-text .markdown h4 {
+.entry-text .markdown,
+.file-md h1,
+.entry-text .markdown,
+.file-md h2,
+.entry-text .markdown,
+.file-md h3,
+.entry-text .markdown,
+.file-md h4 {
   margin: 1.25em 0 0.5em;
   font-weight: 700;
   line-height: 1.4;
 }
 
-.entry-text .markdown ul,
-.entry-text .markdown ol {
+.entry-text .markdown,
+.file-md ul,
+.entry-text .markdown,
+.file-md ol {
   margin: 0.5em 0;
   padding-left: 1.5em;
 }
 
-.entry-text .markdown li {
+.entry-text .markdown,
+.file-md li {
   margin: 0.28em 0;
 }
 
-.entry-text .markdown pre {
+.entry-text .markdown,
+.file-md pre {
   background: var(--dsc-fill-quaternary);
   border: 1px solid var(--dsc-stroke-3);
   border-radius: var(--dsc-r-block);
@@ -1127,7 +1138,8 @@
   padding: 10px 12px;
 }
 
-.entry-text .markdown code {
+.entry-text .markdown,
+.file-md code {
   background: var(--dsc-fill-quaternary);
   border-radius: var(--dsc-r-badge);
   font-family: var(--dsc-font-mono);
@@ -1135,41 +1147,49 @@
   padding: 1px 5px;
 }
 
-.entry-text .markdown pre code {
+.entry-text .markdown,
+.file-md pre code {
   background: none;
   border-radius: 0;
   font-size: inherit;
   padding: 0;
 }
 
-.entry-text .markdown blockquote {
+.entry-text .markdown,
+.file-md blockquote {
   border-left: 2px solid var(--dsc-stroke-2);
   color: var(--dsc-text-secondary);
   margin: 0.6em 0;
   padding: 0.1em 0 0.1em 12px;
 }
 
-.entry-text .markdown table {
+.entry-text .markdown,
+.file-md table {
   border-collapse: collapse;
   margin: 0.7em 0;
 }
 
-.entry-text .markdown th,
-.entry-text .markdown td {
+.entry-text .markdown,
+.file-md th,
+.entry-text .markdown,
+.file-md td {
   border: 1px solid var(--dsc-stroke-2);
   padding: 5px 10px;
 }
 
-.entry-text .markdown a {
+.entry-text .markdown,
+.file-md a {
   color: var(--dsc-accent);
   text-decoration: none;
 }
 
-.entry-text .markdown a:hover {
+.entry-text .markdown,
+.file-md a:hover {
   text-decoration: underline;
 }
 
-.entry-text .markdown hr {
+.entry-text .markdown,
+.file-md hr {
   border: none;
   border-top: 1px solid var(--dsc-stroke-2);
   margin: 1em 0;
@@ -2753,7 +2773,7 @@ body.resizing iframe {
   position: relative;
 }
 
-/* 文件列表 */
+/* 文件树（内联树，对齐 dsh FilesBody：目录单击展开/收起，子层逐级缩进） */
 .files-pane {
   flex: 1;
   min-height: 0;
@@ -2769,6 +2789,10 @@ body.resizing iframe {
   border-bottom: 1px solid var(--dsc-stroke-4);
 }
 
+.files-bar .files-cwd {
+  flex: 1;
+}
+
 .files-cwd {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2781,7 +2805,29 @@ body.resizing iframe {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px;
+  padding: 6px;
+  scrollbar-gutter: stable;
+}
+
+/* 嵌套层每级缩进一步（dsh 的 .level .level padding-left: 18px） */
+.tree-level {
+  padding-left: 18px;
+}
+
+.tree-item {
+  min-width: 0;
+}
+
+/* 目录行的文件夹图标：琥珀色（dsh 的 folder 档），随展开/收起换开合图形 */
+.tree-folder {
+  color: var(--dsc-yellow);
+}
+
+/* 状态行：加载中 / 空 / 失败 / 截断 */
+.tree-note {
+  padding: 3px 10px;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
 }
 
 .file-row {
@@ -2789,8 +2835,9 @@ body.resizing iframe {
   align-items: center;
   gap: 6px;
   width: 100%;
+  min-width: 0;
   min-height: var(--dsc-row-h);
-  padding: 4px 8px;
+  padding: 3px 8px;
   border-radius: var(--dsc-r-control);
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
@@ -2803,9 +2850,12 @@ body.resizing iframe {
 }
 
 .file-icon {
-  width: 14px;
-  color: var(--dsc-text-quaternary);
+  flex: none;
+  width: 16px;
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsc-text-quaternary);
 }
 
 .file-name {
@@ -2816,16 +2866,18 @@ body.resizing iframe {
 }
 
 .file-size {
+  flex: none;
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-tool);
   font-variant-numeric: tabular-nums;
 }
 
-.file-preview {
+/* 预览页签体（页签化后不再叠加在树下面，独占整个页签） */
+.file-preview-page {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  max-height: 55%;
-  border-top: 1px solid var(--dsc-stroke-4);
 }
 
 .file-preview-head {
@@ -2833,22 +2885,189 @@ body.resizing iframe {
   align-items: center;
   justify-content: space-between;
   padding: 5px 10px;
+  border-bottom: 1px solid var(--dsc-stroke-4);
   color: var(--dsc-text-tertiary);
   font-size: var(--dsc-fs-caption);
 }
 
-.file-preview pre {
+.file-preview-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-preview-body {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 代码高亮视图：shiki 双主题输出 CSS 变量，背景用面板自己的（盖掉 shiki 的内联背景） */
+.file-code,
+.file-code-body {
+  min-width: 0;
+}
+
+.file-code .shiki,
+.file-code-body .shiki {
   margin: 0;
-  padding: 8px 12px;
+  padding: 10px 12px 10px 0;
+  min-height: 100%;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  line-height: 1.55;
+  overflow-x: auto;
+  background: transparent !important; /* shiki 会内联主题背景色，预览底色跟面板走 */
+}
+
+/* 行号：CSS counter 数 .line，右侧细线隔开 */
+.file-code .shiki code,
+.file-code-body .shiki code {
+  counter-reset: shiki-line;
+}
+
+.file-code .shiki .line::before,
+.file-code-body .shiki .line::before {
+  counter-increment: shiki-line;
+  content: counter(shiki-line);
+  display: inline-block;
+  width: 3.2em;
+  margin-right: 12px;
+  padding-right: 8px;
+  text-align: right;
+  color: var(--dsc-text-quaternary);
+  border-right: 1px solid var(--dsc-stroke-4);
+}
+
+/* 双主题切换：shiki defaultColor:false 时文本色在 --shiki-light / --shiki-dark 两个变量里，
+   按会话流同款 data-theme 机制选一份 */
+.file-code .shiki span,
+.file-code-body .shiki span {
+  color: var(--shiki-dark);
+}
+
+:root[data-theme='light'] .file-code .shiki span,
+:root[data-theme='light'] .file-code-body .shiki span {
+  color: var(--shiki-light);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme='system'] .file-code .shiki span,
+  :root[data-theme='system'] .file-code-body .shiki span {
+    color: var(--shiki-light);
+  }
+}
+
+/* 装语法期间的纯文本兜底 */
+.file-code-plain {
+  margin: 0;
+  padding: 10px 12px;
   font-family: var(--dsc-font-mono);
   font-size: var(--dsc-fs-tool);
   line-height: 1.55;
   color: var(--dsc-text-secondary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* markdown 预览：版式规则与会话流 .entry-text .markdown 共用（见上方并列选择器），
+   这里只管预览容器的滚动与留白 */
+.file-md {
+  padding: 10px 14px;
+  max-width: 100%;
+}
+
+.file-md img {
+  max-width: 100%;
+  border-radius: var(--dsc-r-block);
+}
+
+.file-md-img-missing {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--dsc-r-control);
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+}
+
+/* 表格（csv / xlsx）：表头吸顶，斑马纹走 hover-bg 的一档 */
+.file-table-wrap {
+  min-width: 0;
+}
+
+.file-sheets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 10px 0;
+}
+
+.file-sheet {
+  padding: 2px 10px;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+}
+
+.file-sheet:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.file-sheet.on {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.file-table {
+  margin: 6px 10px 10px;
+  border-collapse: collapse;
+  font-size: var(--dsc-fs-tool);
+}
+
+.file-table th,
+.file-table td {
+  padding: 3px 10px;
+  border: 1px solid var(--dsc-stroke-4);
+  color: var(--dsc-text-secondary);
+  text-align: left;
+  white-space: nowrap;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-table th {
+  color: var(--dsc-text-primary);
+  background: var(--dsc-row-hover-bg);
+  position: sticky;
+  top: 0;
+}
+
+.file-table tbody tr:nth-child(2n) td {
+  background: color-mix(in srgb, var(--dsc-row-hover-bg) 40%, transparent);
+}
+
+/* pdf：逐页图片纵向排，页间留缝 */
+.file-pdf {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+}
+
+.file-pdf-page {
+  max-width: 100%;
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-block);
+  background: var(--dsc-bg-body);
 }
 
 /* 图片预览：格底衬托透明区，图片等比缩到预览框内，不撑破面板 */
@@ -2881,6 +3100,11 @@ body.resizing iframe {
   padding: 16px;
   color: var(--dsc-text-tertiary);
   font-size: var(--dsc-fs-caption);
+}
+
+/* 预览页签的 chip 图标与普通 chip 图标的对齐（FileIcon 的 svg 不带内边距） */
+.dock-chip-fileicon {
+  flex: none;
 }
 
 /* Git */

@@ -2,8 +2,8 @@
  * desktop-dock 插件：为桌面端 dock 面板提供工作区文件系统与 git 能力
  * （renderer 经 DscRuntime.dock(op, payload) 透传调用）。
  *
- * 安全边界：路径限定在宿主 cwd 内（fs-read 文本预览 ≤512KB、图片 ≤5MB）；git 全部
- * execFile 固定子命令 + safeArg 参数净化（拒绝选项注入），无 shell。
+ * 安全边界：路径限定在宿主 cwd 内（fs-read 文本 ≤512KB、图片 ≤5MB、PDF/XLSX 整读 ≤10MB、
+ * 二进制扩展名不读内容）；git 全部 execFile 固定子命令 + safeArg 参数净化（拒绝选项注入），无 shell。
  *
  * @module dsc/plugins/desktop-dock
  */
@@ -53,6 +53,29 @@ const IMAGE_MIME: Record<string, string> = {
   ico: 'image/x-icon',
   svg: 'image/svg+xml',
 }
+
+/** 走 base64 整读再由 renderer 解析的格式（fs-read 按 kind:'bytes' 回）。 */
+const BYTES_MIME: Record<string, string> = {
+  pdf: 'application/pdf',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xlsm: 'application/vnd.ms-excel.sheet.macroenabled.12',
+}
+
+/** 明确的二进制扩展名：不读内容，renderer 画「暂不支持预览」占位。 */
+const BINARY_EXTS = new Set([
+  'exe', 'dll', 'so', 'dylib', 'node', 'bin', 'msi', 'apk',
+  'zip', '7z', 'rar', 'gz', 'tgz', 'bz2', 'xz', 'zst', 'tar',
+  'jar', 'class', 'pyc', 'pyd', 'wasm',
+  'woff', 'woff2', 'ttf', 'otf', 'eot',
+  'mp3', 'wav', 'flac', 'ogg', 'm4a',
+  'mp4', 'mov', 'avi', 'mkv', 'webm', 'flv',
+  'psd', 'ai', 'sketch', 'blend',
+  'db', 'sqlite', 'sqlite3', 'mdb', 'accdb',
+  'doc', 'docx', 'ppt', 'pptx', 'xls', 'odt', 'ods',
+])
+
+/** 文件名的自然序（数字按值、大小写不敏感），移植 dsh orderEntries 的排序器。 */
+const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
 /** 支持的终端 shell（payload.shell 白名单；spawn 首参必须是字面量——安全扫描静态规则）。 */
 function spawnShell(shell: string, cwd: string): ChildProcess {
@@ -120,21 +143,21 @@ export const desktopDockPlugin: Plugin.Object = {
         case 'fs-list': {
           const dir = resolve(cwd, safeArg(payload.dir ?? '.'))
           if (!inside(dir, cwd)) throw new Error('路径超出工作目录')
-          const entries = readdirSync(dir, { withFileTypes: true })
-            .filter((entry) => !entry.name.startsWith('.'))
-            .map((entry) => {
-              let size = 0
-              if (!entry.isDirectory()) {
-                try {
-                  size = statSync(join(dir, entry.name)).size
-                } catch {
-                  size = 0
-                }
+          const maxEntries = typeof payload.maxEntries === 'number' && payload.maxEntries > 0 ? Math.floor(payload.maxEntries) : 2000
+          const listed = readdirSync(dir, { withFileTypes: true })
+          const entries = listed.slice(0, maxEntries).map((entry) => {
+            let size = 0
+            if (!entry.isDirectory()) {
+              try {
+                size = statSync(join(dir, entry.name)).size
+              } catch {
+                size = 0
               }
-              return { name: entry.name, dir: entry.isDirectory(), size }
-            })
-          entries.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1))
-          return { cwd: dir, entries }
+            }
+            return { name: entry.name, dir: entry.isDirectory(), size }
+          })
+          entries.sort((a, b) => (a.dir === b.dir ? NAME_COLLATOR.compare(a.name, b.name) : a.dir ? -1 : 1))
+          return { cwd: dir, entries, truncated: listed.length > maxEntries }
         }
         case 'fs-read': {
           const file = resolve(cwd, safeArg(payload.file ?? '.'))
@@ -146,6 +169,15 @@ export const desktopDockPlugin: Plugin.Object = {
             // 图片按 base64 回给 renderer 画 <img>（SVG 也是图片路，免得当文本读成 XML）
             if (stat.size > 5 * 1024 * 1024) return { path: file, kind: 'image', tooLarge: true, mime, base64: '' }
             return { path: file, kind: 'image', tooLarge: false, mime, base64: readFileSync(file).toString('base64') }
+          }
+          const bytesMime = BYTES_MIME[ext]
+          if (bytesMime !== undefined) {
+            // PDF / XLSX 整读成 base64，renderer 侧再解析渲染（≤10MB，超限不读）
+            if (stat.size > 10 * 1024 * 1024) return { path: file, kind: 'bytes', tooLarge: true, mime: bytesMime, base64: '', size: stat.size }
+            return { path: file, kind: 'bytes', tooLarge: false, mime: bytesMime, base64: readFileSync(file).toString('base64'), size: stat.size }
+          }
+          if (BINARY_EXTS.has(ext)) {
+            return { path: file, kind: 'binary', tooLarge: false, size: stat.size }
           }
           if (stat.size > 512 * 1024) return { path: file, kind: 'text', tooLarge: true, text: '' }
           return { path: file, kind: 'text', tooLarge: false, text: readFileSync(file, 'utf8') }

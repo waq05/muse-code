@@ -15,7 +15,7 @@
  *
  * @module desktop/renderer/Dock
  */
-import { useCallback, useEffect, useRef, useState, type JSX, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type JSX, type MouseEvent as ReactMouseEvent } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -26,6 +26,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconFolder,
+  IconFolderOpen,
   IconGlobe,
   IconRefresh,
   IconSidebar,
@@ -39,6 +40,19 @@ import {
   type DockTab,
   type DockTabKind,
 } from './dock-model.js'
+import { FileIcon } from './file-icons.js'
+import { FilePreviewView } from './file-preview.js'
+import { basenameOf, formatSize, joinPath } from './file-util.js'
+import {
+  getTree,
+  needsLoad,
+  orderEntries,
+  setLevel,
+  setScrollTop,
+  subscribe,
+  toggleExpanded,
+  type TreeEntry,
+} from './files-tree-store.js'
 
 /** 终端 shell 候选（与宿主 desktop-dock 的白名单一致；prompt 为 renderer 本地提示符）。 */
 const SHELL_OPTIONS = [
@@ -57,22 +71,6 @@ const DOCK_MAX_WIDTH = 820
 /** 窄视口自动全屏的阈值（对齐 dsh 的 autoFullscreen）。 */
 const NARROW_VIEWPORT = 768
 
-interface FsEntry {
-  name: string
-  dir: boolean
-  size: number
-}
-
-/** fs-read 的回包：kind 分流——图片走 base64 画 <img>，其余当文本画 <pre>。 */
-interface FilePreview {
-  path: string
-  kind: 'text' | 'image'
-  mime?: string
-  base64?: string
-  text?: string
-  tooLarge: boolean
-}
-
 interface GitStatus {
   branch: string
   staged: string[]
@@ -80,8 +78,8 @@ interface GitStatus {
   untracked: string[]
 }
 
-/** 页签 chip 上的图标与标题；guide 的图形在 GuideBody 旁边单独画。 */
-const KIND_META: Record<DockTabKind, { title: string; icon: (props: { size: number }) => JSX.Element }> = {
+/** 页签 chip 上的图标与标题；preview 的 chip 用文件自己的彩色图标，见 Chip。 */
+const KIND_META: Record<Exclude<DockTabKind, 'preview'>, { title: string; icon: (props: { size: number }) => JSX.Element }> = {
   guide: { title: '开始', icon: IconGlobe },
   terminal: { title: '终端', icon: IconTerminal },
   browser: { title: '浏览器', icon: IconGlobe },
@@ -328,11 +326,15 @@ function Pane(props: {
           // 卸载即收起——dock 收起是整块滑出（常驻挂载、尺寸不变），原生层不吃 CSS 的
           // transform/visibility，不卸载它会浮在原地盖住正文；URL 记忆在 localStorage，
           // 再展开时重挂并按新位置回报 bounds。文件/Git 跟着同规则，省一份监听。
+          // 预览页签同规则（树状态在 files-tree-store 里，重挂原位恢复）。
           return visible && surface.expanded ? (
             <div key={tab.id} className="dock-tab-body">
               {tab.kind === 'browser' && <BrowserPane />}
-              {tab.kind === 'files' && <FilesPane cwd={props.cwd} proxy={props.proxy} />}
+              {tab.kind === 'files' && <FilesPane cwd={props.cwd} proxy={props.proxy} actions={actions} />}
               {tab.kind === 'git' && <GitPane cwd={props.cwd} proxy={props.proxy} />}
+              {tab.kind === 'preview' && tab.path !== undefined && (
+                <FilePreviewView path={tab.path} cwd={props.cwd} proxy={props.proxy} />
+              )}
             </div>
           ) : null
         })}
@@ -349,8 +351,9 @@ function Chip(props: {
   onMenu(tabId: string | null, x: number, y: number): void
   menuOpen: boolean
 }): JSX.Element {
-  const meta = KIND_META[props.tab.kind]
-  const Icon = meta.icon
+  // preview 页签：图标是文件自己的彩色图标，标题是文件名（其它的走 KIND_META）
+  const meta = props.tab.kind === 'preview' ? undefined : KIND_META[props.tab.kind]
+  const title = meta !== undefined ? meta.title : basenameOf(props.tab.path ?? '')
   return (
     <button
       className={`dock-chip${props.on ? ' on' : ''}${props.menuOpen ? ' menu' : ''}`}
@@ -364,10 +367,14 @@ function Chip(props: {
       }}
       draggable
       onDragStart={(event) => event.dataTransfer.setData('text/plain', props.tab.id)}
-      title={meta.title}
+      title={title}
     >
-      <Icon size={13} />
-      <span className="dock-chip-label">{meta.title}</span>
+      {meta !== undefined ? (
+        <meta.icon size={13} />
+      ) : (
+        <FileIcon name={title} size={13} className="dock-chip-fileicon" />
+      )}
+      <span className="dock-chip-label">{title}</span>
       <span
         className="dock-chip-close"
         data-tip="关闭页签"
@@ -666,96 +673,135 @@ function BrowserPane(): JSX.Element {
   )
 }
 
-// ── 文件列表 ──────────────────────────────────────────────────────────────────
+// ── 文件树（内联树，对齐 dsh ui-sidebar-files：目录单击展开/收起，多级同屏；
+//    状态在 files-tree-store 里，收起重挂后原位恢复；单击文件开预览页签） ────────
 
-function FilesPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX.Element {
-  const [dir, setDir] = useState('')
-  const [entries, setEntries] = useState<FsEntry[]>([])
-  // kind 来自宿主 fs-read：图片（png/jpg/gif/webp/bmp/ico/svg）回 base64 画 <img>，其余当文本
-  const [preview, setPreview] = useState<FilePreview | null>(null)
-  const [error, setError] = useState('')
-  const root = dir === '' ? cwd : dir
-
-  const load = useCallback(
-    (target: string): void => {
-      void proxy
-        .dock('fs-list', { dir: target })
-        .then((data) => {
-          const result = data as { cwd: string; entries: FsEntry[] }
-          setDir(result.cwd)
-          setEntries(result.entries)
-          setError('')
-        })
-        .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
-    },
-    [proxy],
-  )
-
-  useEffect(() => {
-    if (cwd !== '') load('')
-  }, [cwd, load])
-
-  const openFile = (entry: FsEntry): void => {
-    void proxy
-      .dock('fs-read', { file: `${dir}\\${entry.name}` })
-      .then((data) => setPreview(data as FilePreview))
-      .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
-  }
-
-  const up = (): void => {
-    const parent = dir.replace(/[\\/][^\\/]+$/, '')
-    if (parent.toLowerCase().startsWith(cwd.toLowerCase())) load(parent)
-  }
-
+/** 树的状态行（加载中/为空/失败/截断），dsh FilesBody 的 .note 同位。 */
+function TreeNote({ kind, message }: { kind: 'loading' | 'empty' | 'failed' | 'truncated'; message?: string }): JSX.Element {
+  const text = kind === 'loading' ? '读取中…' : kind === 'empty' ? '（空目录）' : kind === 'truncated' ? '条目过多，已截断显示' : (message ?? '读取失败')
   return (
-    <div className="files-pane">
-      <div className="files-bar">
-        <button className="icon-btn" data-tip="上一级" onClick={up} disabled={dir === '' || dir.toLowerCase() === cwd.toLowerCase()}>
-          ↑
-        </button>
-        <span className="files-cwd" data-tip={dir || cwd}>
-          {(dir || cwd).slice(cwd.length)}
-        </span>
-      </div>
-      {error !== '' && <div className="notice">{error}</div>}
-      <div className="files-list">
-        {entries.map((entry) => (
+    <div className="tree-note" data-tree-note={kind}>
+      {text}
+    </div>
+  )
+}
+
+/** 拉一层目录的 listing 进 store（已在拉/已就绪的不重复拉）。 */
+function loadLevel(cwd: string, path: string, proxy: RuntimeProxy): void {
+  void proxy
+    .dock('fs-list', { dir: path })
+    .then((data) => {
+      const result = data as { cwd: string; entries: TreeEntry[]; truncated?: boolean }
+      setLevel(cwd, path, { kind: 'ready', entries: result.entries, truncated: result.truncated === true })
+    })
+    .catch((error: unknown) => {
+      setLevel(cwd, path, { kind: 'failed', message: error instanceof Error ? error.message : String(error) })
+    })
+}
+
+/** 树的一层：本层状态行 + 条目行 + 已展开子层（递归）。 */
+function TreeLevel(props: { cwd: string; path: string; proxy: RuntimeProxy; actions: DockActions; depth: number }): JSX.Element {
+  const tree = useSyncExternalStore(subscribe, () => getTree(props.cwd))
+  const level = tree.levels[props.path]
+  // 根层由 FilesPane 拉；子层展开时若还没 listing（store 已标 loading），这里补拉
+  useEffect(() => {
+    if (props.depth > 0 && needsLoad(props.cwd, props.path)) loadLevel(props.cwd, props.path, props.proxy)
+  }, [props.cwd, props.path, props.depth, props.proxy])
+  if (level === undefined || level.kind === 'loading') return <TreeNote kind="loading" />
+  if (level.kind === 'failed') return <TreeNote kind="failed" message={level.message} />
+  const entries = orderEntries(level.entries)
+  if (entries.length === 0) return <TreeNote kind="empty" />
+  return (
+    <>
+      {level.truncated && <TreeNote kind="truncated" />}
+      {entries.map((entry) => {
+        const path = joinPath(props.path, entry.name)
+        if (entry.dir) {
+          const expanded = tree.expanded.includes(path)
+          return (
+            <div key={entry.name} className="tree-item" data-tree-entry="directory">
+              <button
+                className="file-row"
+                aria-expanded={expanded}
+                onClick={() => toggleExpanded(props.cwd, path)}
+              >
+                <span className="file-icon tree-folder">
+                  {expanded ? <IconFolderOpen size={15} /> : <IconFolder size={15} />}
+                </span>
+                <span className="file-name">{entry.name}</span>
+              </button>
+              {expanded && (
+                <div className="tree-level">
+                  <TreeLevel cwd={props.cwd} path={path} proxy={props.proxy} actions={props.actions} depth={props.depth + 1} />
+                </div>
+              )}
+            </div>
+          )
+        }
+        return (
           <button
             key={entry.name}
             className="file-row"
-            onDoubleClick={() => {
-              if (entry.dir) load(`${dir}\\${entry.name}`)
-              else openFile(entry)
-            }}
-            onClick={() => {
-              if (entry.dir) load(`${dir}\\${entry.name}`)
-            }}
+            data-tree-entry="file"
+            onClick={() => props.actions.openPreview(path)}
           >
-            <span className="file-icon">{entry.dir ? <IconChevronRight size={13} /> : '·'}</span>
+            <span className="file-icon">
+              <FileIcon name={entry.name} size={15} />
+            </span>
             <span className="file-name">{entry.name}</span>
-            {!entry.dir && <span className="file-size">{formatSize(entry.size)}</span>}
+            <span className="file-size">{formatSize(entry.size)}</span>
           </button>
-        ))}
+        )
+      })}
+    </>
+  )
+}
+
+function FilesPane(props: { cwd: string; proxy: RuntimeProxy; actions: DockActions }): JSX.Element {
+  const tree = useSyncExternalStore(subscribe, () => getTree(props.cwd))
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const scrollTopRef = useRef(0)
+
+  const loadAll = useCallback((): void => {
+    // 刷新 = 重拉根层与全部已展开层（先标 loading，回来原地换内容）
+    for (const path of tree.expanded) setLevel(props.cwd, path, { kind: 'loading' })
+    for (const path of tree.expanded) loadLevel(props.cwd, path, props.proxy)
+  }, [props.cwd, props.proxy, tree.expanded])
+
+  // 首挂：拉根层（store 里还没有任何 listing 时）
+  useEffect(() => {
+    if (props.cwd !== '' && needsLoad(props.cwd, props.cwd)) loadLevel(props.cwd, props.cwd, props.proxy)
+  }, [props.cwd, props.proxy])
+
+  // 滚动位：挂载时从 store 播种，卸载时写回（dsh 同款——滚动本身不重渲染）
+  useEffect(() => {
+    const body = bodyRef.current
+    if (body !== null && tree.scrollTop > 0) body.scrollTop = tree.scrollTop
+    return () => {
+      if (bodyRef.current !== null) setScrollTop(props.cwd, scrollTopRef.current)
+    }
+  }, [props.cwd, tree.scrollTop])
+
+  const relative = tree.root.slice(props.cwd.length)
+  return (
+    <div className="files-pane">
+      <div className="files-bar">
+        <span className="files-cwd" data-tip={tree.root} data-files-root>
+          {relative === '' ? '工作区根目录' : relative}
+        </span>
+        <button className="icon-btn" data-tip="刷新" onClick={loadAll}>
+          <IconRefresh size={13} />
+        </button>
       </div>
-      {preview !== null && (
-        <div className="file-preview">
-          <div className="file-preview-head">
-            <span>{preview.path.slice(cwd.length)}</span>
-            <button className="icon-btn" onClick={() => setPreview(null)}>✕</button>
-          </div>
-          {preview.kind === 'image' ? (
-            preview.tooLarge ? (
-              <div className="file-preview-empty">图片过大，仅支持预览 5MB 以内的文件</div>
-            ) : (
-              <div className="file-preview-img">
-                <img src={`data:${preview.mime};base64,${preview.base64}`} alt={preview.path} />
-              </div>
-            )
-          ) : (
-            <pre>{preview.tooLarge ? '文件过大，仅支持预览 512KB 以内的文件' : (preview.text ?? '').slice(0, 20000)}</pre>
-          )}
-        </div>
-      )}
+      <div
+        ref={bodyRef}
+        className="files-list"
+        onScroll={(event) => {
+          scrollTopRef.current = event.currentTarget.scrollTop
+        }}
+      >
+        <TreeLevel cwd={props.cwd} path={tree.root} proxy={props.proxy} actions={props.actions} depth={0} />
+      </div>
     </div>
   )
 }
@@ -892,10 +938,4 @@ function GitGroup(props: {
         ))}
     </div>
   )
-}
-
-function formatSize(size: number): string {
-  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)}MB`
-  if (size >= 1024) return `${(size / 1024).toFixed(0)}KB`
-  return `${size}B`
 }

@@ -12,7 +12,11 @@
     "dist": "electron-vite build && node scripts/prepare-runtime.mjs && electron-builder"
   },
   "devDependencies": {
+    "@iconify-json/vscode-icons": "^1.2.83",
+    "@shikijs/langs": "^4.5.0",
+    "@shikijs/themes": "^4.5.0",
     "@types/node": "^24.0.0",
+    "@types/papaparse": "^5.5.2",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -20,12 +24,17 @@
     "electron": "^44.4.5",
     "electron-builder": "^26.0.0",
     "electron-vite": "^5.0.0",
+    "papaparse": "^5.7.0",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.0",
+    "shiki": "^4.5.0",
     "typescript": "^5.9.0",
-    "vite": "^7.0.0"
+    "vite": "^7.0.0",
+    "vscode-icons-js": "^11.6.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

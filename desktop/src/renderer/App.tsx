@@ -24,6 +24,7 @@ import {
   focusPane as dockFocusPane,
   focusTab as dockFocusTab,
   loadSurfaces,
+  openPreview as dockOpenPreview,
   openTab as dockOpenTab,
   placeTab as dockPlaceTab,
   saveSurfaces,
@@ -193,6 +194,7 @@ export function App(): JSX.Element {
   const dockActions = useMemo<DockActions>(
     () => ({
       openTab: (kind, options) => mutateSurface((s) => dockOpenTab(s, kind, options)),
+      openPreview: (path) => mutateSurface((s) => dockSetExpanded(dockOpenPreview(s, path), true)),
       closeTab: (tabId) => mutateSurface((s) => dockCloseTab(s, tabId)),
       focusTab: (tabId) => mutateSurface((s) => dockFocusTab(s, tabId)),
       focusPane: (paneId) => mutateSurface((s) => dockFocusPane(s, paneId)),
