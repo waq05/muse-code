@@ -740,7 +740,13 @@ export function App(): JSX.Element {
             </div>
 
             <div className="thread-zone" ref={zoneRef} data-review={review !== null || undefined}>
-              <div className="thread-main">
+              {/* 空会话：引导文案 + 输入框作为一个组垂直居中（对照 dsh 的 EmptyHero）；
+              条件与下面 Welcome 分支完全一致，轨迹页 / 队友记录不进居中容器。 */}
+              <div
+                className={
+                  peek === null && tab !== 'trace' && empty ? 'thread-main thread-main-empty' : 'thread-main'
+                }
+              >
               {peek !== null ? (
                 <TeammatePeek teammate={peek} entries={peekEntries} onClose={() => setPeek(null)} />
               ) : tab === 'trace' ? (

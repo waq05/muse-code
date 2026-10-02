@@ -1289,3 +1289,16 @@ T15（对标 dsh tool-jobs）：长命令不占住回合。bash 工具新增 `ru
 **诚实边界**：自检种子的侧栏只有 1 个会话、对话只有 2 轮，两个区域都没溢出，5px 滚动条只有样式表断言（thumb 色与 dsh 本就同值）没有溢出态实机特写；hover 提字色同样只有断言（截图钩子 `.shot-reveal` 已同步改成提字色，可复验）。
 
 **Mimosa 重扫密封（0.6.35）**：提交时门仍报 `scanner_enobufs`，按上轮纪律重扫——scanId `scan-2026-10-02T15-46-21.830Z-ed45f0d7e50e`（seal `sha256:99cc271b…`），138 个 finding 里真实源码面仍是同样 13 个（文件与规则逐条同 0.6.34 密封结论：12 误报/功能本质 + 1 已加固的 push.ts），总数 +2 落在 `lib/remote/assets` 与 `shots/icon-preview` 的非运行时副本/探针资产；依赖 298 包 0 命中。按扫描结论纪律：不宣称「项目完全安全」，只登记复核结论。
+
+## 阶段 55：开始页整组垂直居中——修复「整个会话框太靠上」（0.6.36）
+
+用户实机截图：新会话开始页的「有什么可以帮忙的? + 提示行 + 输入框」整块顶着页眉排，下方留了一大截空白。根因是布局规则挂错了层：`.welcome` 自己写了 `flex: 1 + justify-content: center + padding-bottom: 8vh`，但它的父级 `.thread-main` 是个普通块——纵向 flex 规则只写在审查分栏分支（`.thread-zone[data-review] .thread-main`）里，普通态根本不存在 flex 上下文，那三条居中规则全部落空，welcome 塌成内容高、composer 紧随其后，整组顶格。
+
+修法（对照 dsh 的 EmptyHero：`.root { height: 100%; justify-content: center }`，标题 + 工作区 chip + 输入卡**作为一个组**居中）：
+1. `App.tsx`：thread-main 按条件挂 `thread-main-empty` 类——条件与 Welcome 分支完全一致（非轨迹页、非队友记录、空会话），轨迹页 / 队友记录不进居中容器；
+2. `styles.css`：`.thread-main-empty`（flex 列 + `overflow-y: auto`），welcome `margin-top: auto` + composer-zone `margin-bottom: auto`、welcome↔composer 固定 28px 间距。居中用上下 auto 边距而不是 `justify-content: center`——system 提示多、窗口矮、内容高过容器时 auto 边距退回普通流（顶着排、容器可滚），flex 居中会把顶部溢出内容裁到滚不回来；
+3. `.welcome` 基础规则清掉三条死规则（`flex: 1` / `justify-content: center` / `padding-bottom: 8vh`——旧结构遗产，现在只留 welcome 块自己的内部排布）。
+
+**验证**：desktop typecheck + build 全绿、fold-check 220/220；ui-start 用例加 `centeredOk` 判定（welcome 上方留白 vs composer 下方留白差 ≤32px 且留白 >40px）实机 210/220 全绿（差值即 composer-zone 自身 10px 底 padding）；目检截图确认整组落在版心正中；真实 ~/.dsc 跑前跑后 171 文件聚合 SHA256 一致（零污染）。
+
+**诚实边界**：带消息的会话、轨迹页、队友记录的布局不动（那些分支不挂居中类）；第一条消息发出后 composer 从居中组落回底部，行为与 dsh 的 blank-draft → conversation 切换一致，探针未单独取证（同一容器的两个 class 分支，逻辑已由 centeredOk 覆盖一半）。
