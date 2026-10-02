@@ -28,6 +28,8 @@ export interface DockTab {
   kind: DockTabKind
   /** 仅 preview 页签：预览文件的绝对路径（chip 标题与预览体都从它来）。 */
   path?: string
+  /** 仅 preview 页签：打开时定位到的 1-based 行号（/review findings 的行号跳转用）。 */
+  line?: number
 }
 
 /** 一个窗格：一排页签 + 当前激活的那张。 */
@@ -57,8 +59,8 @@ export type DockSurfaces = Record<string, DockSurface>
 export interface DockActions {
   /** 开一张页签（`replaceGuide` = 开始页入口卡的就地替换路径）。 */
   openTab(kind: DockTabKind, options?: { replaceGuide?: boolean }): void
-  /** 开一张文件预览页签（同路径去重 = 聚焦；对齐 dsh 的 openResource）。 */
-  openPreview(path: string): void
+  /** 开一张文件预览页签（同路径去重 = 聚焦；对齐 dsh 的 openResource）；line = 定位行号。 */
+  openPreview(path: string, line?: number): void
   closeTab(tabId: string): void
   focusTab(tabId: string): void
   focusPane(paneId: string): void
@@ -152,12 +154,24 @@ export function openTab(surface: DockSurface, kind: DockTabKind, options?: { pan
 
 /**
  * 开一张文件预览页签（对齐 dsh 的 openResource → file: 页签）：同一份文件
- * （按绝对路径认）在哪个窗格都只有一张，已开即聚焦；新开的追加到激活窗格
- * 末尾；该窗格预览页签到上限时关掉最旧的一张，给新的让位。
+ * （按绝对路径认）在哪个窗格都只有一张，已开即聚焦（带上新的定位行号）；
+ * 新开的追加到激活窗格末尾；该窗格预览页签到上限时关掉最旧的一张，给新的让位。
  */
-export function openPreview(surface: DockSurface, path: string): DockSurface {
+export function openPreview(surface: DockSurface, path: string, line?: number): DockSurface {
+  const patched = line === undefined ? {} : { line }
   const existing = surface.panes.flatMap((pane) => pane.tabs).find((tab) => tab.kind === 'preview' && tab.path === path)
-  if (existing !== undefined) return focusTab(surface, existing.id)
+  if (existing !== undefined) {
+    const focused = focusTab(surface, existing.id)
+    return line === undefined
+      ? focused
+      : {
+          ...focused,
+          panes: focused.panes.map((pane) => ({
+            ...pane,
+            tabs: pane.tabs.map((tab) => (tab.id === existing.id ? { ...tab, line } : tab)),
+          })),
+        }
+  }
   const pane = activePane(surface)
   let tabs = [...pane.tabs]
   const previews = tabs.filter((tab) => tab.kind === 'preview')
@@ -165,7 +179,7 @@ export function openPreview(surface: DockSurface, path: string): DockSurface {
     const oldest = previews[0]!
     tabs = tabs.filter((tab) => tab.id !== oldest.id)
   }
-  const tab = makeTab('preview', path)
+  const tab = { ...makeTab('preview', path), ...patched }
   tabs = [...tabs, tab]
   return replacePane(surface, pane.id, { ...pane, tabs, activeTabId: tab.id })
 }
@@ -326,7 +340,7 @@ function parseSurface(value: unknown): DockSurface | null {
       // preview 页签落盘要带路径；路径丢了这张页签就没有内容，整格作废重画
       if (entry.kind === 'preview') {
         if (typeof entry.path !== 'string' || entry.path === '') return null
-        tabs.push({ id: entry.id, kind: 'preview', path: entry.path })
+        tabs.push({ id: entry.id, kind: 'preview', path: entry.path, ...(typeof entry.line === 'number' ? { line: entry.line } : {}) })
       } else {
         tabs.push({ id: entry.id, kind: entry.kind as DockTabKind })
       }

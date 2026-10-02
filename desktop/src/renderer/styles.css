@@ -9537,7 +9537,6 @@ body.resizing iframe {
   padding-right: 5px;
 }
 
-/* 追加区：新样式段一律加在这行之下，加完把这行挪到文件末尾（trace-check 的末尾纪律断言认这行） */
 
 /* 计划评审卡的拒绝反馈框（T40）：与 plan-body 同宽，走令牌不硬编码色值 */
 .plan-feedback {
@@ -9551,3 +9550,168 @@ body.resizing iframe {
   resize: vertical;
   width: 100%;
 }
+
+/* ── /review findings 卡（T18）：审查队友的 <review-findings> 汇报按条渲染 ────── */
+
+.review-findings {
+  background: var(--dsc-neutral-card);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-block);
+  color: var(--dsc-text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.review-findings-head {
+  align-items: center;
+  color: var(--dsc-text-tertiary);
+  display: flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 6px;
+}
+
+.review-findings-title {
+  font-weight: 500;
+}
+
+.review-findings-state {
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-control);
+  flex: none;
+  padding: 0 6px;
+}
+
+.review-findings-note {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-caption);
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.review-findings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.review-finding {
+  background: color-mix(in srgb, var(--dsc-neutral-page, var(--dsc-neutral-card)) 60%, transparent);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-block);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 9px;
+}
+
+.review-finding-head {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 优先级徽标：P1 红、P2 橙、P3 灰（语义色令牌，浅深主题各自取值）。 */
+.review-finding-badge {
+  border: 1px solid color-mix(in srgb, var(--dsc-stroke-2) 80%, transparent);
+  border-radius: var(--dsc-r-control);
+  flex: none;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.review-finding[data-priority='P1'] .review-finding-badge {
+  color: var(--dsc-red);
+}
+
+.review-finding[data-priority='P2'] .review-finding-badge {
+  color: var(--dsc-orange);
+}
+
+.review-finding[data-priority='P3'] .review-finding-badge {
+  color: var(--dsc-text-tertiary);
+}
+
+.review-finding-title {
+  font-size: var(--dsc-fs-caption);
+  font-weight: 500;
+  min-width: 0;
+}
+
+.review-finding-loc {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  color: var(--dsc-accent);
+  cursor: pointer;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  overflow: hidden;
+  padding: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-finding-loc:hover {
+  text-decoration: underline;
+}
+
+.review-finding-detail,
+.review-finding-suggest {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-caption);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.review-finding-suggest {
+  color: var(--dsc-text-tertiary);
+}
+
+/* 行号定位打开的代码预览：行号列走 CSS counter（shiki 每行一个 .line，
+   纯文本回落也是同构的 .line——两分支同一套样式）。 */
+.file-code--numbered .file-code-body .line,
+.file-code--numbered .file-code-plain .line {
+  counter-increment: dsc-code-line;
+}
+
+.file-code--numbered .file-code-body .line::before,
+.file-code--numbered .file-code-plain .line::before {
+  color: var(--dsc-text-tertiary);
+  content: counter(dsc-code-line);
+  display: inline-block;
+  font-family: var(--dsc-font-mono);
+  margin-right: 14px;
+  opacity: 0.6;
+  text-align: right;
+  width: 3.2em;
+}
+
+.file-code--numbered .file-code-body,
+.file-code--numbered .file-code-plain {
+  counter-reset: dsc-code-line;
+}
+
+/* 目标行高亮：/review findings 的位置跳转落点。 */
+.file-code .line.file-code-line-target {
+  background: color-mix(in srgb, var(--dsc-accent) 18%, transparent);
+  border-left: 2px solid var(--dsc-accent);
+  display: inline-block;
+  padding-left: 6px;
+  width: calc(100% - 8px);
+}
+
+/* 追加区：新样式段一律加在这行之下，加完把这行挪到文件末尾（trace-check 的末尾纪律断言认这行） */

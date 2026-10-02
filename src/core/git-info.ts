@@ -59,6 +59,28 @@ export async function collectWorkingTree(cwd: string): Promise<{ diff: string; u
   return { diff, untracked }
 }
 
+/**
+ * /review 的审查消息组装（T18：主会话回落轮与审查队友的任务描述共用这一份）。
+ * 独立成纯函数便于脱离命令体系直测；挪进本模块是因为「收集」与「组装」同域，
+ * 而 commands.js 的顶层不许出现 node 内置模块 import。
+ */
+export function reviewMessage(collected: { diff: string; untracked: string[] }, focus: string): string {
+  const lines = [
+    '请审查当前工作区的未提交改动。逐个文件过 diff：正确性问题、边界条件、安全问题、'
+      + '与项目既有约定（如 AGENTS.md）冲突的地方；给出具体文件与行级的意见。没有问题就明说没有。',
+  ]
+  if (focus !== '') lines.push(`关注点：${focus}`)
+  if (collected.diff !== '') {
+    lines.push('', '## 未提交改动（git diff HEAD --no-textconv --no-ext-diff）', '', collected.diff)
+  } else {
+    lines.push('', '## 未提交改动', '', '（没有已跟踪文件的改动，只有未跟踪的新文件）')
+  }
+  if (collected.untracked.length > 0) {
+    lines.push('', '## 未跟踪文件（diff 里没有，逐个 read 后再评）', ...collected.untracked.map((file) => `- ${file}`))
+  }
+  return lines.join('\n')
+}
+
 // ── T42：回合首尾快照（轮尾「文件已更改」卡对 bash/脚本改动的兜底）─────────────
 
 /** 一轮最多补多少个 git 兜底条目（防一个脚本扫动几千个文件把轮尾卡撑爆）。 */

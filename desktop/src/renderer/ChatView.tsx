@@ -86,6 +86,8 @@ import { MarkdownText } from './chat/markdown-text.js'
 import { loadFeedback, recordFeedback, type Feedback } from './chat/feedback.js'
 import { buildRoundFolds, TurnFoldRow, type RoundFold } from './chat/round-fold.js'
 import { buildSeatPlan, type ChatPlanItem, type RoundSeatPlan } from './chat/seat-plan.js'
+import { parseReviewFindings } from './review-findings.js'
+import { ReviewFindingsCard } from './review-findings-card.js'
 import { useChatViewport, PAGE_ROUNDS } from './chat/use-chat-viewport.js'
 
 /**
@@ -134,9 +136,10 @@ export function ChatView(props: {
   /** 工具卡默认展开吗（设置 → 通用 → 工具卡）。不传按 false。 */
   toolDefaultOpen?: boolean
   /**
-   * 点轮尾卡上的「打开」：把文件放进预览页签。不传就不画「打开」（只读视图）。
+   * 点轮尾卡上的「打开」：把文件放进预览页签（line = 定位行号，/review findings 的
+   * 位置跳转也走这里）。不传就不画「打开」（只读视图）。
    */
-  onOpenFile?: (path: string) => void
+  onOpenFile?: (path: string, line?: number) => void
   /**
    * 点轮尾卡上的「审查」：打开右侧 diff 面板，定位到这一轮的第 index 个文件。
    * 不传 = 只读视图，审查入口整颗不画。
@@ -568,6 +571,9 @@ export function ChatView(props: {
     switch (entry.kind) {
       case 'user': {
         const open = editing !== null && editing.index === index
+        // T18：审查队友的 <review-findings> 汇报渲染成 findings 卡（按条 + 行号跳转），
+        // 「编辑重发」对这种消息没有意义，一并隐藏。
+        const findingsDoc = parseReviewFindings(entry.text)
         return (
           // .user-turn 是这条用户消息的整块：气泡 + 气泡正下方的操作条。
           // 为什么要多这一层容器：编辑按钮得落在气泡盒子外面（气泡自己有底色和内距，
@@ -632,6 +638,8 @@ export function ChatView(props: {
                     </button>
                   </div>
                 </div>
+              ) : findingsDoc !== null ? (
+                <ReviewFindingsCard doc={findingsDoc} cwd={props.cwd ?? ''} onOpenFile={props.onOpenFile} />
               ) : (
                 entry.text
               )}
@@ -642,7 +650,7 @@ export function ChatView(props: {
                 （本轮改版），这一块只剩「改这条消息」这件专属于用户消息的事。
                 图标 15px 对齐 dsh 用户那条操作条的图标（MessageIconActions.module.css:80-81），
                 hit area 的 28px 在 styles.css 末尾「对话区修正批」那一段。 */}
-            {!open && canAct && (
+            {!open && canAct && findingsDoc === null && (
               <div className="user-actions">
                 <button
                   type="button"

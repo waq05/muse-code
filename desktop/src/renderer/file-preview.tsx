@@ -150,12 +150,14 @@ async function highlightToHtml(code: string, lang: string | undefined): Promise<
 }
 
 /** 代码视图：装语法期间先画纯文本，就绪后原地换高亮 HTML。 */
-function CodeView({ text, path }: { text: string; path: string }): JSX.Element {
+function CodeView({ text, path, targetLine }: { text: string; path: string; targetLine?: number }): JSX.Element {
   const lang = useMemo(() => langForPath(path), [path])
   const lines = useMemo(() => text.split('\n'), [text])
   const truncated = lines.length > CODE_MAX_LINES
   const shown = useMemo(() => (truncated ? lines.slice(0, CODE_MAX_LINES).join('\n') : text), [lines, text, truncated])
   const [html, setHtml] = useState<string | null>(null)
+  // 高亮分支是 div、纯文本回落是 pre——ref 用回调统一收 HTMLElement
+  const bodyRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
     let on = true
     highlightToHtml(shown, lang)
@@ -169,13 +171,33 @@ function CodeView({ text, path }: { text: string; path: string }): JSX.Element {
       on = false
     }
   }, [shown, lang])
+  // 行号跳转（/review findings）：渲染完把目标行滚到视口中间并挂高亮类；
+  // 换目标先摘旧高亮。目标行超出截断范围就滚到截断条，不硬来。
+  useEffect(() => {
+    if (targetLine === undefined) return
+    const body = bodyRef.current
+    if (body === null) return
+    body.querySelectorAll('.file-code-line-target').forEach((node) => node.classList.remove('file-code-line-target'))
+    const rows = body.querySelectorAll('.line')
+    const at = Math.min(Math.max(targetLine, 1), rows.length)
+    const row = rows[at - 1]
+    if (row !== undefined) {
+      row.classList.add('file-code-line-target')
+      row.scrollIntoView({ block: 'center' })
+    }
+  }, [html, targetLine, shown])
+  const numbered = targetLine !== undefined
   return (
-    <div className="file-code">
+    <div className={numbered ? 'file-code file-code--numbered' : 'file-code'}>
       {truncated && <div className="tree-note" data-tree-note="truncated">文件较大，仅高亮前 {CODE_MAX_LINES} 行</div>}
       {html !== null ? (
-        <div className="file-code-body" dangerouslySetInnerHTML={{ __html: html }} />
+        <div ref={(node) => { bodyRef.current = node }} className="file-code-body" dangerouslySetInnerHTML={{ __html: html }} />
       ) : (
-        <pre className="file-code-plain">{shown}</pre>
+        <pre ref={(node) => { bodyRef.current = node }} className="file-code-plain">
+          {shown.split('\n').map((row, index) => (
+            <span key={index} className="line">{`${row}\n`}</span>
+          ))}
+        </pre>
       )}
     </div>
   )
@@ -447,9 +469,10 @@ function NoticeLine({ message }: { message: string }): JSX.Element {
 
 /**
  * 预览页签体：拉一次 fs-read，按类型分发到各渲染器。头部是相对路径 + 文件
- * 彩色图标（dsh 的 TextPreview 头部同位）。
+ * 彩色图标（dsh 的 TextPreview 头部同位）。line = 打开时定位的 1-based 行号
+ * （仅代码/文本视图支持：挂行号列并把目标行滚进视口高亮）。
  */
-export function FilePreviewView({ path, cwd, proxy }: { path: string; cwd: string; proxy: RuntimeProxy }): JSX.Element {
+export function FilePreviewView({ path, cwd, proxy, line }: { path: string; cwd: string; proxy: RuntimeProxy; line?: number }): JSX.Element {
   const [read, setRead] = useState<ReadResult | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -503,7 +526,7 @@ export function FilePreviewView({ path, cwd, proxy }: { path: string; cwd: strin
         body = <NoticeLine message={`二进制文件（${formatSize(read.size ?? 0)}），暂不支持预览`} />
         break
       default:
-        body = <CodeView text={read.text ?? ''} path={path} />
+        body = <CodeView text={read.text ?? ''} path={path} targetLine={line} />
     }
   }
   return (

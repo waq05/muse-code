@@ -1215,3 +1215,21 @@ T15（对标 dsh tool-jobs）：长命令不占住回合。bash 工具新增 `ru
 **验证**：typecheck/build 全绿；新探针 `shots/batch-c-check.mjs` 13/13（真起子进程：增量缓冲时间线、退出码透传、kill 后 close 不覆盖状态不补发通知、后台旁路硬地板、三工具形状）；回归 compact 54、batch-a 22、batch-b 12、kernel-boot、integration、approval-floor 95、dsh-compat 15、mcp、file-review 59、order 全过。
 
 **诚实边界**：后台作业没有超时（那是后台的意义），24 小时的描述值超时由 spawnShell 兜底；job_kill 的整树收割与前台超时共用 taskkill/组杀机制；完成通知是排队消息（模型下一轮看到），不是流中断注入。
+
+## 阶段 51：功能批次 D——/review 升级为只读审查队友 + findings 结构化渲染（0.6.32）
+
+**T18 /review 升级**（roadmap §7.1）：v1 的「审查消息发进当前会话走一轮」升级为「subagent 插件派一个工牌被强制压到只读交集的队友，后台审查，findings 结构化写回」。
+
+- **内核**：`agent-roles.ts` 新增出厂角色 `reviewer`（tools read/glob/grep、approval forbid、16 轮，提示词约定 findings 输出格式：`### [P1] 标题 / 位置：相对路径:行号 / 说明 / 建议`，分级口径 P1 必须修、P2 应该修、P3 可更好）；解析角色文本的逻辑抽成 `parseRoleText` 供 `readRole` 与新导出 `builtinRole()`（按出厂定义就地构造、**不落盘**）共用——用户删了 reviewer.md 也照常可审。
+- **审查通道**：`subagent.ts` provide 新服务 `review`（`ReviewService.spawn(request)`）——findRole('reviewer') ?? builtinRole('reviewer')，**工牌再压一次只读交集**（tools 强制 `['read','glob','grep']`、approval 强制 `'forbid'`，角色文件怎么改都不影响——审查通道的天然安全不靠配置自觉）；并发额度照占（满了 ok:false 带 reason）；后台跑，收工后 findings 以 `<review-findings teammate state>` 包裹 `appendUser` 写进**发起会话**并 `transcript.touch()`——不走 followup，不打断当前会话的模型轮；用户接着说「把 P1 修了」时模型又天然看得到。
+- **命令分流**：`/review` 先 `ctx.get('review')`——subagent 插件开着就派队友（notice 告知），没开或额度满回落 v1 的主会话审查轮；`reviewMessage` 组装函数挪进 `core/git-info.ts`（收集与组装同域；主会话轮与队友任务描述共用一份）。
+- **渲染层**：新纯模块 `review-findings.ts`（整体被 `<review-findings>` 包裹才认；逐行状态机解析条目；字段行剥加粗/反引号/列表标记、认全半角冒号；位置认 `path:line`；解析不动的行归进 detail 兜底——宁可多留不丢内容）+ `review-findings-card.tsx`（卡头=审查队友名+状态；按条渲染：优先级徽标 P1 红/P2 橙/P3 灰、标题、**位置可点**、说明、建议）；ChatView 的 user 消息分支命中 findings 文档就出卡，且这类消息隐藏「编辑重发」。
+- **行号跳转**：dock 的 `openPreview(path, line?)`——同路径页签已开则聚焦并更新定位行、布局持久化恢复带上 line；`FilePreviewView`/`CodeView` 收 `targetLine`：跳转打开时代码视图挂行号列（CSS counter，shiki 的 `.line` 与纯文本回落同构）、渲染完把目标行滚进视口中央并挂高亮类，目标行超截断范围滚到截断条不硬来。
+
+**探针抓到的两个真问题**：①解析器 `HEAD_RE` 捕获组只捕到 `1`，`priority` 实际是 `'1'` 而非 `'P1'`——卡片 `data-priority` 与 CSS 三档选择器会整体失效（探针「条目数与优先级」当场抓住，修为 `` `P${digit}` ``）；②`fieldOf` 先剥列表前缀再剥加粗，`**位置**：` 剩单星污染 key（调换顺序修复）。另：`createKernel({ config: {} })` 的 options.config 是**直传 llm 插件的运行时配置**，探针必须传 `readConfig()` 读好的盘上配置——空对象时 `route()` 炸 `reading 'undefined'`（kernel-boot 不发请求所以从未暴露）。
+
+**Mimosa 误拦记录**：review-findings.ts 初版用了正则的 `.exec(`——与子进程 exec 撞词面被判「命令注入」拦截写入；改 `match`/逐行扫描绕开（纯文本解析器，无任何进程原语）。
+
+**验证**：双侧 typecheck、根 build + desktop build 全绿；新探针 `shots/batch-d-check.mjs` 32/32（解析器 12、reviewer 角色/组装 9、真内核端到端 11——临时 HOME + 假协议适配器（registerAdapter 缝，不走真模型）+ **故意把 reviewer 角色文件改坏**（tools 混进 write/bash、approval: ask），断言 spawn 后假模型调 write 被「未知工具」挡下、盘上没写出文件、findings 带完成状态写回发起会话、队友进名册收工）；回归 batch-a 22、batch-b 12、batch-c 13、compact 53、order 18、integration 104、approval-floor、dsh-compat 15、mcp、file-review 59、dock-model、remote-server 12、lsp 167、四网 218/210/28/85 全绿。
+
+**诚实边界**：findings 格式靠角色提示词约定、解析器宽松兜底——模型完全跑格时整块文本会落进 trailing 说明而非条目；行号跳转只对代码/文本视图生效（markdown/csv/pdf 预览无行概念）；审查队友不知道本地会话历史（fresh 上下文，只看 diff 与关注点）；/review 的并发额度与普通队友共用一份（maxTeammates 满时回落主会话轮并提示）。

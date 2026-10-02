@@ -24,6 +24,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { Transcript } from '../adapter/transcript.js'
 import {
   builtinRoleNames,
+  builtinRole,
   DSC_AGENTS_DIR,
   ensureBuiltinRoles,
   findRole,
@@ -40,7 +41,8 @@ import { argsSummary, type ToolContext, type ToolEntry } from '../core/tools.js'
 import { ToolGuardRegistry, toolApprovalGuard } from '../core/tool-guards.js'
 import { inboxAppend } from '../core/team-board.js'
 import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TranscriptEntry } from '../contract.js'
-import type { SettingsSectionSpec, TeamService } from '../services/types.js'
+import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '../services/types.js'
+import { reviewMessage } from '../core/git-info.js'
 
 /** 插件配置（存 `~/.dsc/plugins.json` 条目树的 config 里）。 */
 interface SubagentConfig {
@@ -512,6 +514,61 @@ ${body}
       message: async (name: string, text: string): Promise<string> => messageTeammate(name, text, 'user'),
     }
     ctx.provide('team', teamService)
+
+    // ── 只读代码审查通道（T18）─────────────────────────────────────────────
+    // /review 的升级路径：派一个工牌被强制压到只读交集的队友（工具 = read/glob/grep，
+    // 审批 = forbid，与角色文件怎么改无关），后台审查，findings 以 <review-findings>
+    // 包裹写回发起会话——渲染层解析成卡片，主会话不吃模型轮。
+    const READONLY_TOOLS = ['read', 'glob', 'grep']
+
+    const spawnReviewer = (request: ReviewSpawnRequest): ReviewSpawnResult => {
+      const parentSession = ctx.session.current()
+      const working = busyFor(parentSession.meta.id)
+      if (working.length >= config.maxTeammates) {
+        return {
+          ok: false,
+          reason: `正在干活的队友已到上限 ${config.maxTeammates} 个（${working.map((entry) => entry.name).join('、')}），等一个收工再 /review`,
+        }
+      }
+      // 角色文件被用户删掉也照常可审：从出厂定义就地取（不落盘）；无论来自哪个文件，
+      // 工牌都再压一次只读交集——审查通道的「天然安全」不依赖用户配置。
+      const base = findRole('reviewer') ?? builtinRole('reviewer')
+      if (base === null) return { ok: false, reason: 'reviewer 角色定义不可用（内置角色缺失）' }
+      const role: AgentRole = { ...base, tools: [...READONLY_TOOLS], approval: 'forbid' }
+      const teammate = startTeammate({
+        name: uniqueName('reviewer'),
+        role,
+        task: reviewMessage(request, request.focus),
+        caller: { name: LEAD, depth: 0, background: true },
+        background: true,
+        seed: null,
+        parentSession,
+      })
+      void waitForIdle(teammate).then(() => deliverReview(teammate))
+      return { ok: true, name: teammate.name }
+    }
+
+    /** 审查收工：findings（或失败原因）写进发起会话，渲染层认 <review-findings> 标记出卡。 */
+    const deliverReview = (teammate: Teammate): void => {
+      const state = teammate.state === 'idle' ? '已完成' : teammate.state === 'stopped' ? '已停止' : '已失败'
+      const body =
+        teammate.state === 'failed'
+          ? `审查没有完成：${teammate.error ?? '未知错误'}`
+          : teammate.state === 'stopped'
+            ? '审查被停止，没有交回结论。'
+            : teammate.lastText === ''
+              ? '审查没有留下文字结论。'
+              : teammate.lastText
+      const notice = `<review-findings teammate="${teammate.name}" state="${state}">\n${body}\n</review-findings>`
+      const line = `审查队友 ${teammate.name}，${state}`
+      teammate.parentSession.appendUser(notice)
+      const live = ctx.session.current() === teammate.parentSession
+      ctx.transcript.system(live ? `${line}，findings 已写进会话` : `${line}，findings 写入了派出它的会话`)
+      ctx.transcript.touch()
+    }
+
+    const reviewService: ReviewService = { spawn: spawnReviewer }
+    ctx.provide('review', reviewService)
 
     // ── 模型侧工具 ──────────────────────────────────────────────────────────
     function uniqueName(role: string): string {

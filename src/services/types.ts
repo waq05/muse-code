@@ -598,6 +598,33 @@ export interface TeamService {
   message(name: string, text: string): Promise<string>
 }
 
+/**
+ * 只读代码审查通道（T18）：由 subagent 插件提供，/review 命令的升级路径。
+ * 派出去的队友工牌被强制压到只读交集（工具 = read/glob/grep，审批 = forbid），
+ * 与角色文件怎么改无关——审查通道天然安全，不靠配置自觉。
+ */
+export interface ReviewService {
+  /**
+   * 派一个只读审查队友（后台），审查完成后 findings 以
+   * `<review-findings>` 包裹写进发起会话（渲染层解析成卡片；不打断当前会话的模型轮）。
+   * @returns ok=false 时 reason 是给用户看的一句话（额度满/角色不可用等），调用方回落。
+   */
+  spawn(request: ReviewSpawnRequest): ReviewSpawnResult
+}
+
+/** /review 交给审查通道的输入（collectWorkingTree 的产出 + 关注点）。 */
+export interface ReviewSpawnRequest {
+  /** `git diff HEAD --no-textconv --no-ext-diff` 的输出（collectWorkingTree 已按预算截断）。 */
+  diff: string
+  /** 未跟踪文件名单（diff 里没有，队友自己 read）。 */
+  untracked: string[]
+  /** 用户写在 /review 后面的关注点；空 = 不限。 */
+  focus: string
+}
+
+/** 派审查队友的结果：ok=false 时 reason 说明原因并回落主会话轮。 */
+export type ReviewSpawnResult = { ok: true; name: string } | { ok: false; reason: string }
+
 // ── skills ───────────────────────────────────────────────────────────────────
 
 /**
@@ -936,6 +963,8 @@ declare module '@deepseek-ai/cordis' {
     waiting: WaitingService
     /** 智能体团队（subagent 插件提供；插件没开时不存在）。 */
     team?: TeamService
+    /** 只读代码审查通道（subagent 插件提供；插件没开时 /review 回落主会话轮）。 */
+    review?: ReviewService
     /** 技能服务（发现/启停/市场/模型可见目录）。 */
     skills: SkillService
     /** 设置服务（分区注册表 + 模型配置 + 偏好）。 */

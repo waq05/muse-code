@@ -17,7 +17,7 @@ import type {
   CommandSpec,
 } from '../services/types.js'
 import type { DscRuntime } from '../contract.js'
-import { collectWorkingTree } from '../core/git-info.js'
+import { collectWorkingTree, reviewMessage } from '../core/git-info.js'
 import { estimateTokens } from '../core/compact.js'
 import { exportSessionMarkdown } from '../core/session-export.js'
 import { errText } from '../core/err-text.js'
@@ -170,6 +170,17 @@ export const commandsPlugin: Plugin.Object = {
               ui.notice('工作区没有未提交的改动。')
               return
             }
+            // T18：subagent 插件开着就走只读审查队友——后台审，findings 直接出卡片，
+            // 不占用当前会话的模型轮；插件没开（或额度满）回落 v1 的主会话审查轮。
+            const review = ctx.get('review')
+            if (review !== undefined) {
+              const spawned = review.spawn({ ...collected, focus })
+              if (spawned.ok) {
+                ui.notice(`已派出只读审查队友 ${spawned.name}，结论出来后直接出现在会话里`)
+                return
+              }
+              ui.notice(`/review 没派出审查队友（${spawned.reason}），改在本会话里审`)
+            }
             // 组装一条审查请求走正常对话轮（runtime.submit → agent.followup）：
             // 回复就是审查意见，与用户自己贴着 diff 问「帮我看看」同一条链路。
             runtime.submit(reviewMessage(collected, focus))
@@ -228,24 +239,4 @@ export function statusReport(input: {
     `· 自动压缩触发线：${input.autoCompactPercent}%（≈${threshold.toLocaleString('zh-CN')} tokens，还差 ${Math.max(0, threshold - input.tokens).toLocaleString('zh-CN')}）`,
     '· 估算口径与自动压缩同源（中文 0.65、其余 0.33 tokens/字符）',
   ].join('\n')
-}
-
-/**
- * /review 的审查消息组装（独立成函数便于脱离命令体系直测：给一份收集结果与关注点，
- * 回一条可直接 submit 的消息；回复即审查意见，与用户自己贴 diff 问「帮我看看」同链路）。
- */export function reviewMessage(collected: { diff: string; untracked: string[] }, focus: string): string {
-  const lines = [
-    '请审查当前工作区的未提交改动。逐个文件过 diff：正确性问题、边界条件、安全问题、'
-      + '与项目既有约定（如 AGENTS.md）冲突的地方；给出具体文件与行级的意见。没有问题就明说没有。',
-  ]
-  if (focus !== '') lines.push(`关注点：${focus}`)
-  if (collected.diff !== '') {
-    lines.push('', '## 未提交改动（git diff HEAD --no-textconv --no-ext-diff）', '', collected.diff)
-  } else {
-    lines.push('', '## 未提交改动', '', '（没有已跟踪文件的改动，只有未跟踪的新文件）')
-  }
-  if (collected.untracked.length > 0) {
-    lines.push('', '## 未跟踪文件（diff 里没有，逐个 read 后再评）', ...collected.untracked.map((file) => `- ${file}`))
-  }
-  return lines.join('\n')
 }

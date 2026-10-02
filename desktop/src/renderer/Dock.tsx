@@ -337,7 +337,7 @@ function Pane(props: {
               {tab.kind === 'files' && <FilesPane cwd={props.cwd} proxy={props.proxy} actions={actions} />}
               {tab.kind === 'git' && <GitPane cwd={props.cwd} proxy={props.proxy} />}
               {tab.kind === 'preview' && tab.path !== undefined && (
-                <FilePreviewView path={tab.path} cwd={props.cwd} proxy={props.proxy} />
+                <FilePreviewView path={tab.path} cwd={props.cwd} proxy={props.proxy} line={tab.line} />
               )}
             </div>
           ) : null

@@ -218,7 +218,7 @@ export function App(): JSX.Element {
   const dockActions = useMemo<DockActions>(
     () => ({
       openTab: (kind, options) => mutateSurface((s) => dockOpenTab(s, kind, options)),
-      openPreview: (path) => mutateSurface((s) => dockSetExpanded(dockOpenPreview(s, path), true)),
+      openPreview: (path, line) => mutateSurface((s) => dockSetExpanded(dockOpenPreview(s, path, line), true)),
       closeTab: (tabId) => mutateSurface((s) => dockCloseTab(s, tabId)),
       focusTab: (tabId) => mutateSurface((s) => dockFocusTab(s, tabId)),
       focusPane: (paneId) => mutateSurface((s) => dockFocusPane(s, paneId)),
@@ -757,7 +757,7 @@ export function App(): JSX.Element {
                   onOpenSession={openSession}
                   // 轮尾「文件已更改」卡：审查开右侧 diff 面板，打开进文件预览页签
                   onReviewChanges={(files, index) => setReview({ files, index })}
-                  onOpenFile={(path) => dockActions.openPreview(path)}
+                  onOpenFile={(path, line) => dockActions.openPreview(path, line)}
                   cwd={cwd}
                   // 过程折叠程度（设置 → 通用 → 过程折叠程度）：四档能力表在 appearance.ts，
                   // 渲染层只读能力。另两项是「单条思考 / 工具卡」的默认态（设置 → 通用）。
