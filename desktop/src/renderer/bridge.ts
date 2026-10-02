@@ -179,6 +179,7 @@ export function createRuntimeProxy(): RuntimeProxy {
     runSettingAction: (id, action) => call<SettingsMutation>('runSettingAction', id, action),
     getModelConfig: () => call<ModelConfigView>('getModelConfig'),
     saveProvider: (draft: ProviderDraft) => call<SettingsMutation>('saveProvider', draft),
+    discoverModels: (provider: string) => call<string[]>('discoverModels', provider),
     removeProvider: (name) => call<SettingsMutation>('removeProvider', name),
     setProviderKey: (name, apiKey) => call<SettingsMutation>('setProviderKey', name, apiKey),
     setDefaultModel: (provider, model) => call<SettingsMutation>('setDefaultModel', provider, model),

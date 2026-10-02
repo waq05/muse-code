@@ -27,6 +27,7 @@ import type {
 } from '../contract.js'
 import type { DscCoreConfig } from '../core/config.js'
 import { readConfig } from '../core/config.js'
+import { discoverModels } from '../core/model-discovery.js'
 import {
   CONFIG_FILE,
   CREDENTIALS_FILE,
@@ -397,6 +398,12 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       modelConfig(): ModelConfigView {
         return readModelConfig()
       },
+      async discoverModels(provider: string): Promise<string[]> {
+        const entry = config.providers[provider]
+        if (entry === undefined) throw new Error(`没有这个端点：${provider}`)
+        return discoverModels(entry.baseUrl, entry.apiKey)
+      },
+
       saveProvider(draft: ProviderDraft): SettingsMutation {
         return mutateWith(() => {
           const name = upsertProvider(draft.oldName, draft)

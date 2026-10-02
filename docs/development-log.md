@@ -1189,3 +1189,17 @@ roadmap §7 的 T14–T28 全量开工，第一批四件（全部不动内核的
 **验证**：双侧 typecheck、根 build + desktop build 全绿；新探针 `shots/batch-a-check.mjs` 22/22（假 ctx 走真生成流程 + 临时 HOME 断言 meta.json、导出序列化、/status 文本、@ 纯函数——渲染层纯模块 node 直读 TS）；四网 218/210/28/85、compact 54、approval-floor 95、dsh-compat 15、file-review 59、kernel-boot/integration/mcp/dock-model 全过。
 
 **诚实边界**：@ 候选遍历的是 dock 根目录（标准桌面流里即会话 cwd；多工作区/异根场景路径可能错位）；标题生成失败无提示；T16 无手动重生成入口（要改可自己改名）；/export 导出的是协议消息流而非 UI 折叠条目。
+
+## 阶段 49：功能批次 B——压缩前置裁剪/在线模型发现/read 读图/侧栏状态点（0.6.30）
+
+**T19 压缩前置裁剪 + 图像卸载**（对标 dsh compaction-tool-result-pruner / compaction-image-offload）：`compact.ts` 新增 `pruneRegion` 前置 pass——超预算工具结果走 `spillText` 落盘留指针（模型可 `read` 找回全文），单行巨型输出（一行几万字符的 bundle）让「前 N 行」预览照样大，按 2×预算再截一刀、指针单独补回；带图工具结果的图整条卸载为占位；用户消息的图按预算（缺省 4 张）保留。**锚点索引与原话引用仍抽自未裁剪原文**——机械抽取要全量保真，不能跟着裁剪走（spill 里的报错原文靠锚点索引找回来）。compact 插件三处调用（check/forceCompact/run）统一带上口径，spill 配置复用 spill 插件那份。
+
+**T23 在线模型发现**：`core/model-discovery.ts`（新）——`GET {baseUrl}/models`（路径约定与 chat 同级），认 OpenAI `data[]` / ollama `models[]` / 纯数组三种形状，15 秒超时；`SettingsService.discoverModels` + 协议白名单 + 渲染层「拉取清单」按钮——清单条里逐个「+」按 config.yaml 缺省能力（128k 窗口/四档 thinking/只吃文本）加进端点，已有 id 灰掉。
+
+**T25 read 图片分流**：read 工具按扩展名（png/jpg/gif/webp/bmp/svg）整读成 data URL 走图片附件（6MB 红线与贴图一致）；模型没勾照片输入时请求组装的 `dropImageParts` 投影兜底换说明，工具不用关心模态。
+
+**T21 侧栏会话运行状态点**：快照新增 `sessionStates`（jsonl 路径 → working / awaiting-approval）——当前会话按 turnState，干着活的队友会话按名册；队友 spawn/settle 时 subagent 触摸快照保证新鲜。侧栏 16px 前导槽从空占位变成状态点：working 强调色呼吸、awaiting-approval 警示色常亮（`Sidebar.tsx:597` 的占位转正）。
+
+**验证**：双侧 typecheck、双构建全绿；新探针 `shots/batch-b-check.mjs` 12/12（假 stream 记录压缩请求断言输入缩半且哨兵经锚点保留、本地假端点实测发现链路、临时目录实测 read 分流）；全量回归——compact 54、batch-a 22、order/kernel-boot/integration、approval-floor 95、dsh-compat 15、file-review 59、dock-model、remote-server 12、lsp 167、mcp，四网 218/210/28/85。
+
+**诚实边界**：T23 只支持 OpenAI 兼容 /models（当前唯一协议适配器就是 openai-completions，anthropic 端点要等适配器出现再加）；「+」进来的模型能力是缺省值，要按模型改窗口/模态还得进编辑框；T21 状态点不含「定时任务时钟标记」（dsh 有，dsc 定时任务跑在当前会话里，当前会话的点已覆盖）。

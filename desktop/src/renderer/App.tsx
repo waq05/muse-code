@@ -607,6 +607,7 @@ export function App(): JSX.Element {
         activeSessionId={snapshot.status.sessionId}
         cwd={cwd}
         usage={snapshot.status.usage}
+        sessionStates={snapshot.sessionStates}
         view={view}
         onView={setView}
         onOpenSettings={(section) => setSettings({ open: true, section })}

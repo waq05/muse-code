@@ -397,6 +397,39 @@
   width: 16px;
 }
 
+/* T21 会话行首状态点：working 用强调色呼吸，awaiting-approval 用警示色常亮 */
+.sess-item .row-slot.session-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sess-item .session-dot .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.sess-item .session-dot.working .dot {
+  background: var(--dsc-accent);
+  animation: session-dot-breathe 1.6s ease-in-out infinite;
+}
+
+.sess-item .session-dot.awaiting-approval .dot {
+  background: var(--dsc-orange);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-orange) 25%, transparent);
+}
+
+@keyframes session-dot-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
 .sess-item:hover {
   background: var(--dsc-row-hover-bg);
   color: var(--dsc-text-secondary);
@@ -4523,6 +4556,43 @@ body.resizing iframe {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* T23 线上模型清单条：拉取结果 + 逐个加进端点 */
+.provider-discovered {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-icon);
+  background: var(--dsc-fill-quaternary);
+}
+
+.provider-discovered .discovered-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-caption);
+}
+
+.provider-discovered .discovered-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.provider-discovered .discovered-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-pill);
+  background: var(--dsc-fill-quinary);
+  font-size: var(--dsc-fs-caption);
 }
 
 .provider-key .setting-input {

@@ -11,10 +11,11 @@
  *
  * @module dsc/core/compact
  */
-import type { ChatMessage, LlmRoute, LlmStream } from './llm.js'
-import { contentText } from './llm.js'
+import type { ChatContentPart, ChatMessage, LlmRoute, LlmStream } from './llm.js'
+import { contentImages, contentText } from './llm.js'
 import { estimateTextTokens } from './token-estimate.js'
 import type { Session } from './session.js'
+import { readSpillConfig, spillText, type SpillConfig } from './spill.js'
 import {
   buildAnchorIndex,
   buildRecoveryFooter,
@@ -26,6 +27,89 @@ import {
 
 /** 压缩后保留的最近消息条数的缺省值（compact 插件配置没给 `keepRecent` 时用它）。 */
 export const DEFAULT_KEEP_RECENT = 20
+
+/**
+ * 摘要前置裁剪的口径（T19，对标 dsh compaction-tool-result-pruner / compaction-image-offload）：
+ * 历史送摘要模型之前先机械瘦身——超限工具结果裁掉留 spill 指针、老图片按预算卸载。
+ * 只影响摘要输入（省 token、摘要不被日志噪音淹没）；锚点索引与原话引用仍取自原文，全量保真。
+ */
+export interface PruneOptions {
+  /** spill 配置；给值 = 超限工具结果走 `spillText` 落盘留指针（模型可 read 找回）。 */
+  spill?: SpillConfig
+  /** 摘要转写里保留原图的张数，之后的图片换成占位说明。 */
+  imageBudget: number
+  /** 单条工具结果进摘要转写的字符预算（spill 未配置时纯截断）。 */
+  toolResultChars: number
+}
+
+/** 前置裁剪的缺省口径。 */
+export const DEFAULT_PRUNE_OPTIONS: PruneOptions = { imageBudget: 4, toolResultChars: 2000 }
+
+/** 一次前置裁剪的统计与产物。 */
+export interface PruneOutcome {
+  /** 裁剪后的消息（新数组；原数组不动）。 */
+  region: ChatMessage[]
+  /** 被裁掉并落盘留指针的工具结果条数。 */
+  spilledTools: number
+  /** 被占位说明换掉的图片张数。 */
+  offloadedImages: number
+}
+
+/**
+ * 历史的前置裁剪（纯消息变换 + spill 落盘）：
+ * - 超预算的 string 工具结果 → spill 预览（前几行 + 完整路径 + 续读写法）或纯截断说明；
+ * - 带图工具结果的图片全部卸载为占位（截图留在历史里等于每轮重发）；
+ * - 用户消息图片按预算保留，超出的换「图片已卸载」占位。
+ */
+export function pruneRegion(messages: readonly ChatMessage[], sessionId: string, options: PruneOptions): PruneOutcome {
+  let spilledTools = 0
+  let offloadedImages = 0
+  let imageBudget = options.imageBudget
+  const region: ChatMessage[] = messages.map((message) => {
+    if (message.role === 'tool' && typeof message.content === 'string') {
+      if (message.content.length <= options.toolResultChars) return message
+      spilledTools += 1
+      let replacement: string
+      if (options.spill !== undefined) {
+        const spilled = spillText(sessionId, message.content, options.spill)
+        replacement = spilled.text
+        // 单行巨型输出（一行几万字符的 bundle）会让「前 N 行」的预览照样巨大，
+        // 预览超限时按字符再截一刀，指针单独补回去——模型照着路径 read 就能找回全文
+        if (replacement.length > options.toolResultChars * 2) {
+          replacement = `${replacement.slice(0, options.toolResultChars)}…（预览超限已截）\n[完整输出已落盘：${spilled.written.path}]`
+        }
+      } else {
+        replacement = `${message.content.slice(0, options.toolResultChars)}\n…（已裁剪，原长 ${message.content.length} 字符）`
+      }
+      return { ...message, content: replacement }
+    }
+    const parts = message.content
+    if (parts === null || typeof parts === 'string') return message
+    const hasImage = parts.some((part) => part.type === 'image_url')
+    if (!hasImage) return message
+    const text = contentText(parts)
+    let replaced = false
+    let removedInMessage = 0
+    const nextParts: ChatContentPart[] = parts.flatMap((part): ChatContentPart[] => {
+      if (part.type !== 'image_url') return [part]
+      if (message.role === 'user' && imageBudget > 0) {
+        imageBudget -= 1
+        return [part]
+      }
+      replaced = true
+      offloadedImages += 1
+      removedInMessage += 1
+      return [{ type: 'text', text: '（图片已卸载，原文里这里是一张图）' }]
+    })
+    if (!replaced) return message
+    // 工具结果整条收成一句说明（正文 + 卸载注记）；用户消息保留剩余部件与占位
+    if (message.role === 'tool') {
+      return { ...message, content: [{ type: 'text', text: `${text}\n（工具结果里的 ${removedInMessage} 张图已卸载）` }] }
+    }
+    return { ...message, content: nextParts }
+  })
+  return { region, spilledTools, offloadedImages }
+}
 
 /** 一次压缩的三个上限。前两个是字符预算，由 compact 插件的配置给值。 */
 export interface CompactLimits {
@@ -130,13 +214,19 @@ export async function compactSession(
   limits: CompactLimits = DEFAULT_COMPACT_LIMITS,
   /** 爆窗重试用：忽略「历史太短」的 noop 检查直接压一次（切点退到 0 时仍放弃）。 */
   force = false,
+  /** 摘要前置裁剪（T19）；不传用缺省口径（不落盘、只按预算截断）。 */
+  prune?: PruneOptions,
 ): Promise<CompactOutcome> {
   const messages = session.messages
   if (!force && messages.length <= limits.keepRecent + 2) return 'noop'
   const cut = safeCut(messages, messages.length - limits.keepRecent)
   // 切点退到 0 = 整个历史都是工具结果，没有可折的内容（正常历史首条必然是用户消息）
   if (cut === 0) return 'noop'
-  const region = messages.slice(0, cut)
+  const raw = messages.slice(0, cut)
+  // T19：送摘要模型前先机械瘦身（超长工具结果留 spill 指针、老图卸载）；
+  // 锚点索引与原话引用仍取自原文——机械抽取要全量保真，不能跟着裁剪走
+  const pruned = pruneRegion(raw, session.meta.id, prune ?? { ...DEFAULT_PRUNE_OPTIONS })
+  const region = pruned.region
 
   const result = await stream(
     route.api,
@@ -159,9 +249,10 @@ export async function compactSession(
   )
   if (result.text.trim() === '') throw new Error('摘要模型返回为空')
 
-  // 锚点从没截断的原文里抽：转写里的工具参数截到 120 字符，路径与报错会断在半截上
-  const anchors = buildAnchorIndex(renderRegion(region, null), limits.anchorChars)
-  const quotes = collectVerbatimUserMessages(region, limits.userQuoteChars)
+  // 锚点从没裁剪的原文里抽：路径与报错可能整段被裁进了 spill 文件，
+  // 锚点索引是模型找回它们的最后一根线，必须全量保真
+  const anchors = buildAnchorIndex(renderRegion(raw, null), limits.anchorChars)
+  const quotes = collectVerbatimUserMessages(raw, limits.userQuoteChars)
   const recovery = buildRecoveryFooter({ regionMessages: region.length, sessionFile: session.filePath })
   const carry = extra === undefined || extra.trim() === '' ? '' : `\n\n${extra.trim()}`
   const summary = `${SUMMARY_BANNER}\n${result.text.trim()}${carry}${quotes}${anchors}${recovery}`

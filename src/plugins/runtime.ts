@@ -283,6 +283,10 @@ export const runtimePlugin: Plugin.Object = {
         return ctx.settings.saveProvider(draft)
       },
 
+      async discoverModels(provider) {
+        return ctx.settings.discoverModels(provider)
+      },
+
       async removeProvider(name) {
         return ctx.settings.removeProvider(name)
       },

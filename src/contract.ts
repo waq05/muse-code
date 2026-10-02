@@ -947,6 +947,12 @@ export interface ProviderDraft {
   models: ProviderModelView[]
 }
 
+/**
+ * 跨会话运行状态（T21）：侧栏会话行状态点的值域。
+ * working = 那个会话正在跑（当前回合进行中，或它是干着活的队友）；awaiting-approval = 挂着等用户批。
+ */
+export type SessionRunState = 'working' | 'awaiting-approval'
+
 /** UI 每帧读取的运行时快照（useSyncExternalStore 的 getSnapshot 返回）。 */
 export interface RuntimeSnapshot {
   entries: TranscriptEntry[]
@@ -956,6 +962,11 @@ export interface RuntimeSnapshot {
   /** refreshSessions() 填充的会话列表缓存。 */
   sessions: SessionSummary[]
   sessionsLoading: boolean
+  /**
+   * 跨会话运行状态面（T21）：会话 jsonl 路径 → 运行状态，侧栏状态点的数据源。
+   * 收录当前会话（按 turnState）与正干着活的队友会话；不在场/收工的会话不出现。
+   */
+  sessionStates: Record<string, SessionRunState>
 }
 
 /**
@@ -1058,6 +1069,11 @@ export interface DscRuntime {
   runSettingAction(id: string, action: string): Promise<SettingsMutation>
   /** 模型配置全貌（设置「模型」分区数据源）。 */
   getModelConfig(): ModelConfigView
+  /**
+   * 拉一个端点线上可用的模型清单（T23，设置 → 模型里「拉取清单」用）。
+   * 连不上或应答认不得时 reject（消息可直接展示）。
+   */
+  discoverModels(provider: string): Promise<string[]>
   /** 新增或编辑端点（写 config.yaml；当前会话正在用的端点同步热更新）。 */
   saveProvider(draft: ProviderDraft): Promise<SettingsMutation>
   /** 删除端点（写 config.yaml；默认端点被删时自动改指第一个可用端点）。 */

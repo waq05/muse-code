@@ -20,7 +20,7 @@
  * @module desktop/renderer/Sidebar
  */
 import { useEffect, useMemo, useRef, useState, type DragEvent, type JSX, type KeyboardEvent } from 'react'
-import type { SessionSummary, SettingsMutation, TokenUsageView, UiPrefsView } from '@dsc/runtime/contract.js'
+import type { SessionRunState, SessionSummary, SettingsMutation, TokenUsageView, UiPrefsView } from '@dsc/runtime/contract.js'
 import iconUrl from '../../build/icon.png'
 import { confirmAction } from './components/confirm.js'
 import { toastErr, toastOk } from './components/toast.js'
@@ -95,6 +95,8 @@ export function Sidebar(props: {
   onToggleRail(): void
   /** 侧栏拖宽落盘（null = 双击复位成默认宽）。 */
   onSidebarResize(width: number | null): void
+  /** 跨会话运行状态面（T21）：会话 jsonl 路径 → 运行状态，行首状态点的数据源。 */
+  sessionStates: Record<string, SessionRunState>
 }): JSX.Element {
   /** 每组默认露出的会话条数（其余收进「展开剩余」，dsh 的 COLLAPSED_SESSION_LIMIT）。 */
   const PREVIEW_COUNT = 5
@@ -594,8 +596,17 @@ export function Sidebar(props: {
             : undefined
         }
       >
-        {/* dsh 的 16px 前导槽：现在没有会话级运行状态可画，留空占位撑住几何 */}
-        <span className="row-slot" aria-hidden />
+        {/* T21 行首状态点：working = 正在跑（当前回合或队友活着），awaiting-approval = 挂着等批 */}
+        {(() => {
+          const runState = props.sessionStates[session.id]
+          return runState === undefined ? (
+            <span className="row-slot" aria-hidden />
+          ) : (
+            <span className={`row-slot session-dot ${runState}`} data-tip={runState === 'working' ? '这个会话正在跑' : '挂着等你审批'} aria-label={runState === 'working' ? '运行中' : '等待审批'}>
+              <span className="dot" />
+            </span>
+          )
+        })()}
         {editing?.key === sKey ? (
           <input
             className="row-rename"

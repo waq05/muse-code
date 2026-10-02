@@ -14,8 +14,9 @@
  * @module dsc/plugins/compact
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { compactSession, DEFAULT_KEEP_RECENT, estimateTokens } from '../core/compact.js'
-import type { CompactLimits } from '../core/compact.js'
+import { compactSession, DEFAULT_KEEP_RECENT, DEFAULT_PRUNE_OPTIONS, estimateTokens } from '../core/compact.js'
+import type { CompactLimits, PruneOptions } from '../core/compact.js'
+import { readSpillConfig } from '../core/spill.js'
 import { DEFAULT_ANCHOR_BUDGET_CHARS, DEFAULT_USER_QUOTE_BUDGET_CHARS } from '../core/compact-anchors.js'
 import { errText } from '../adapter/transcript.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
@@ -97,6 +98,11 @@ export const compactPlugin: Plugin.Object = {
       anchorChars: config.anchorBudgetChars,
       userQuoteChars: config.userQuoteBudgetChars,
     })
+    /** T19 前置裁剪口径：spill 配置复用 spill 插件的那份（目录与上限一致，模型可照常 read）。 */
+    const prune = (): PruneOptions => ({
+      ...DEFAULT_PRUNE_OPTIONS,
+      spill: readSpillConfig(resolvePluginConfig('spill')),
+    })
 
     /** 摘要之外必须原样带过去的文本：由各功能点登记，按登记顺序拼接。 */
     const carries: Array<() => string> = []
@@ -136,6 +142,8 @@ export const compactPlugin: Plugin.Object = {
           signal ?? new AbortController().signal,
           carry(),
           limits(),
+          undefined,
+          prune(),
         )
         const compacted = outcome === 'compacted'
         // 只有真压出结果才打压缩标记：noop 时这条提示照旧发（文案不动），
@@ -154,6 +162,7 @@ export const compactPlugin: Plugin.Object = {
           carry(),
           limits(),
           true,
+          prune(),
         )
         if (outcome === 'compacted') {
           // 打上 'compaction' 类别：transcript 据此把这条通知标成压缩落点（轨迹页切区段）
@@ -184,6 +193,8 @@ export const compactPlugin: Plugin.Object = {
             new AbortController().signal,
             carry(),
             limits(),
+            undefined,
+            prune(),
           )
           const compacted = outcome === 'compacted'
           ctx.emit(

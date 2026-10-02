@@ -273,6 +273,8 @@ export const subagentPlugin: Plugin.Object = {
         teammate.error = error
       }
       remember(teammate)
+      // T21：队友状态进了快照的跨会话状态面，动一下要跟着失效
+      ctx.transcript.touch()
       const waiters = teammate.waiters.splice(0)
       for (const resolve of waiters) resolve()
     }
@@ -415,6 +417,8 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
 
       teammates.set(teammate.name, teammate)
       remember(teammate)
+      // T21：新队友一上场就是 working，快照的状态面跟着失效
+      ctx.transcript.touch()
       teammate.agent.followup(input.task)
       return teammate
     }

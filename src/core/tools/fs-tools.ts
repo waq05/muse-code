@@ -22,6 +22,19 @@ const READ_LINE_CHAR_CAP = 2_000
 /** T34：模型传 limit 时的行数硬顶（字符顶才是真防线，这个只防离谱数值）。 */
 const READ_MAX_LINES = 10_000
 
+/** T25：read 认得的图片扩展名 → MIME（data URL 前缀用）。 */
+const IMAGE_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+}
+/** 一张图进上下文的尺寸上限：6MB 原图 base64 后约 8MB，与输入框贴图同一条红线。 */
+const IMAGE_MAX_BYTES = 6 * 1024 * 1024
+
 /** 变更摘要里 diff 段最多保留多少行（超出砍尾并标 truncated，防一次整篇重写撑爆条目与日志）。 */
 const CHANGE_DIFF_LINE_LIMIT = 800
 
@@ -75,7 +88,8 @@ export function createReadTool(lineLimit = READ_DEFAULT_LINE_LIMIT): ToolEntry {
   return {
     name: 'read',
     description:
-      '读取文本文件内容，输出「行号 + 制表符 + 原文」，可指定起始行与行数。' +
+      '读取文件内容。文本文件输出「行号 + 制表符 + 原文」，可指定起始行与行数；' +
+      '图片文件（png/jpg/gif/webp/bmp/svg）直接作为图片附件加载，用视觉看图即可，不用转 base64。' +
       '读代码、配置、日志一律用它，不要用 bash 跑 cat/head/tail——那样拿不到行号，也没法续读。' +
       '要整写覆盖一个已存在的文件之前必须先读过它，本工具会记下你读过哪个版本。',
     parameters: {
@@ -92,6 +106,21 @@ export function createReadTool(lineLimit = READ_DEFAULT_LINE_LIMIT): ToolEntry {
       const file = abs(ctx.cwd, args.path)
       const blocked = readBlockReason(file)
       if (blocked !== null) throw new Error(blocked)
+      // T25：图片按扩展名分流——整读成 data URL 走图片附件（模型没勾照片输入时
+      // 请求组装的 dropImageParts 投影会兜底换成说明，这里不用关心模态）
+      const mime = IMAGE_MIME[file.slice(file.lastIndexOf('.') + 1).toLowerCase()]
+      if (mime !== undefined) {
+        const stat = await fs.stat(file)
+        if (stat.size > IMAGE_MAX_BYTES) {
+          throw new Error(`这张图有 ${Math.round(stat.size / 1024 / 1024)}MB，超过 6MB 上限；先压缩或缩小再看`)
+        }
+        const bytes = await fs.readFile(file)
+        noteRead(file)
+        return {
+          text: `已加载图片 ${file}（${mime}，${stat.size} 字节），图在附件里。`,
+          images: [`data:${mime};base64,${bytes.toString('base64')}`],
+        }
+      }
       const raw = await fs.readFile(file, 'utf8')
       noteRead(file)
       // T34：二进制（含 NUL 字节）不硬灌——乱码只会烧上下文，给一句明确指引

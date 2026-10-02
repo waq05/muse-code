@@ -82,6 +82,7 @@ export const INVOKABLE_METHODS = [
   'runSettingAction',
   'getModelConfig',
   'saveProvider',
+  'discoverModels',
   'removeProvider',
   'setProviderKey',
   'setDefaultModel',

@@ -707,6 +707,11 @@ export interface SettingsService {
   /** 模型配置全貌（读 config.yaml，缺 key 的端点也在列表里）。 */
   modelConfig(): ModelConfigView
   saveProvider(draft: ProviderDraft): SettingsMutation
+  /**
+   * 拉一个端点线上可用的模型清单（T23）：GET {baseUrl}/models，OpenAI / ollama 形状都认。
+   * 端点不存在、连不上或应答认不得时抛错（消息可直接展示）。
+   */
+  discoverModels(provider: string): Promise<string[]>
   removeProvider(name: string): SettingsMutation
   setProviderKey(name: string, apiKey: string | null): SettingsMutation
   /** 写默认端点/模型，并对当前会话立即生效。 */

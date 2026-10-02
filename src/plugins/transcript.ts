@@ -124,6 +124,19 @@ export const transcriptPlugin: Plugin.Object = {
                 ? 'working'
                 : 'thinking'
               : 'idle'
+        // T21 跨会话状态面：当前会话按 turnState，正干着活的队友会话按名册。
+        // 队友状态迁移时 subagent 会 touch 快照，这里现读名单不需要轮询。
+        const sessionStates: RuntimeSnapshot['sessionStates'] = {}
+        if (turnState === 'working' || turnState === 'thinking' || turnState === 'awaiting-approval') {
+          sessionStates[ctx.session.current().filePath] =
+            turnState === 'awaiting-approval' ? 'awaiting-approval' : 'working'
+        }
+        const team = ctx.get('team')
+        if (team !== undefined) {
+          for (const mate of team.list()) {
+            if (mate.state === 'working' && mate.file !== '') sessionStates[mate.file] = 'working'
+          }
+        }
         const built: RuntimeSnapshot = {
           entries: [...transcript.entries, ...transcript.liveEntries()],
           status: {
@@ -136,6 +149,7 @@ export const transcriptPlugin: Plugin.Object = {
           surfaces,
           sessions: ctx.session.sessions,
           sessionsLoading: ctx.session.loading,
+          sessionStates,
         }
         snapshot = built
         return built

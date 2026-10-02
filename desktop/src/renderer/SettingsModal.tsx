@@ -13,6 +13,9 @@
  */
 import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react'
 import {
+  DEFAULT_EFFORT_MAP,
+  DEFAULT_THINKING_LEVELS,
+  DEFAULT_THINKING_PARAM,
   EFFORT_WIRE_HINT,
   MODALITIES,
   MODALITY_LABELS,
@@ -760,12 +763,32 @@ function pairShare(result: SettingsMutation): PairShareData | null {
   return data
 }
 
+/**
+ * 线上拉到的模型 id 转成一条端点模型：能力全部按 config.yaml 的缺省口径
+ * （128k 窗口 / 8192 输出 / 四档 thinking / 只吃文本），与 core/config 的缺省一致。
+ */
+function defaultDiscoveredModel(id: string): ProviderModelView {
+  return {
+    id,
+    name: id,
+    contextWindow: 128_000,
+    maxTokens: 8_192,
+    thinkingLevels: [...DEFAULT_THINKING_LEVELS],
+    thinkingParam: DEFAULT_THINKING_PARAM,
+    effortMap: { ...DEFAULT_EFFORT_MAP },
+    modalities: ['text'],
+  }
+}
+
 /** 模型分区：端点增删改、API key 写入、默认模型。 */
 function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
   const [config, setConfig] = useState<ModelConfigView | null>(null)
   const [draft, setDraft] = useState<ProviderDraft | null>(null)
   const [keyFor, setKeyFor] = useState<ProviderView | null>(null)
   const [keyValue, setKeyValue] = useState('')
+  // T23 在线模型发现：拉到的清单按端点记，逐个「+」进端点（能力走配置缺省，加完可再编辑）
+  const [discovered, setDiscovered] = useState<{ provider: string; models: string[] } | null>(null)
+  const [discovering, setDiscovering] = useState(false)
 
   /** 拉一次模型配置；失败说清原因，保留上一次读到的数据。 */
   const reload = (): void => {
@@ -892,6 +915,21 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
               </button>
               <button
                 className="text-btn"
+                data-tip="从端点拉取线上可用模型清单"
+                disabled={discovering}
+                onClick={() => {
+                  setDiscovering(true)
+                  void props.proxy
+                    .discoverModels(provider.name)
+                    .then((models) => setDiscovered({ provider: provider.name, models }))
+                    .catch((error: unknown) => toastErr(`拉取失败：${text(error)}`))
+                    .finally(() => setDiscovering(false))
+                }}
+              >
+                {discovering ? '拉取中…' : '拉取清单'}
+              </button>
+              <button
+                className="text-btn"
                 data-tip="编辑这个端点"
                 onClick={(event) => {
                   setDraft({
@@ -986,6 +1024,48 @@ function ModelsPanel(props: { proxy: RuntimeProxy }): JSX.Element {
               <button className="text-btn" onClick={() => setKeyFor(null)}>
                 取消
               </button>
+            </div>
+          )}
+
+          {/* T23：拉取到的线上模型清单——「+」把模型按缺省能力加进端点，已有 id 灰掉 */}
+          {discovered !== null && discovered.provider === provider.name && (
+            <div className="provider-discovered">
+              <div className="discovered-head">
+                <span>
+                  线上有 {discovered.models.length} 个模型。点「+」按缺省能力加进端点
+                  （128k 窗口 / 四档思考 / 只吃文本，加完可在下方模型行里改）。
+                </span>
+                <button className="text-btn" onClick={() => setDiscovered(null)}>收起</button>
+              </div>
+              <div className="discovered-list">
+                {discovered.models.map((id) => {
+                  const exists = provider.models.some((model) => model.id === id)
+                  return (
+                    <span className="discovered-item" key={id}>
+                      <span className="mono">{id}</span>
+                      <button
+                        className="text-btn"
+                        disabled={exists}
+                        data-tip={exists ? '已经在端点里' : '按缺省能力加进端点'}
+                        onClick={() => {
+                          write(
+                            props.proxy.saveProvider({
+                              oldName: provider.name,
+                              name: provider.name,
+                              displayName: provider.displayName,
+                              baseUrl: provider.baseUrl,
+                              models: [...provider.models, defaultDiscoveredModel(id)],
+                            }),
+                            `已把 ${id} 加进端点`,
+                          )
+                        }}
+                      >
+                        {exists ? '已有' : '+'}
+                      </button>
+                    </span>
+                  )
+                })}
+              </div>
             </div>
           )}
 
