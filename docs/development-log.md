@@ -1302,3 +1302,5 @@ T15（对标 dsh tool-jobs）：长命令不占住回合。bash 工具新增 `ru
 **验证**：desktop typecheck + build 全绿、fold-check 220/220；ui-start 用例加 `centeredOk` 判定（welcome 上方留白 vs composer 下方留白差 ≤32px 且留白 >40px）实机 210/220 全绿（差值即 composer-zone 自身 10px 底 padding）；目检截图确认整组落在版心正中；真实 ~/.dsc 跑前跑后 171 文件聚合 SHA256 一致（零污染）。
 
 **诚实边界**：带消息的会话、轨迹页、队友记录的布局不动（那些分支不挂居中类）；第一条消息发出后 composer 从居中组落回底部，行为与 dsh 的 blank-draft → conversation 切换一致，探针未单独取证（同一容器的两个 class 分支，逻辑已由 centeredOk 覆盖一半）。
+
+**Mimosa 重扫密封（0.6.36）**：scanId `scan-2026-10-02T15-56-56.056Z-530f870f93a8`（seal `sha256:9a0879fc…`），138 finding、src 面 13 项与 0.6.35 密封结论逐条一致（本轮增量仅 UI 布局，无安全面变化）；依赖 298 包 0 命中。另：本轮首次出现提交门 L3 硬拦——拦的全是 `desktop/runtime-staging/dsc-core`（**未入库**的本地构建产物，prepare-runtime 打包时再生）里 src 已定性 finding 的编译镜像；提交文件本身零 finding，重试走 enobufs 兼容路径通过。若要消除这种「构建产物镜像反复触发门」的摩擦，可考虑让扫描范围排除 `desktop/runtime-staging/`（regenerable 构建输出，非源码）——留给用户决定。
