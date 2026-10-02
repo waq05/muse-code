@@ -513,7 +513,12 @@ export function App(): JSX.Element {
       void proxy.runCommand(text)
       return
     }
-    proxy.submit(text, images)
+    // 新会话在首条消息落盘之前不留文件，侧栏看不见它：submit 的宿主处理器里同步
+    // appendUser，RPC 回来时文件已存在，这时刷一次列表才有效（分叉路径同款坑，见 ChatView）
+    proxy
+      .submit(text, images)
+      .then(() => proxy.refreshSessions())
+      .catch(() => {})
   }
 
   if (hostDown !== null) {

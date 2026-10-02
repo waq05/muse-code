@@ -1322,3 +1322,22 @@ T15（对标 dsh tool-jobs）：长命令不占住回合。bash 工具新增 `ru
 **Mimosa 排除配置的探索结论（用户「算了先这样」）**：`security-policy.json` 的 `threatModel.exclusions` 是威胁模型字段不是扫描范围（试配 `desktop/runtime-staging` 后 138→211，把 schedule/renderer 等更多区域翻出来）；扫描器不尊重 .gitignore（`shots/` 在 ignore 里照样被扫）；引擎为加密包无可见排除面。实验产生的策略文件已删除恢复未配置基线。
 
 **验证**：根 build + desktop build + 双侧 typecheck 全绿；CLI 探针 21 个零失败——batch-a 22、batch-b 12、batch-c 13、batch-d 32、batch-e 33（退出阶段 libuv 噪声同前）、compact 53、order、kernel-boot、integration、approval-floor 95、mcp、file-review 59、file-review-kernel 9、dock-model、dsh-compat 15、llm-adapter 18、memory、remote-server 12、lsp 167、browser 210、tool-search、session-search、win-net-setup 160、self-improve 181、win-token-smoke 19、model-caps、preset；桌面 fold-check 220。产物：图标 chunk 消失、xterm 独立懒 chunk 404KB。
+
+## 阶段 57：V1 实机走查回销——假模型端点全链走查揪出并修掉两个侧栏缓存 bug（0.6.38）
+
+V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 落盘提示）原计划等 deepseek 限流（2026-10-06）解除后走查；本轮不等了——**本地假 OpenAI 兼容端点**驱动真 UI 把三条链路端到端跑通（`desktop/shots/v1-fake-server.mjs` + `v1-walkthrough.ps1`，gitignored）。假服务按请求形状分三类应答：主对话首轮回 `write` 工具调用、工具结果回传轮回纯文本收尾、system 提示词含「会话标题生成器」回短标题（T16 的标题小请求走同一 baseUrl，可识别）；每个应答延迟 800ms 让「working」状态点窗口长到可采样；请求形状追加快照写入 `ui-home/e2e-server-log.jsonl` 供对账。隔离照既有规矩：HOME/USERPROFILE 指到 `shots/ui-home`（ui-seed 种子），真实 `~/.dsc` 跑前跑后 179 文件聚合 SHA256 逐轮一致。
+
+**走查揪出并修掉两个真 bug**（侧栏会话列表缓存从来不认新东西）：
+1. `App.tsx handleSubmit`：正常发消息路径 `proxy.submit` 后**从不刷新会话列表**——新会话首条消息落盘后侧栏不显示它，要等打开会话选择器/分叉/重启。分叉路径（ChatView）早就刷了并注释了原因（「新会话在第一条消息落盘之前不留文件」），正常路径漏了。修法：submit 的宿主处理器里同步 `appendUser`（RPC 返回时文件已在），`.then(() => proxy.refreshSessions())`。
+2. `session-title.ts`：autoTitle 写进 meta 后只 emit `dsc/changed`，**列表缓存不重扫**——侧栏标题停在「首条消息截断」，自动标题永远显示不出来。修法：改调 `ctx.session.refresh()`（重扫 + 广播）；session 测试桩可能没有 refresh，有就刷、没有退回 emit（batch-a 探针契约两全）。
+
+**走查记录的三个机制事实**（后续排查少走弯路）：
+- **审批卡要满足三条件才弹**：权限档不能是 readonly（仅查看档写/执行**当场拒、不弹卡**——首轮走查的 write 就这么被拒的）；auto-edit 档下工作区内写自动放行（不弹卡）；工作区外写还**会被沙箱先拦**（档位 workspace-write 的 outside-writable-roots 规则当场拒，到不了审批层）——必须模型在同一次调用里带成对的 `sandbox_permissions` + `justification` 一次性升权请求才转审批卡。走查用 auto-edit + 写真 %TEMP% + `danger-full-access` 升权请求凑齐三条件，批准后文件真实落盘。
+- **/export 等命令的 notice 不是 toast**：`runCommand` 的 ui.notice 走 `transcript.system`——线程里居中的系统行（`.entry-system`），右下角 toast 恒空。走查判定改为找系统行。
+- **Electron 的 `app.getPath('home')` 不吃 USERPROFILE/HOME 环境变量覆盖**：桌面壳读的是**真实** `~/.dsc/desktop.json`（lastCwd/recentCwds）——本轮只读未写（真实 .dsc 指纹一致证明）；核心子进程的 `os.homedir()` 才吃 env 覆盖。侧栏那两个「幽灵工作区」（waq/System32 分组）就是真实 desktop.json 的 recentCwds 经这条路径读进来的，非本次引入。
+
+**存量探针修复（6 个，git stash + 基线重建对照确认与本次改动无关）**：batch-e 两处——fake 市场服务的 JSON `writeHead` 提到了分支外，拉脚本文件时头已发过再 writeHead 当场抛 ERR_HTTP_HEADERS_SENT 带走进程（content-type 按分支各写一次）；收尾 `process.exit` 撞还在关闭中的句柄，Windows libuv 断言自杀 exit 127（改 await close + `process.exitCode` + unref 看门狗 500ms 兜底）。lifecycle-hooks——探针桩还停在旧 prompt API（transformMessages），补 `registerProjection` 与 `appendNote`（00c6a6f 起插件改用命名纯投影与会话备注）。modes-security——`OPTIONAL_PLUGINS` 白名单补 `compact`/`review`（commands.ts 两处 ctx.get 都有 undefined 守卫）。preset——标准档可见工具 15→19（skill/todo_write/exit_plan_mode/ask_user 等后续版本入列）。storage——T30 起新会话创建即持写租约（lockfile acquireLock 落 `.lock` 时就 mkdir），断言从「目录都不建」改为「目录里只有 .lock、无 .jsonl 本体」。team——出厂角色三→四（reviewer 审查队友入列）。
+
+**验证**：走查两项判定全绿复跑两轮——seen=[working, awaiting-approval]、审批卡工具=write、批准后状态点消失+回复出现、侧栏出「E2E 状态点导出走查」自动标题、/export 出「已导出 4 条消息 → …」系统行且 675 字节 markdown 落盘、假端点请求序 tool-call→after-tool→title；探测文件（升权审批后）落真实 %TEMP% 并验内容。探针：desktop 4 + 根目录 38 全部零失败（含修好的 6 个；win-token-smoke 19、kernel-boot 亦绿），fold-check 220。根 build + desktop build 绿。
+
+**诚实边界**：走查用假模型——模型内容质量、真实计费/限流行为不在覆盖面（限流解除后可用真模型再目检一轮，非阻塞）；桌面壳读真实 desktop.json 的隔离缝隙只读未写，未改行为（改它要动 Electron home 语义，收益低）；`更新检查 URL` 维持占位空串，等发布后填（用户已确认）。

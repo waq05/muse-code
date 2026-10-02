@@ -100,7 +100,11 @@ export const sessionTitlePlugin: Plugin.Object = {
         const latest = readSessionMeta()[id]
         if (latest?.title !== undefined || latest?.autoTitle !== undefined) return
         patchSessionMeta(id, { autoTitle: title })
-        ctx.emit('dsc/changed')
+        // 列表缓存里这份会话的摘要还是「首条消息截断」，不刷侧栏永远显示旧标题：
+        // refresh() 重扫缓存并广播 dsc/changed，快照推下去侧栏立即换新标题。
+        // 测试桩的 session 可能没有 refresh——退回直接广播 changed。
+        if (typeof ctx.session.refresh === 'function') await ctx.session.refresh()
+        else ctx.emit('dsc/changed')
       } catch {
         // 静默：截断标题兜底
       } finally {

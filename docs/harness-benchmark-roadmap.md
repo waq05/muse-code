@@ -488,7 +488,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 | T52 checkpoint / rewind（§7.3 升出） | codex Esc-Esc 回退重编辑、hermes shadow git；与 T51 同族，设计轮合并做 | 同 T51 |
 | T53 对外 SDK / 协议面（§7.3 升出） | dsh SDK（TS+Python）、codex app-server v2 对标；host-stdio 协议 v2 稳定化 + 客户端库 | 有真实集成方需求时排期优先级才升 |
 | T54 SSH 远程执行（§7.3 升出） | dsh `packages/ssh/*` 对标：远程宿主跑命令与会话；手机遥控场景的延伸 | 安全面（远程执行授权模型）先于实现 |
-| V1 实机走查欠账（非功能项） | 侧栏状态点 working/waiting 两档、T16 会话标题自动生成、/export 落盘提示——逻辑均有单测/探针，缺真模型轮的实机目检 | deepseek 限流 2026-10-06 解除后补走查并回销 |
+| ~~V1 实机走查欠账~~（已回销 2026-10-03，0.6.38） | ✅ 不等 deepseek 限流：本地假 OpenAI 兼容端点（按请求形状应答工具调用/收尾/标题）驱动真 UI 全链走查——状态点 working→awaiting-approval→消失、T16 自动标题上侧栏、/export 提示与落盘全部实见（desktop/shots/v1-walkthrough.ps1，gitignored）。走查揪出并修掉两个真 bug：新会话提交后侧栏列表不刷新（App.tsx）、autoTitle 写入后列表缓存不刷（session-title 插件） | 权限档要点：readonly 档不弹卡直接拒、auto-edit 档工作区外写也要带 sandbox_permissions 升权请求才转审批卡（沙箱先于审批拦） |
 
 §7.3 中被升出的三行（checkpoint/rewind、对外 SDK、SSH 远程执行）保留原文并在行内标注「已升出（T52/T53/T54）」；其余 P3 行维持「登记免遗忘」不变。
 
