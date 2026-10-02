@@ -8,6 +8,7 @@
 | 代码怎么分层、扩展点清单、契约层 | [development.md](development.md) |
 | 为什么长成这样、踩过哪些坑 | [development-log.md](development-log.md) |
 | **对标三家的差距、可移植项、落地顺序** | **本文档** |
+| 三家（dsh / codex / Muse Code）功能清单全文（差距的证据底料） | [peer-feature-inventory.md](peer-feature-inventory.md) |
 
 本文档只读三家源码得出，未改动任何一家代码。引用一律给到 `文件:行号`；三家是外部项目，用完整路径，dsc 自己用仓库相对路径。
 
@@ -32,7 +33,7 @@
 
 紧随其后：MCP 客户端与 Tool Search 要绑在一起上（否则 schema 吃掉上下文）。「自我改进闭环」「OS 级沙箱」是独立路线，各自要先立前置条件，不进快赢清单。
 
-这三件连同紧随其后的 spill、生命周期钩子、MCP + Tool Search 都已落地，逐项状态与验收证据见 §5.1。
+这三件连同紧随其后的 spill、生命周期钩子、MCP + Tool Search 都已落地，逐项状态与验收证据见 §5.1。**2026-10-02 又按三家源码清单全面重梳了一轮差距**（LSP、浏览器、定时任务、PTC、沙箱、diff 审查链在此之后陆续落地，旧矩阵曾把它们还标成缺失），修订后的矩阵见 §3，新登记的差距 T14–T28 见 §7。
 
 ---
 
@@ -58,26 +59,37 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:71`，`KERNEL_API_VERSION 
 
 图例：● 已具备　◐ 部分或受限　○ 缺失　⊘ 有意不做
 
+**2026-10-02 修订**：把第五轮（沙箱 / LSP / 浏览器 / 定时任务 / PTC）与 0.6.24–0.6.26（diff 审查链）落地后的现状刷进来；hermes 本轮未重读源码，新增行的 hermes 列一律标「—」待核对，旧行的 hermes 列沿用当年结论。
+
 | 能力 | dsc | codex | hermes | dsh | dsc 的判断 |
 | --- | :--: | :--: | :--: | :--: | --- |
 | ReAct 循环 / 流式 / 审批 | ● | ● | ● | ● | 持平，够个人用 |
 | 会话 JSONL 落盘 / 重放 | ● | ● | ● | ● | 重放折叠已修（T1），见 §3.1 |
-| 会话区过程折叠（三层 + 四档） | ● | ◐ | ◐ | ● | 已对齐 dsh（T11），见 §3.2 |
-| OS 级沙箱 | ⊘ | ● | ○ | ● | 个人版取舍；要做得单独立项 |
-| MCP 客户端 | ● | ● | ● | ● | 已补（T5），安全层与围栏复用现成的 |
+| 会话区过程折叠（三层 + 四档） | ● | ◐ | ◐ | ● | 已对齐 dsh（T13），见 §3.2 |
+| 沙箱 | ◐ | ● | ○ | ● | 已落地策略级（T9）：三档模式 + 可写根白名单 + 命令前缀策略 + 一次性升权 + docker 容器后端；OS 原生隔离（Seatbelt / Landlock / Windows 受限令牌）仍是有意不做 |
+| MCP 客户端 | ● | ● | ● | ● | 已补（T5），安全层与围栏复用现成的；elicitation / resources 还缺（T24） |
 | 长期记忆 | ● | ● | ● | ◐ | 已内核化（`src/plugins/memory.ts`） |
-| 跨会话全文检索 | ● | ◐ | ● | ● | 已补（T6），零依赖倒排索引，中文按 bigram |
+| 跨会话全文检索 | ● | ◐ | ● | ● | 已补（T6），零依赖倒排索引，中文按 1+2-gram |
 | 工具渐进披露 Tool Search | ● | ◐ | ● | ◐ | 已补（T5），与 MCP 同批上 |
-| LSP 代码智能 | ○ | ◐ | ○ | ● | 可选，编码体验加成 |
-| 真浏览器自动化（DOM 级） | ○ | ◐ | ● | ● | dsc 只有截图级 computer-use |
-| 生命周期 hooks | ● | ● | ● | ● | 已补（T4）：安全钩子（四个 dsc 事件）先有，这轮加了 codex 十二事件名的独立插件 |
-| 定时任务 cron | ○ | ◐ | ● | ● | 该补，能自触发 |
-| PTC（模型写代码调工具） | ○ | ● | ● | ● | 高价值，但与沙箱强绑定 |
-| 会话 checkpoint / rewind | ⊘ | ● | ● | ● | 有意不做；值得重新评估 |
+| LSP 代码智能 | ● | ◐ | ○ | ● | 已落地（T12），含写后新引入报错注入 |
+| 真浏览器自动化（DOM 级） | ● | ◐ | ● | ● | 已落地（T12，CDP 无障碍树 + ref 代际校验） |
+| 生命周期 hooks | ● | ● | ● | ● | 已补（T4）：安全钩子（四个 dsc 事件）+ codex 十二事件名独立插件 |
+| 定时任务 cron | ● | ◐ | ● | ● | 已落地（T8，六种选择器 + pre-dispatch 校验 + catch-up 补投） |
+| PTC（模型写代码调工具） | ● | ● | ● | ● | 已落地；同进程 node:vm，隔离弱于 dsh 的子进程运行时（有意取舍，见 development-log 阶段 33） |
+| 会话 checkpoint / rewind | ⊘ | ● | ● | ● | 有意不做；与 T26（部分行接受）同族，见 §7.2 |
 | 子代理级联派生 | ⊘ | ◐ | ● | ● | 有意限 1 层，见 §6 |
 | 细粒度执行策略 | ● | ● | ● | ● | 已补（T2）：四档之外加了灾难地板、命令白名单与 deny 黑名单 |
 | 大输出溢出 spill | ● | ◐ | ◐ | ● | 已补（T3） |
 | 可观测性（otel） | ○ | ● | ◐ | ● | 个人版低优先 |
+| diff 审查链（轮尾聚合卡 / 右栏面板 / 悬停预览 / intended diff / 审批内嵌 / git 页签） | ● | ◐ | — | ● | 0.6.24–0.6.26 三连批补齐（development-log 阶段 42–44）；codex 的形态是 apply_patch diff 预览 + `/diff`，无轮尾聚合卡 |
+| /review 审查命令 | ◐ | ● | — | ○ | dsc v1 发审查轮回复即意见；codex 有独立 review 子代理与结构化 findings（T18） |
+| 输入端 @ 文件提及 | ○ | ● | — | ● | 输出端内联 chip 已有；输入端补全缺（T14） |
+| bash 后台任务 | ○ | ◐ | — | ● | bash 超长任务目前只能等或砍（T15） |
+| 会话标题自动生成 | ○ | ◐ | — | ● | 现靠首条消息截断 + 手动改名（T16） |
+| 上下文占用表 / /status | ○ | ● | — | ● | 用量统计在设置页，会话内看不到占用（T17） |
+| 会话导出 | ○ | ● | — | ● | （T22） |
+| 侧栏会话运行状态点 | ○ | ◐ | — | ● | `Sidebar.tsx:671` 留空占位（T21） |
+| 手机 / 移动端遥控 | ● | ◐ | ◐ | ◐ | **dsc 独有优势**：PWA + Web Push/Webhook + 二维码配对 |
 
 ### 3.1 压缩重放（已修，见 §5.1）
 
@@ -281,11 +293,109 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 
 ---
 
+## 7. 2026-10-02 全面修订：差距登记（T14–T28）
+
+方法：三路并行源码梳理（dsh、codex、Muse Code 各出一份按能力域分组的功能清单），清单全文与逐条出处见 [peer-feature-inventory.md](peer-feature-inventory.md)；hermes 未重读。编号延续 §4/§5.1 的 T13 之后。每条给出对标出处、dsc 现状、落点与动不动内核；优先级按「天天用得上 → 锦上添花」排。
+
+### 7.1 高价值差距（P1，建议下一批按序做）
+
+#### T14. 输入端 @ 文件提及补全（P1，不动内核）
+- **是什么**：输入框敲 `@` 弹出工作区文件路径候选，选中后按路径插进正文。dsh 有 `@file`（`context/file-reference-local` + `ui-reference` 统一选择器）；codex 有 `/mention` + 文件搜索弹窗（`file-search` crate）。
+- **dsc 现状**：输入端只有 `/` 命令补全（`src/core/commands-completion.ts`）；**输出端**的内联文件 chip 与 hover diff 已就位（0.6.25/26），`matchMentionPath` 已能把正文里的路径提及映射到改动卡——识别半边是现成的，缺的是输入半边。
+- **落点**：渲染层 `Composer.tsx` 监听 `@` 触发候选面板；路径候选数据用 dock 已有的 `fs-list` 操作（或加一个 host 方法做前缀匹配，二选一先量成本）。TUI 侧同理可后补。
+- **验收**：`@` 后敲两三个字符出候选、键盘可选；选中的路径在发出后能被改动卡与正文 chip 识别。
+
+#### T15. bash 后台任务（P1，动内核或新官方插件）
+- **是什么**：长命令（构建 / 测试 / 起服务器）不占住回合：`bash` 工具加 `run_in_background` 参数立即返回，配 `job_output` / `job_list` / `job_kill` 三个工具（dsh `jobs/tool-jobs` 三工具 + 完成通知经 `agent.inject()` 注入的形态）。dsh 还有一条同族姿势：**超时不 kill 而是转后台 job**。
+- **dsc 现状**：`src/core/tools/bash.ts:20-27` 注释自认「更长的活该去后台跑」但未实现；桌面交互终端面板是人用的，模型够不着。
+- **落点**：内核侧加一张后台作业表（进程句柄 + 输出环形缓冲），三个新工具走 `ctx.tools.register`；完成事件走 `agent.followup` 通知。
+- **风险**：作业生命周期归谁管（会话结束收不收）、输出上限（复用 spill）。**验收**：模型发一个 10 分钟的构建立即拿到 job id，稍后 `job_output` 能读到增量，完成时收到通知。
+
+#### T16. 会话标题自动生成（P1，不动内核）
+- **是什么**：首回合结束后用一个小请求生成标题。dsh 的 `session-title` 包：首条消息回退词 / LLM 策略（首条 prompt 或全部 prompts 两档）/ 用户改名 + `refresh()` 重生成，标题永不进模型输入。
+- **dsc 现状**：标题 = 首条 user 消息截断，只有手动改名。
+- **落点**：首回合 `turn/end` 后经 `agent.followup` 或独立小请求生成，写 `sessions/meta.json`（sidecar 已有，不污染重放）；用户改过名的（meta 里有自定义标题）永不覆盖。
+- **验收**：新会话第一轮跑完后侧栏标题变成概括词；手动改名后再跑轮不被覆盖。
+
+#### T17. 上下文占用表 + /status（P1，不动内核）
+- **是什么**：会话内能看见「当前上下文用了多少、构成是什么」。dsh：`token-meter` replay 确定性测量（tokenUsage/contextPressure/contextBreakdown，零模型调用）+ UI ContextMeter；codex：`/status` 展示 thread token 用量与美元成本估算。
+- **dsc 现状**：compact 有自动阈值（80%×contextWindow）但触发前用户看不见；用量统计（usage.jsonl 聚合）只在设置页。
+- **落点**：dsc 已有 CJK 感知的 token 估算器（compact 在用），把它包成一个 `/status` 命令 + 右栏/侧栏占用卡（消息数、估算 token、占窗口百分比、compact 剩余余量）。
+- **验收**：长会话里 `/status` 能看到占用与距离自动压缩还剩多少；数字与 compact 实际触发点同源。
+
+#### T18. /review 升级：独立审查子代理 + 结构化 findings（P2 偏高，不动内核）
+- **是什么**：审查在隔离的子会话里跑，产出结构化发现而不是一段散文。codex：`core/src/session/review.rs` 独立 review 线程（独立 review_model、禁用 web_search/view_image），范围 UncommittedChanges / BaseBranch / Commit / 自定义，输出 `findings[title/body/confidence/priority/code_location(文件+行区间)]` + 总体正确性。
+- **dsc 现状**：`/review` v1（0.6.26）在当前会话发一条审查消息，回复即意见。
+- **落点**：subagent 插件派一个只读队友（审批意愿取只读交集，天然安全）；约定 findings 输出格式（JSON 或固定分节），渲染层按条渲染 + 行号跳转。v1 的消息组装与 git 收集（`src/core/git-info.ts`）全部复用。
+- **验收**：`/review` 后出现独立审查轮（不打断当前会话上下文），findings 逐条带文件行号。
+
+#### T19. 压缩前置裁剪 + 图像卸载（P1，不动内核）
+- **是什么**：压缩前先做一遍机械瘦身再请模型摘要。dsh：`compaction-tool-result-pruner`（超限工具输出先裁掉，留指针）、`compaction-image-offload`（历史图像按预算卸载）。收益：摘要输入更小（省 token）、摘要质量更高（不被日志噪音淹没）。
+- **dsc 现状**：compact 直接对全量消息摘要；`drop-images` 投影只在模型不支持图片时兜底换图。
+- **落点**：`src/core/compact.ts` 摘要前加一个前置 pass——超长 tool 结果替换为「已裁剪 + spill 路径」（spill 落盘与续读写法全是现成的）；图片按预算卸载留占位说明。
+- **验收**：同一段超长会话，裁剪后压缩的摘要输入 token 明显下降且关键事实（锚点索引断言）不丢。
+
+### 7.2 中优先级（P2）
+
+| 编号 | 差距 | 对标出处 | dsc 现状与落点 |
+| --- | --- | --- | --- |
+| T20 | 模型可用的持久终端工具 | dsh `tool-terminal` 六工具（open/read/send/signal/close/list，PTY、readiness 检测） | bash 是一次性管道（无 tty，全屏程序跑不了）；桌面终端面板只给人用。落点：新工具包，PTY 需要 node-pty 之类依赖（打包要过 prepare-runtime 依赖闭包），或先做「多页签管道会话 + 读写分离」的降级版 |
+| T21 | 侧栏会话运行状态点 + 待审批圆点 | dsh ui-workspace 待处理交互警告圆点、定时任务时钟标记 | 快照里已有会话状态灯（awaiting-approval/working），但那是「当前会话」的；侧栏要的是跨会话一览。`Sidebar.tsx:671` 留空占位就是等它。落点：快照加每会话状态面（阶段 40 边界①已登记） |
+| T22 | 会话导出 | dsh `/export` ZIP（`session-log-export`）；codex `/export` markdown | 无。落点：渲染层把当前会话条目序列化成 markdown 落盘即可（数据全在内存），成本极低 |
+| T23 | 在线模型发现 | dsh 设置页「Fetch available models」 | 模型清单手填。落点：`GET {baseURL}/models` 拉取填充，host-stdio 加一个方法（走 §5 三步） |
+| T24 | MCP elicitation + resources + prompts | dsh `mcp-resources` 三工具；codex elicitation + MCP resources + dynamic tools（prompts→工具） | mcp.ts 只收工具。落点：MCP 客户端扩展三类能力；elicitation 要接审批卡通道 |
+| T25 | read 工具支持图片文件 | dsh `read_image`；codex `view_image` | read 只出文本（`src/core/tools/fs-tools.ts` 无 mime 分流）；模型看图只能靠用户贴图或 computer-use 截屏。落点：read 按扩展名分流，图片走 base64 image_part（模型 modalities 含 image 时） |
+| T26 | diff 部分行接受 / 已执行改动回滚 | codex apply_patch 语义 + backtrack；hermes checkpoint writer-ledger（回滚保手改、只覆盖 agent 改动） | 审查面板纯只读，拒绝只能发生在审批前。**前置**：要先有「已执行改动的回滚语义」（shadow git / 反向 patch），与 checkpoint/rewind 同族——先单独立项评估，别顺手做 |
+| T27 | 检查更新落地 | codex `codex update` 自更新 + 启动 update prompt；dsh 强制更新流 | 版本比较与 GitHub Releases 解析已备，`UPDATE_CHECK_URL` 还是空串占位（发布后填）。下载与安装（electron-updater 或手动换包）未做 |
+| T28 | 外部插件远程安装 | dsh plugin_manager 安装 bundle；codex 插件 marketplace（add/remove/upgrade/policy） | `plugin_manager` 只收本地 .js。落点：照技能市场的两类源（GitHub 目录/索引 JSON）拉插件包，装前过审批 |
+
+### 7.3 低优先（P3，登记免遗忘，个人版暂不做）
+
+| 项 | 对标 | 不做的理由 |
+| --- | --- | --- |
+| checkpoint / rewind / backtrack | codex Esc-Esc 回退重编辑；hermes shadow git | 与 T26 同族，动内核，等真实痛点 |
+| 轮中途插话 steering / 消息排队 | dsh steering inbox；codex turn steer + `codex queue` | 无 steering 数据模型，已裁定不做（§3.2 有意不做清单） |
+| 对外 SDK / 协议面 | dsh SDK（TS+Python）；codex app-server v2 | 个人版没有第三方集成方；host-stdio 协议 v2 内部够用 |
+| SSH 远程执行 | dsh `packages/ssh/*` | 手机遥控已覆盖「人不在电脑前」的主场景 |
+| 消息评分反馈 | dsh Like/Dislike + `/feedback` | 无消费方（dsh 的评分喂官方日志上传，dsc 没有这条链路） |
+| 快捷键自定义 / Vim 模式 | codex keymap + Vim；dsh shortcuts 持久化 + 冲突检测 | 快捷键只有 8 个，冲突面小 |
+| GitHub PR 审查 webhook | dsh `webhook-github` 自动建只读审查会话 | 个人版没有 CI 场景 |
+| OAuth 账号 / OS keyring | codex login PKCE + keyring-store；dsh DeepSeek 账号 | dsc 用环境变量/credentials.yaml，个人机器可接受 |
+| i18n 英文界面 | dsh zh/en 双语 + 强制字典 gate | 全中文是产品定位 |
+| Office 老格式预览管道 | dsh 内置 Office 技能 + 文档预览 tab | 阶段 39 边界①：预览占位提示已够用 |
+| 手机端补齐 | dsh 无对应物 | 团队/模式面板、归档管理操作——手机端定位是遥控不是全功能 |
+| MCP prompts→工具（dynamic tools） | codex `core/src/tools/handlers/extension_tools.rs` | 并入 T24 一起看 |
+| doctor 体检命令 | codex `codex doctor`（安装/配置/auth/网络） | `/plugins`、`/sandbox`、设置页已分散覆盖；等插件生态变大再说 |
+
+### 7.4 dsc 独有/领先项（防止纯「差距叙事」的误读）
+
+以下能力 dsc 领先或独有（出处见 [peer-feature-inventory.md](peer-feature-inventory.md) §三）：
+
+1. **手机遥控全家桶**（PWA + Web Push/Webhook + 二维码配对 + 逐台设备管理）——dsh 只有 `0.0.0.0` 裸暴露 + SSH 隧道，codex 只有 app-server remote；
+2. **审批安全纵深**：灾难地板 + 熔断 + 命令策略引擎逐段判定 + 安全钩子 fail-closed + AI 审查档 + 无人值守拒——dsh 明确只有一次性 allow-once（README 原文），codex 的 granular 档未开放时主要靠沙箱兜底；
+3. **中文优先**：会话检索 1+2-gram、界面全中文；
+4. 技能自修 + 台账回滚 + 老化（self-improve 三闭环）；
+5. 会话回收站（30 天可捞回）；
+6. 定时任务 pre-dispatch 校验（坏配置一次 token 不花）；
+7. 轨迹页（整轮折叠 + 时间线 + 独立节点检查器）。
+
+### 7.5 建议的落地顺序
+
+P1 六件里，**T14（@ 提及）与 T16（标题生成）最轻**（不动内核、半天级），先做；**T15（后台任务）价值最高但动内核**，单独立项；**T17（占用表）/ T19（压缩前置裁剪）同用 token 估算器，连着做**；**T18（review 子代理）等 T15 的 subagent 通道热身完再上**。P2 按 T22 → T21 → T23 → T25 → T24 → T20 → T27 → T28 → T26 的大致成本升序排。
+
+---
+
 ## 附录 A：三家特色速查（→ 移植到 dsc 的难度）
 
 **codex（安全与架构最硬）**
-- 三平台 OS 沙箱 `sandboxing`（bwrap / landlock / seatbelt）+ fail-closed + 一次性升级审批 → 高（动内核）
+- 三平台 OS 沙箱 `sandboxing`（bwrap / landlock / seatbelt / Windows 受限令牌）+ 一次性升级审批（降级不 fail-closed，与 dsc T9 同姿势）→ 高（动内核）
 - 声明式执行策略 `execpolicy`（命令前缀 → allow / prompt / forbidden）→ 低（挂 guards）
+- **独立 review 子代理**（uncommitted/base/commit/自定义四范围 + 结构化 findings[title/body/confidence/priority/行级定位] + `codex exec review` 非交互）→ 中（T18）
+- **exec_command 统一 exec**（PTY + session 续写 + 交互 stdin）→ 中（T15/T20 的对标）
+- **backtrack**（Esc-Esc 回退到任意 prompt 重编辑）→ 中高（要 turn 级重放语义）
+- **/mention @ 文件提及**（`file-search` crate 弹窗）→ 低（T14）
+- **request_permissions 运行时申请**（文件路径 + 网络，session scope）→ 低-中（dsc 已有 sandbox_permissions 一次性升权，差 session 级授权）
+- **Guardian 自动审查**（隔离审查者复核审批决策，专用模型）→ 中（dsc 的 ai-review 档是简化版）
 - app-server 客户端-服务架构（SQ / EQ 队列对 + JSON-RPC v2 + TS 类型生成）→ 架构级
 - code-mode（V8 内嵌，模型写 JS 连续调工具）→ 高，需沙箱
 - 生命周期 hooks 12 事件（`hooks/src/lib.rs:23-36`）→ 低-中

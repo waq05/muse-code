@@ -1055,3 +1055,17 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 验证：根 build + desktop typecheck 0 错；回归全绿（composer / remote-host 140 / trace-data / transcript-usage / turn-changes 14 / settings-sections）；新增 `scripts/review-approval-test.mjs` 27/27（approvalDiffOf：write 新建 fellBack/覆盖 modified/edit 替换/mismatch 两种/工作区外回落/密钥遮红；collectWorkingTree：非 git null/临时仓库 diff+untracked；reviewMessage 组装；parseUnifiedDiff/splitUnifiedDiffByFile——node 24 type stripping 直跑渲染层 TS 源）；/review 补全与 expandCommand('/rev') node 直测。实机探针两轮：d626（构造「只有调用没有结果」的会话重放 → running 卡 intended diff：折叠行相对路径 `shots/probe-626-intended.txt` + `+2 -1`、展开 5 行 diff 增删着色、轮尾卡行悬停出 diff `previewDiff=2`、Esc 关闭 `escClose=y`、提及 chip 悬停 `chipPreview=open/2`，截图目检轮尾卡新增徽标+相对路径+审查/打开按钮）；d626b（git 页签：全量 `files=4 lines=437 highlights=4082`、单文件 `rowLines=21` 行高亮、截图目检底部 diff 视图与行号/增删色）；探针会话与临时文件已清理。
 
 诚实边界：① 限流期 /review 的「submit 之后模型真审查」未走端到端（消息组装 + 收集已直测，链路与用户贴 diff 提问完全同路）；② 审批卡内嵌 diff 的实机形态未截到（审批等待需真模型发起写请求）——approvalDiffOf 直测 + 渲染层与工具卡共用 DiffRows 覆盖；③ intended diff 推演的是「调用发起时」的盘上现值，等待审批期间文件被并行改动不追更（dsh 同口径）；④ 全量 git diff 沿用 20000 字符截断，特大工作区只显示前几个文件的完整 diff；⑤ untracked 文件没有 diff 可看（git diff 天然不含），列名单提示。
+
+## 阶段 45：对标清单全面修订——三家源码功能清单与差距重梳 T14–T28（纯文档，无版本号）
+
+上一版 roadmap 的差距矩阵还停在第五轮之前：LSP、浏览器、定时任务、PTC、沙箱在矩阵里仍是「○ 缺失 / ⊘ 有意不做」，实际全部已落地（§5.1 有验收记录但矩阵没刷）；0.6.24–0.6.26 三连批补齐的整条 diff 审查链也没有登记。另外两个主要对标对象一直没有一份全面的功能清单——此前各阶段的「对标」都是按当次任务翻对应角落，没有横向全貌。
+
+**改了什么**：
+
+- 新建 `docs/peer-feature-inventory.md`——dsh / codex / Muse Code 三家的**全面功能清单**，按能力域分组（会话、模型、工具、权限、diff 审查、命令、上下文、终端、UI、部署、杂项），每条带源码出处，每家末尾有招牌能力排序与「未见」清单。dsc 侧清单同时标注了实现深度与已知边界，并单列「独有/领先项」防止纯差距叙事。
+- `harness-benchmark-roadmap.md`：差距矩阵全面修订（沙箱从 ⊘ 改 ◐ 策略级、LSP/浏览器/定时任务/PTC 改 ●，新增 diff 审查链 / /review / @提及 / 后台任务 / 标题生成 / 占用表 / 会话导出 / 运行状态点 / 手机遥控九行；hermes 未重读，新行标「—」待核对）；新增 §7 差距登记 **T14–T28**（P1 六件：T14 输入端 @ 文件提及补全、T15 bash 后台任务、T16 会话标题自动生成、T17 上下文占用表 + /status、T18 /review 升级独立子代理与结构化 findings、T19 压缩前置裁剪 + 图像卸载；P2 九件：持久终端工具 / 侧栏运行状态 / 会话导出 / 在线模型发现 / MCP elicitation+resources / read 支持图片 / 部分行接受与回滚 / 检查更新落地 / 插件远程安装；P3 十三条登记免遗忘）；§7.4 单列 dsc 独有领先项、§7.5 给建议落地顺序。顺手修正附录 A 两处：codex 沙箱「fail-closed」表述与 §5.1 T9 落地记录矛盾（codex 降级同样不 fail-closed，dsc 照的是这个），并补 codex 新发现能力（review 子代理 / exec_command / backtrack / mention / request_permissions / Guardian）。
+- `development.md`：§13「命令与补全」刷成现状——单一真源是 `core/commands-completion.ts`（顶层零 node 依赖，渲染层 import 链白屏教训写明）、内置命令 7 条（/review 进表）、/effort 占位行号更新；导航表补 peer-feature-inventory 入口。
+
+**方法**：三路并行只读源码梳理（dsh 全仓 11 能力域、codex 全仓 10 能力域、dsc 代码 + 全部 44 阶段日志），不运行任何一家；dsc 侧另行查证了四个易错事实——内置命令现为 7 条（`src/core/commands-completion.ts:16-22`）、/effort 保留占位（`src/plugins/commands.ts:118`）、read 工具不支持图片（`src/core/tools/fs-tools.ts` 无 mime 分流）、侧栏无会话运行状态（`desktop/src/renderer/Sidebar.tsx:671` 占位注释自证）；桌面端粘贴贴图已有（`Composer.tsx` 剪贴板图片 + modalities 检查），不算差距。
+
+**诚实边界**：① hermes 本轮未重读（矩阵新行 hermes 列标「—」），三家清单是 2026-10-02 的源码快照，上游会漂移；② codex 功能面按本地 `D:\codex\codex` 源码梳理，官方文档站未对照（附录 C 既有声明沿用）；③ 差距登记只做了「是什么/对标/落点/验收」级别的立项，P1 六件都还没做探索与排期，落地前各需一轮设计（尤其 T15 动内核、T26 依赖回滚语义要先单独立项）；④ T17 的 token 估算与 compact 触发线的「同源」验收要防止两套估算并存。

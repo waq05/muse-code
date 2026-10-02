@@ -10,6 +10,7 @@
 | **界面怎么改、控件往哪加、颜色字号怎么取值** | [ui-design.md](ui-design.md) |
 | 为什么长成这样、踩过哪些坑 | [development-log.md](development-log.md) |
 | 记什么：对照 codex / hermes / dsh 还缺哪些能力 | [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) |
+| 三家对标产品的功能清单全文（差距的证据底料） | [peer-feature-inventory.md](peer-feature-inventory.md) |
 | 怎么写一个插件 | [plugin-development.md](plugin-development.md) |
 
 ## 1. 一张图看懂运行时
@@ -598,8 +599,14 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 和它的白字、彩底上的白色图标、开关的白滑块、两处深色遮罩）。要更重或更轻的语义色就用
 `color-mix(in srgb, var(--dsc-*) N%, transparent)` 现调，不要再抄一份十六进制。
 
-### 命令与补全（`src/plugins/commands.ts`）
+### 命令与补全（`src/core/commands-completion.ts` + `src/plugins/commands.ts`）
 
-内置命令 6 条：`new` / `resume` / `compact` / `model` / `help` / `exit`（`:19-26`），插件
-注册的命令进 `extraSpecs`。输入 `/ne` 按 Enter 会展开成 `/new`（唯一前缀，`:94`）。
-`/effort` 保留着但只回一句「v2 已移除」（`:170-173`）。
+命令表、补全与唯一前缀展开的**单一真源是 `src/core/commands-completion.ts`**——它是顶层
+零 node 依赖的纯模块，渲染层（经 `@dsc/runtime/core/commands-completion.js` alias）、TUI
+与插件三方共用。渲染层 import 链上任何一个模块顶层碰 node 内置模块，vite externalize
+代理一求值就把整个渲染进程炸成白屏（0.6.26 踩的，见 development-log 阶段 44 与 memory）。
+内置命令 7 条：`new` / `resume` / `compact` / `model` / `review` / `help` / `exit`
+（`commands-completion.ts:16-22`）；`/review` 的 handler 在 `src/plugins/commands.ts`
+（收集工作区未提交改动组装审查轮，git 收集在 `src/core/git-info.ts`）。插件注册的命令进
+`extraSpecs`。输入 `/ne` 按 Enter 会展开成 `/new`（唯一前缀）。`/effort` 保留着但只回
+一句「已移除」（`src/plugins/commands.ts:118`）。
