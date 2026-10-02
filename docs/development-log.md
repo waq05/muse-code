@@ -1253,3 +1253,22 @@ T15（对标 dsh tool-jobs）：长命令不占住回合。bash 工具新增 `ru
 **验证**：双侧 typecheck、根 build + desktop build 全绿；新探针 `shots/batch-e-check.mjs` 33/33（T24：真起假 server 进程验能力协商/资源读写/blob 降级/模板取回/elicitation 审批往返与拒绝路径/无能力不注册——两内核两 server；T20：真起交互 shell 验 open/send/read 增量/close/结束后 send 报错；T27：本地更新源三种回包；T28：索引源浏览/拉取落盘/工具层 https 拦截）；回归 batch-a 22、batch-b 12、batch-c 13、batch-d 32、compact 53、order、kernel-boot、integration 104、approval-floor 95、dsh-compat 15、mcp、file-review 59、dock-model、remote-server 12、lsp 167、四网 218/210/28/85 全绿。
 
 **诚实边界**：T20 降级版无 PTY 无 signal，全屏程序与中途打断不支持；T24 的 elicitation 只支持确认/拒绝（审批卡无表单输入，requestedSchema 只展示），http 传输的 server 拿不到 elicitation；T27 的 UPDATE_CHECK_URL 待发布后填写，自动安装有意不做；T28 只支持单文件 .js 插件（npm 包形态的插件不在远程安装范围）。
+
+## 阶段 53：收尾——Mimosa 完整审计、批次 A–E UI 实机目检、@ 补全两个真 bug、打包（0.6.34）
+
+0.6.29–0.6.33 五个功能批次全部提交后的收尾轮：完整安全审计 → 实机截图自检 → 修复自检揭出的问题 → 全量回归 → 打包。
+
+**Mimosa 完整深度审计（首个密封完整结论）**：0.6.29 起每批提交都是 `scanner_enobufs` 兼容放行，这是第一次拿到完整扫描结论——scanId `scan-2026-10-02T14-20-51.127Z-8a112f758f1a`（seal `sha256:65650cf9…`，static-only 边界）。136 个 finding：`shots/_dsh_extract` 76（dsh 参考代码提取副本，非运行时代码）、`desktop/runtime-staging` 22 与 `lib/` 19（同一批 src finding 的编译产物/运行时暂存副本）、真实源码收敛为 **13 个独立 finding**。逐个人工复核：12 个定性误报或功能本质（cdp/actions.ts 的防御黑名单正则被当 sink；mcp.ts 的 spawn 是用户自己配置的 server 命令经 `resolveCommand` 解析；doctor.ts 是固定 System32 PowerShell 路径加常量参数；bash.ts 两处是 `require()` 错误消息模板；bash.ts 六处环境变量污点链是 taskkill 清理用受控 PID 与 harness 核心的 spawnShell——命令过审批门）；**1 个加固**：Web Push 订阅的 endpoint 入库时只查非空没校验 scheme（web-push 库照单全发，已配对设备可让宿主向任意 URL POST）——`push.ts` 补 `^https://` 校验。依赖扫描 298 包 0 命中。**按扫描结论纪律：这不构成「项目完全安全」的宣称，只登记复核结论**。
+
+**实机截图自检（新 `desktop/shots/final-seed.mjs` + `final-shots.ps1`，三用例九项判定全绿）**：隔离 HOME + 真实 ~/.dsc 跑前跑后全量指纹（167 文件聚合 SHA256 逐文件比对，前后一致——零污染）。用例覆盖：findings 卡渲染与分级徽标、点位置按钮开 preview 并滚到目标行高亮（`dock-model.ts:40` 实测）；@ 面板候选、点选插入、清空重开；设置页「拉取清单」按钮、侧栏状态点 idle 不显示。
+
+**自检揭出两个真 bug（都是 T14 上线即有、单测没覆盖真实仓库形态）**：
+1. **工具状态点目录淹没 @ 补全**：`collectWorkspaceFiles` 的 2000 条上限被 `.mimosa/hook-state`（Mimosa 提交门的会话状态文件，本仓库 1400+ 个）吃满，点开头目录按字典序排在所有源码之前，`desktop/src` 整个缺席——实机输入 `@dock` 只出 `desktop/electron/main/dock.ts` 一个候选。修：点开头目录一律跳过 + 跳过名单补 `runtime-staging` 与 Chromium userData 标准缓存子目录（`Cache`/`Code Cache`/`GPUCache` 等，自检残留会以这些名字出现在仓库）+ 上限 2000→4000（修后本仓库 2474 条全部收进）。
+2. **pickMention 点选后面板不收**：只更新文本与 DOM 光标，React 的 `caret` state 还是旧值——`mentionQueryAt(新文本, 旧光标)` 把整条已选路径当成新 token，面板在插入后继续开着。修：插入时 `setCaret(next.caret)` 同步。
+3. 另一处 UX 精化：候选上限 8→12（面板本就 max-height 240px 可滚动）。同名前缀拥挤的既有局限如实登记：本仓库 `shots/dock-06xx.ps1` 系列自检脚本会占满前缀命中档，泛 token（`@dock`）时 `dock-model.ts` 排 13——稍精确的 token（`@dock-m`）即刻精准命中，与 dsh 文件搜索的真实用法一致。
+
+**探针侧两个误判修正**（final-shots 初版断言写错，非产品问题）：findings 徽标文案是「P1 必须修」不是裸 `P1`；preview 页签在 `.dock-strip` 的 Chip 里，不是会话顶栏 `.tabs button`。`batch-a-check` 的 3000 条 mock 数据随上限 2000→4000 过时（封顶断言不再成立），改为按 `WALK_MAX_FILES + 1000` 动态造。
+
+**验证**：根 build + desktop build + 双侧 typecheck 全绿；全量回归 19 个探针零失败——batch-a 22、batch-b 12、batch-c 13、batch-d 32、batch-e 33（batch-e 退出阶段有 libuv `UV_HANDLE_CLOSING` 断言噪声，33 项功能断言全过、复跑稳定，属探针进程清理时序非产品路径）、compact 53、order 18、dock-model、dsh-compat 15、integration 104、approval-floor 95、mcp 75、file-review 59、remote-server 12、lsp 167、browser 210、tool-search 94、session-search 70、win-net-setup 160；实机三用例九项判定全绿。
+
+**诚实边界**：批次 B 的侧栏运行状态点只实机验证了 idle 档不显示（working/waiting 需要真模型跑中的会话，deepseek 限流到 2026-10-06，状态切换逻辑已有单测覆盖）；会话标题自动生成（T16）与 /export 的落盘提示未实机走查（需真模型轮，核心逻辑已有探针）。

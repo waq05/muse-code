@@ -180,6 +180,9 @@ export class RemotePush {
     const endpoint = input['endpoint']
     const keys = input['keys']
     if (typeof endpoint !== 'string' || endpoint.trim() === '') return { ok: false, error: '订阅里没有 endpoint' }
+    // 推送端点必须 https：标准推送服务（FCM / Mozilla autopush）都是 https，明文 http 只会
+    // 出现在「把宿主当跳板打内网」的构造请求里（web-push 库会照单全发）。
+    if (!/^https:\/\//i.test(endpoint.trim())) return { ok: false, error: 'endpoint 必须 https' }
     if (!isRecord(keys)) return { ok: false, error: '订阅里没有 keys' }
     const p256dh = keys['p256dh']
     const auth = keys['auth']

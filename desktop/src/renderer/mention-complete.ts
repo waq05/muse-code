@@ -57,7 +57,7 @@ export function insertMention(text: string, query: MentionQuery, path: string): 
  * 候选排序：文件名前缀命中 > 文件名包含 > 路径包含 > 无命中（按路径深度与字典序兜底）；
  * 空 token 直接按深度 + 字典序给前列。同档内路径短的靠前（浅目录 ≈ 更常被提）。
  */
-export function rankMentionCandidates(files: readonly string[], token: string, limit = 8): string[] {
+export function rankMentionCandidates(files: readonly string[], token: string, limit = 12): string[] {
   const query = token.toLowerCase()
   const scored: { path: string; score: number }[] = []
   for (const file of files) {
@@ -85,10 +85,14 @@ export function rankMentionCandidates(files: readonly string[], token: string, l
 export const SKIP_DIR_NAMES = new Set([
   'node_modules', '.git', 'dist', 'build', '.next', 'out', 'coverage',
   '.turbo', '__pycache__', '.cache', '.venv', 'venv', 'target',
+  'runtime-staging',
+  // Chromium userData 的标准缓存子目录（自检/打包残留会以这些名字出现在仓库里）
+  'Cache', 'Code Cache', 'GPUCache', 'ShaderCache', 'DawnCache', 'CachedData',
+  'crashpad', 'blob_storage', 'Session Storage', 'Local Storage', 'Shared Dictionary',
 ])
 
 /** 遍历上限：条数与深度都按住，超大仓库不至于把补全拖死。 */
-export const WALK_MAX_FILES = 2000
+export const WALK_MAX_FILES = 4000
 export const WALK_MAX_DEPTH = 6
 
 /** fs-list 透传回包的最小形状（desktop-dock 插件定义，这里只认形状）。 */
@@ -112,7 +116,9 @@ export async function collectWorkspaceFiles(lister: DirLister, root = '.'): Prom
       if (files.length >= WALK_MAX_FILES) return
       const path = dir === '.' || dir === '' ? entry.name : `${dir}/${entry.name}`
       if (entry.dir) {
-        if (depth >= WALK_MAX_DEPTH || SKIP_DIR_NAMES.has(entry.name)) continue
+        // 点开头目录（.mimosa/.zcode 这类工具状态目录）一律跳过：名字按字典序排在
+        // 源码前面，历史文件一多就把整个上限吃满，源码目录反而一个都收不进。
+        if (depth >= WALK_MAX_DEPTH || SKIP_DIR_NAMES.has(entry.name) || entry.name.startsWith('.')) continue
         await walk(path, depth + 1)
       } else {
         files.push(path)

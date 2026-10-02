@@ -142,6 +142,9 @@ export function Composer(props: {
     if (query === null) return
     const next = insertMention(value, query, path)
     setValue(next.text)
+    // caret state 不同步的话，mentionQueryAt 还拿旧光标往前扫到 @，把整条已选路径
+    // 当成新 token，面板在点选后继续开着（候选退化成刚选的那条）。
+    setCaret(next.caret)
     setMentionActive(0)
     requestAnimationFrame(() => {
       textarea.current?.focus()
