@@ -808,7 +808,9 @@ function readSessionFile(filePath: string, sidecar?: SessionMetaRecord): Session
     }
     if (record?.type === 'meta') {
       const derived = head.find((line) => line.startsWith('{"type":"user"'))
+      // T16：展示链 用户改名 → 自动生成 → 首条用户消息截断
       const title = sidecar?.title
+        ?? sidecar?.autoTitle
         ?? (derived !== undefined
           ? (JSON.parse(derived) as { text: string }).text.replace(/\s+/g, ' ').trim().slice(0, 60)
           : undefined)
@@ -826,7 +828,8 @@ function readSessionFile(filePath: string, sidecar?: SessionMetaRecord): Session
     // id 取文件名、标题取幸存的首条用户消息、cwd 从幸存的改动路径反推；推不出 cwd
     // 就给空串（列表照常显示，真去打开时会拿到「头损坏」的明确报错）。
     const paths = new Set<string>()
-    let title: string | undefined = sidecar?.title
+    // T16：展示链 用户改名 → 自动生成 → 首条用户消息截断
+    let title: string | undefined = sidecar?.title ?? sidecar?.autoTitle
     for (const line of head) {
       if (!line.startsWith('{"type":"')) continue
       try {

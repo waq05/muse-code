@@ -1173,3 +1173,19 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 - `bearerToken` 的行为网断言晚于重写本身（先拆后补网），若 Bearer 认证有真实用户在用，那个 bug 会活到本批——万幸 remote 尚在迭代期、探针先行补上了。
 - remote 的 WS 升级守卫（/ws + 一次性票据）不在 HTTP 探针射程（undici 禁 Upgrade 头），由运行时真客户端覆盖；票据 redeem 的单测在 tickets 自检里。
 - Mimosa 安全门把 `rejectUpgrade` 的 HTTP 状态行模板与 Bearer 正则解析误报为「命令注入」，两处代码以原语义保留/等价重写（正则 exec 改字符串解析，行为对齐 `/^Bearer\s+(\S+)$/i`：整段必须是 Bearer 前缀 + 无空白 token）。
+
+## 阶段 48：功能批次 A——@提及/自动标题/占用表/会话导出（0.6.29）
+
+roadmap §7 的 T14–T28 全量开工，第一批四件（全部不动内核的服务面）。
+
+**T14 输入端 @ 文件提及**：`desktop/src/renderer/mention-complete.ts`（新，纯模块）——`mentionQueryAt` 定位光标处的 @token（`@` 前必须是空白或行首，邮箱不触发）、`rankMentionCandidates` 候选排序（文件名前缀 > 文件名包含 > 路径包含，同档路径短的靠前）、`insertMention` 替换回填、`collectWorkspaceFiles` 工作区遍历（注入 fs-list lister，跳过 node_modules/.git/dist 等构建目录，2000 条/6 层封顶）。Composer 加 @ 面板（与 / 命令面板互斥、Esc 关闭同 token 不再弹、键盘可选），App 注入带 60 秒缓存的文件清单；`matchMentionPath` 识别时剥掉前导 `@`，发出去的 `@路径` 照常命中改动卡 chip。
+
+**T16 会话标题自动生成**：`src/plugins/session-title.ts`（新）——首个 completed 回合后经 `ctx.llm.stream` 发一次独立小请求（前 3 条用户消息各截 600 字符，20 秒超时），标题写 meta.json 的 `autoTitle`（与用户改名 `title` 分开存）；展示链改为 用户改名 → 自动标题 → 首条消息截断（session.ts 两处投影 + contract 注释）。用户改过名或已生成过的永不覆盖；失败完全静默（截断标题兜底）。
+
+**T17 /status**：`CompactService.describe()` 新增（services/types + compact 插件，现读配置与 `check()` 同源）；`/status` 内建命令（plugins/commands.ts 的 `statusReport` 纯函数）报模型窗口、消息数、估算用量与占比、自动压缩触发线与剩余余量——估算走 compact 同一个 `estimateTokens`。
+
+**T22 /export**：`src/core/session-export.ts`（新，纯函数）——`session.messages` 直出 markdown（system 不进、工具调用/结果独立成节、超预算工具结果截断注明原长、内容含 ``` 时围栏自动加长）；`/export [路径]` 内建命令默认落 `<cwd>/msc-export-<id8>-<时间>.md`。走命令注册表，桌面/TUI/远端三端同链路（UI 折叠分组不进导出，披露）。
+
+**验证**：双侧 typecheck、根 build + desktop build 全绿；新探针 `shots/batch-a-check.mjs` 22/22（假 ctx 走真生成流程 + 临时 HOME 断言 meta.json、导出序列化、/status 文本、@ 纯函数——渲染层纯模块 node 直读 TS）；四网 218/210/28/85、compact 54、approval-floor 95、dsh-compat 15、file-review 59、kernel-boot/integration/mcp/dock-model 全过。
+
+**诚实边界**：@ 候选遍历的是 dock 根目录（标准桌面流里即会话 cwd；多工作区/异根场景路径可能错位）；标题生成失败无提示；T16 无手动重生成入口（要改可自己改名）；/export 导出的是协议消息流而非 UI 折叠条目。

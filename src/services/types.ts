@@ -490,6 +490,11 @@ export interface CompactService {
    */
   forceCompact(signal?: AbortSignal): Promise<boolean>
   /**
+   * 当前压缩口径（/status 展示用）：自动压缩触发线百分比与摘要后保留条数。
+   * 值现读插件配置，设置页保存后立刻是新值——与 check() 的判定同源。
+   */
+  describe(): { autoCompactPercent: number; keepRecent: number }
+  /**
    * 登记一段「摘要之外必须原样带过去」的文本。
    * 任务清单、会话目标这类内容经摘要模型一转就会被改写走样，所以由功能点自己登记原文；
    * 压缩插件因此不认识任何具体功能。

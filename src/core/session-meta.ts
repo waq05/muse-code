@@ -17,6 +17,12 @@ import { withExclusiveLock } from './lockfile.js'
 export interface SessionMetaRecord {
   /** 用户改过的标题；没有就用日志里首条用户消息推导。 */
   title?: string
+  /**
+   * 自动生成的标题（T16，首回合结束后由 session-title 插件写）。
+   * 与 title 分开存：用户改过的名字永不被覆盖，自动标题允许重生成；
+   * 展示链是 title → autoTitle → 首条用户消息截断。
+   */
+  autoTitle?: string
   /** 置顶时间（毫秒）；有值即置顶，值用于组内置顶之间的排序。 */
   pinnedAt?: number
   /** 归档时间（毫秒）；归档列表按它倒序。 */
@@ -57,6 +63,7 @@ export function readSessionMeta(): Record<string, SessionMetaRecord> {
       if (typeof record !== 'object' || record === null) continue
       const entry: SessionMetaRecord = {}
       if (typeof record.title === 'string' && record.title !== '') entry.title = record.title
+      if (typeof record.autoTitle === 'string' && record.autoTitle !== '') entry.autoTitle = record.autoTitle
       if (typeof record.pinnedAt === 'number') entry.pinnedAt = record.pinnedAt
       if (typeof record.archivedAt === 'number') entry.archivedAt = record.archivedAt
       if (typeof record.forkedFrom === 'string') entry.forkedFrom = record.forkedFrom
@@ -84,7 +91,7 @@ export function patchSessionMeta(id: string, patch: Partial<Record<keyof Session
     const record: SessionMetaRecord = { ...(all[id] ?? {}) }
     for (const [key, value] of Object.entries(patch)) {
       if (value === null || value === undefined) delete record[key as keyof SessionMetaRecord]
-      else if (key === 'title') record.title = String(value)
+      else if (key === 'title' || key === 'autoTitle') record[key] = String(value)
       else if (key === 'pinnedAt' || key === 'archivedAt') record[key] = Number(value)
       else if (key === 'forkedFrom') record.forkedFrom = String(value)
     }
@@ -101,5 +108,5 @@ export function patchSessionMeta(id: string, patch: Partial<Record<keyof Session
 
 /** 会话彻底删掉时清掉它的展示属性，避免 meta.json 无限膨胀。 */
 export function dropSessionMeta(id: string): Record<string, SessionMetaRecord> {
-  return patchSessionMeta(id, { title: null, pinnedAt: null, archivedAt: null, forkedFrom: null })
+  return patchSessionMeta(id, { title: null, autoTitle: null, pinnedAt: null, archivedAt: null, forkedFrom: null })
 }

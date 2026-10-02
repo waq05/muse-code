@@ -560,7 +560,7 @@ export interface SessionSummary {
   createdAt: number
   /** 最后一次写入日志的时间（文件 mtime），「按最近使用」排序的键。 */
   updatedAt: number
-  /** 会话标题：用户改过的名字优先，否则首条用户消息截断；都没有时 undefined。 */
+  /** 会话标题：用户改名 → 自动生成（T16）→ 首条用户消息截断；都没有时 undefined。 */
   title?: string
   /** 置顶时间；undefined = 未置顶。 */
   pinnedAt?: number

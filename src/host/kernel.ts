@@ -47,6 +47,7 @@ import { commandsPlugin } from '../plugins/commands.js'
 import { skillsPlugin } from '../plugins/skills.js'
 import { settingsPlugin } from '../plugins/settings.js'
 import { compactPlugin } from '../plugins/compact.js'
+import { sessionTitlePlugin } from '../plugins/session-title.js'
 import { agentPlugin } from '../plugins/agent.js'
 import { runtimePlugin } from '../plugins/runtime.js'
 import { subagentPlugin } from '../plugins/subagent.js'
@@ -281,6 +282,7 @@ export const BUILTIN_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   },
   { file: 'settings', name: '设置', description: '设置分区注册表、模型配置与偏好' },
   { file: 'compact', name: '压缩', description: '上下文超阈值自动压缩', settingsSection: 'compact' },
+  { file: 'session-title', name: '会话标题', description: '首回合结束后自动生成会话标题（用户改名优先）' },
   { file: 'todo', name: '任务清单', description: '模型自己维护的清单与实时进度条' },
   { file: 'plan', name: '计划交付', description: '写计划文件并弹评审卡等用户批' },
   { file: 'ask', name: '模型提问', description: 'ask_user 工具与它的选项卡' },
@@ -322,6 +324,8 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   // 安全钩子排在设置之后：它既要往设置里挂自己的分区，又要把闸门挂到守卫链上。
   await root.plugin(hooksPlugin)
   await root.plugin(compactPlugin)
+  // 会话标题跟着压缩走：两者都监听回合结束，都只做会话级的轻量收尾
+  await root.plugin(sessionTitlePlugin)
   await root.plugin(todoPlugin)
   await root.plugin(planPlugin)
   await root.plugin(askPlugin, getPluginConfig('ask'))

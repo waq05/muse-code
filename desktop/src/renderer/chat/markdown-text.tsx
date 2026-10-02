@@ -21,7 +21,8 @@ import { FileIcon } from '../file-icons.js'
  * 带 `\n` 的不是 inline（fenced 块），短得像扩展名的（`md`）不会越过分隔符边界误命中。
  */
 function matchMentionPath(text: string, paths: ReadonlyMap<string, ChangedFileView>): string | undefined {
-  const trimmed = text.trim()
+  // T14：输入端 @ 提及插进正文的是 `@路径` 形态，识别时剥掉前导 @ 再匹配
+  const trimmed = text.trim().replace(/^@/, '')
   if (trimmed === '' || trimmed.includes('\n')) return undefined
   if (paths.has(trimmed)) return trimmed
   for (const path of paths.keys()) {

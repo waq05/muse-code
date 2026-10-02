@@ -164,6 +164,11 @@ export const compactPlugin: Plugin.Object = {
         return false
       },
 
+      /** 当前压缩口径（/status 的数字与 check() 同源）。 */
+      describe() {
+        return { autoCompactPercent: config.autoCompactPercent, keepRecent: config.keepRecent }
+      },
+
       async run() {
         // T41：回合运行中不许手动压——等这轮结束，或者先打断再压
         if (runningTurns > 0) {

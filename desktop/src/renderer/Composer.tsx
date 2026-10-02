@@ -19,6 +19,7 @@ import type {
 // vite 对 node 内置模块 externalize 即炸（0.6.26 白屏教训），渲染层只走 core 这份。
 import { completionsFor, expandCommand } from '@dsc/runtime/core/commands-completion.js'
 import type { CompletionItem } from '@dsc/runtime/services/types.js'
+import { insertMention, mentionQueryAt, rankMentionCandidates } from './mention-complete.js'
 import { toastErr } from './components/toast.js'
 import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconLayers, IconPlus, IconShield, IconStop } from './icons.js'
 
@@ -73,6 +74,10 @@ export function Composer(props: {
   /** 模式那根旋钮（当前档 + 可切清单，presets 插件贡献）。 */
   preset: PresetSurface
   working: boolean
+  /** 当前工作目录（T14：切会话/换目录时 @ 文件清单缓存跟着失效）。 */
+  cwd: string
+  /** @ 提及候选的数据源（App 注入：dock fs-list 的工作区遍历，带缓存）。 */
+  listFiles(): Promise<string[]>
   onSubmit(text: string, images?: string[]): void
   onInterrupt(): void
   onModelChange(value: string): void
@@ -90,13 +95,59 @@ export function Composer(props: {
   /** 待发送的图片（data URL 清单）。 */
   const [attachments, setAttachments] = useState<string[]>([])
   const textarea = useRef<HTMLTextAreaElement | null>(null)
+  // ---- T14 @ 文件提及 ----
+  /** 光标位置（onChange/onSelect 时更新），@ 查询据此定位。 */
+  const [caret, setCaret] = useState(0)
+  /** 工作区文件清单；null = 还没拉过。 */
+  const [mentionFiles, setMentionFiles] = useState<string[] | null>(null)
+  const [mentionLoading, setMentionLoading] = useState(false)
+  const [mentionActive, setMentionActive] = useState(0)
+  /** Escape 关掉面板后记住的 token：同一个 token 不再弹，换一个字重新弹。 */
+  const [mentionDismissed, setMentionDismissed] = useState<string | null>(null)
 
   const completions = completionsFor(value, props.models)
-  const showPanel = completions.length > 0
+  const mentionQuery = mentionQueryAt(value, caret)
+  // 命令输入（/ 开头）时命令面板优先，@ 面板让位
+  const mentionOpen =
+    mentionQuery !== null && mentionQuery.token !== mentionDismissed && !value.startsWith('/')
+  const mentionCandidates = useMemo(
+    () => (mentionQuery === null || mentionFiles === null ? [] : rankMentionCandidates(mentionFiles, mentionQuery.token)),
+    [mentionQuery, mentionFiles],
+  )
+  const showPanel = completions.length > 0 && !mentionOpen
 
   useEffect(() => {
     setActive(0)
   }, [value])
+
+  // 首次触发 @ 时拉一次工作区文件清单（失败给空清单：面板显示「没有匹配的文件」）
+  useEffect(() => {
+    if (!mentionOpen || mentionFiles !== null || mentionLoading) return
+    setMentionLoading(true)
+    void props
+      .listFiles()
+      .then((files) => setMentionFiles(files))
+      .catch(() => setMentionFiles([]))
+      .finally(() => setMentionLoading(false))
+  }, [mentionOpen, mentionFiles, mentionLoading, props.listFiles])
+
+  // 换工作目录（切会话）后清单作废重拉
+  useEffect(() => {
+    setMentionFiles(null)
+  }, [props.cwd])
+
+  /** 把候选路径插回正文并落好光标。 */
+  const pickMention = (path: string): void => {
+    const query = mentionQueryAt(value, caret)
+    if (query === null) return
+    const next = insertMention(value, query, path)
+    setValue(next.text)
+    setMentionActive(0)
+    requestAnimationFrame(() => {
+      textarea.current?.focus()
+      textarea.current?.setSelectionRange(next.caret, next.caret)
+    })
+  }
 
   useEffect(() => {
     const element = textarea.current
@@ -152,6 +203,33 @@ export function Composer(props: {
   }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    // @ 提及面板优先于命令面板：Esc 关掉（同 token 不再弹），键选回车即插入
+    if (mentionOpen) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setMentionDismissed(mentionQuery?.token ?? null)
+        return
+      }
+      if (mentionCandidates.length > 0) {
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          setMentionActive((current) => (current + 1) % mentionCandidates.length)
+          return
+        }
+        if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          setMentionActive((current) => (current - 1 + mentionCandidates.length) % mentionCandidates.length)
+          return
+        }
+        if (event.key === 'Tab' || event.key === 'Enter') {
+          event.preventDefault()
+          pickMention(mentionCandidates[mentionActive] ?? mentionCandidates[0]!)
+          return
+        }
+        return
+      }
+      // 候选还在加载：不劫持任何键，落回默认行为
+    }
     if (showPanel) {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
@@ -234,6 +312,33 @@ export function Composer(props: {
         void attachFiles(Array.from(files))
       }}
     >
+      {mentionOpen && (
+        <div className="completions">
+          {mentionFiles === null ? (
+            <div className="item" style={{ cursor: 'default' }}>
+              <span className="label">正在读取工作区文件…</span>
+            </div>
+          ) : mentionCandidates.length === 0 ? (
+            <div className="item" style={{ cursor: 'default' }}>
+              <span className="label">没有匹配的文件</span>
+            </div>
+          ) : (
+            mentionCandidates.map((path: string, index: number) => (
+              <div
+                key={path}
+                className={`item${index === mentionActive ? ' active' : ''}`}
+                onMouseEnter={() => setMentionActive(index)}
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                  pickMention(path)
+                }}
+              >
+                <span className="label">{`@${path}`}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
       {showPanel && (
         <div className="completions">
           {completions.map((item: CompletionItem, index: number) => (
@@ -278,11 +383,15 @@ export function Composer(props: {
           props.disabled
             ? '等待审批…'
             : canPasteImage
-              ? '发消息，/ 调用指令，可以贴图或拖图片进来'
-              : '发消息，/ 调用指令（当前模型没开照片输入，贴图会被拒绝）'
+              ? '发消息，/ 调用指令，@ 引用文件，可贴图或拖图片进来'
+              : '发消息，/ 调用指令，@ 引用文件（当前模型没开照片输入，贴图会被拒绝）'
         }
         disabled={props.disabled}
-        onChange={(event) => setValue(event.target.value)}
+        onChange={(event) => {
+          setValue(event.target.value)
+          setCaret(event.target.selectionStart ?? 0)
+        }}
+        onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
         onKeyDown={onKeyDown}
         onPaste={(event) => {
           const items = event.clipboardData?.items

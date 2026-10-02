@@ -13,6 +13,7 @@ import { ApprovalCard } from './ApprovalCard.js'
 import { AskCard, GoalBar, PlanReview, TaskDock } from './TaskDock.js'
 import { ChatView } from './ChatView.js'
 import { Composer } from './Composer.js'
+import { collectWorkspaceFiles } from './mention-complete.js'
 import { Dock } from './Dock.js'
 import {
   closeTab as dockCloseTab,
@@ -97,6 +98,18 @@ export function App(): JSX.Element {
     return Number.isFinite(saved) && saved >= 300 && saved <= 820 ? saved : 420
   })
   const proxy: RuntimeProxy = useMemo(createRuntimeProxy, [])
+  // T14 @ 文件提及的数据源：dock fs-list 的工作区遍历（60 秒缓存，失败给空清单）。
+  // Promise 本体进缓存——同一次 @ 触发里Composer 的 effect 重跑也不会重复遍历。
+  const workspaceFiles = useRef<{ cwd: string; at: number; files: Promise<string[]> } | null>(null)
+  const listWorkspaceFiles = useCallback((): Promise<string[]> => {
+    const cached = workspaceFiles.current
+    if (cached !== null && cached.cwd === cwd && Date.now() - cached.at < 60_000) return cached.files
+    const files = collectWorkspaceFiles((dir) =>
+      proxy.dock('fs-list', { dir }) as Promise<{ entries: { name: string; dir: boolean }[] }>,
+    ).catch(() => [] as string[])
+    workspaceFiles.current = { cwd, at: Date.now(), files }
+    return files
+  }, [cwd, proxy])
   // 面板尺寸三项：侧栏宽度、侧栏收成图标窄栏没有、中间正文列宽。都能拖，值存 localStorage。
   // null = 没拖过，样式表里 `:root` 那份默认值（237px / 76ch）照常生效。
   const [sidebarWidth, setSidebarWidth] = useState<number | null>(() =>
@@ -795,6 +808,8 @@ export function App(): JSX.Element {
                     policy={snapshot.surfaces.policy}
                     preset={snapshot.surfaces.preset}
                     working={snapshot.status.turnState !== 'idle'}
+                    cwd={cwd}
+                    listFiles={listWorkspaceFiles}
                     onSubmit={handleSubmit}
                     onInterrupt={() => proxy.interrupt()}
                     onModelChange={(value) => void proxy.setModel(value)}

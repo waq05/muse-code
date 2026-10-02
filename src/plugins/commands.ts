@@ -8,6 +8,8 @@
  *
  * @module dsc/plugins/commands
  */
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type {
   CommandHandler,
@@ -16,6 +18,9 @@ import type {
 } from '../services/types.js'
 import type { DscRuntime } from '../contract.js'
 import { collectWorkingTree } from '../core/git-info.js'
+import { estimateTokens } from '../core/compact.js'
+import { exportSessionMarkdown } from '../core/session-export.js'
+import { errText } from '../core/err-text.js'
 import {
   addExtraSpec,
   allSpecs,
@@ -27,7 +32,8 @@ import {
 
 export const commandsPlugin: Plugin.Object = {
   name: 'commands',
-  inject: ['session'],
+  // /status 要问 llm 服务的窗口大小与当前端点名
+  inject: ['session', 'llm'],
   provide: 'commands',
   apply(ctx) {
     const registry = new Map<string, { spec: CommandSpec; handler: CommandHandler }>()
@@ -100,6 +106,56 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
+      { name: 'status', args: '', description: '查看上下文占用与压缩余量' },
+      ({ ui }) => {
+        const session = ctx.session.current()
+        const messages = session.messages
+        const compact = ctx.get('compact')
+        ui.notice(
+          statusReport({
+            provider: ctx.llm.provider,
+            model: ctx.llm.model,
+            window: ctx.llm.contextWindow,
+            tokens: estimateTokens(messages),
+            messageCount: messages.length,
+            toolCount: messages.filter((message) => message.role === 'tool').length,
+            autoCompactPercent: compact !== undefined ? compact.describe().autoCompactPercent : 80,
+          }),
+        )
+      },
+    )
+    service.register(
+      { name: 'export', args: '[文件路径]', description: '导出当前会话为 markdown' },
+      ({ args, ui }) => {
+        const session = ctx.session.current()
+        if (session.messages.length === 0) {
+          ui.notice('这个会话还没有消息，没东西可导出。')
+          return
+        }
+        const stamp = new Date()
+        const pad = (value: number): string => String(value).padStart(2, '0')
+        const target =
+          args[0] ?? join(
+            session.meta.cwd || process.cwd(),
+            `msc-export-${session.meta.id.slice(0, 8)}-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}.md`,
+          )
+        const markdown = exportSessionMarkdown({
+          id: session.meta.id,
+          cwd: session.meta.cwd,
+          createdAt: session.meta.createdAt,
+          messages: session.messages,
+        })
+        try {
+          mkdirSync(dirname(target), { recursive: true })
+          writeFileSync(target, markdown, 'utf8')
+        } catch (error) {
+          ui.notice(`导出失败：${errText(error)}`)
+          return
+        }
+        ui.notice(`已导出 ${session.messages.length} 条消息 → ${target}`)
+      },
+    )
+    service.register(
       { name: 'review', args: '[关注点]', description: '审查工作区未提交改动' },
       ({ args, runtime, ui }) => {
         const cwd = ctx.session.current().meta.cwd
@@ -150,10 +206,34 @@ export function runCommand(
 }
 
 /**
+ * /status 的文本组装（独立成函数便于脱离命令体系直测）。
+ * tokens 由调用方用 core/compact 的 estimateTokens 算——数字与自动压缩触发判定同源。
+ */
+export function statusReport(input: {
+  provider: string
+  model: string
+  window: number
+  tokens: number
+  messageCount: number
+  toolCount: number
+  autoCompactPercent: number
+}): string {
+  const threshold = Math.round(input.window * (input.autoCompactPercent / 100))
+  const share = input.window > 0 ? Math.round((input.tokens / input.window) * 100) : 0
+  return [
+    '上下文占用',
+    `· 模型：${input.provider}/${input.model}（窗口 ${input.window.toLocaleString('zh-CN')} tokens）`,
+    `· 消息：${input.messageCount} 条（其中工具结果 ${input.toolCount} 条）`,
+    `· 估算用量：${input.tokens.toLocaleString('zh-CN')} tokens，约占窗口 ${share}%`,
+    `· 自动压缩触发线：${input.autoCompactPercent}%（≈${threshold.toLocaleString('zh-CN')} tokens，还差 ${Math.max(0, threshold - input.tokens).toLocaleString('zh-CN')}）`,
+    '· 估算口径与自动压缩同源（中文 0.65、其余 0.33 tokens/字符）',
+  ].join('\n')
+}
+
+/**
  * /review 的审查消息组装（独立成函数便于脱离命令体系直测：给一份收集结果与关注点，
  * 回一条可直接 submit 的消息；回复即审查意见，与用户自己贴 diff 问「帮我看看」同链路）。
- */
-export function reviewMessage(collected: { diff: string; untracked: string[] }, focus: string): string {
+ */export function reviewMessage(collected: { diff: string; untracked: string[] }, focus: string): string {
   const lines = [
     '请审查当前工作区的未提交改动。逐个文件过 diff：正确性问题、边界条件、安全问题、'
       + '与项目既有约定（如 AGENTS.md）冲突的地方；给出具体文件与行级的意见。没有问题就明说没有。',
