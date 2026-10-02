@@ -9,7 +9,7 @@
  * @module dsc/plugins/tools-default
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { createBashTool, BASH_DEFAULT_BUDGETS, type BashBudgets } from '../core/tools/bash.js'
+import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, JobTable, stopAllBackgroundChildren, type BashBudgets } from '../core/tools/bash.js'
 import { createReadTool, editTool, READ_DEFAULT_LINE_LIMIT, writeTool } from '../core/tools/fs-tools.js'
 import { globTool, grepTool } from '../core/tools/search-tools.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
@@ -42,16 +42,36 @@ function readBudgets(passed?: unknown): BashBudgets & { readLineLimit: number } 
 
 export const toolsDefaultPlugin: Plugin.Object = {
   name: 'tools-default',
-  inject: ['tools', 'settings'],
+  // T15：完成通知走 agent.followup（排队提交一条消息叫模型回来收结果）
+  inject: ['tools', 'settings', 'agent'],
   apply(ctx, passed) {
     let budgets = readBudgets(passed)
     /** 当前注册进注册表的清理函数；换预算时先撤旧的再注册新的。 */
     let disposers: Array<() => void> = []
 
+    // ---- T15 后台作业表 ----
+    // 完成通知做 800ms 合并：几个作业同时收尾时合成一条 followup，不炸出一串轮次
+    const table = new JobTable({
+      notify: (text) => {
+        pendingNotices.push(text)
+        if (noticeTimer === undefined) {
+          noticeTimer = setTimeout(() => {
+            noticeTimer = undefined
+            const merged = pendingNotices.splice(0)
+            if (merged.length > 0) ctx.agent.followup(merged.join('\n'))
+          }, 800)
+          noticeTimer.unref?.()
+        }
+      },
+    })
+    let noticeTimer: NodeJS.Timeout | undefined
+    const pendingNotices: string[] = []
+
     const syncTools = (): void => {
       for (const off of disposers) off()
       disposers = [
-        ctx.tools.register(createBashTool(budgets)),
+        ctx.tools.register(createBashTool(budgets, table)),
+        ...createJobTools(table).map((entry) => ctx.tools.register(entry)),
         ctx.tools.register(createReadTool(budgets.readLineLimit)),
         ctx.tools.register(writeTool),
         ctx.tools.register(editTool),
@@ -138,6 +158,9 @@ export const toolsDefaultPlugin: Plugin.Object = {
     return () => {
       for (const off of disposers) off()
       disposers = []
+      // T15：内核收摊收掉还在跑的后台作业（跨会话存活的另一面是进程得有人收）
+      if (noticeTimer !== undefined) clearTimeout(noticeTimer)
+      stopAllBackgroundChildren()
       offSection()
     }
   },

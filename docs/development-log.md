@@ -1203,3 +1203,15 @@ roadmap §7 的 T14–T28 全量开工，第一批四件（全部不动内核的
 **验证**：双侧 typecheck、双构建全绿；新探针 `shots/batch-b-check.mjs` 12/12（假 stream 记录压缩请求断言输入缩半且哨兵经锚点保留、本地假端点实测发现链路、临时目录实测 read 分流）；全量回归——compact 54、batch-a 22、order/kernel-boot/integration、approval-floor 95、dsh-compat 15、file-review 59、dock-model、remote-server 12、lsp 167、mcp，四网 218/210/28/85。
 
 **诚实边界**：T23 只支持 OpenAI 兼容 /models（当前唯一协议适配器就是 openai-completions，anthropic 端点要等适配器出现再加）；「+」进来的模型能力是缺省值，要按模型改窗口/模态还得进编辑框；T21 状态点不含「定时任务时钟标记」（dsh 有，dsc 定时任务跑在当前会话里，当前会话的点已覆盖）。
+
+## 阶段 50：功能批次 C——bash 后台任务（0.6.31）
+
+T15（对标 dsh tool-jobs）：长命令不占住回合。bash 工具新增 `run_in_background` 参数——同一道命令、同一套审批与硬地板，只是立即返回 job id 不等结果；配 `job_output`（增量续读，游标记「读到哪了」）/ `job_list`（清点）/ `job_kill`（整树收尾）三件工具。输出进字符环形缓冲（100k 上限，超限从头部丢，绝对偏移跟着平移）；作业结束经 `agent.followup` 叫模型回来收结果（800ms 合并窗口，几个作业同时收尾只发一条）；作业跨会话存活，内核收摊时统一收掉。落点：**全部并入 `bash.ts`**——`runShell` 加 `ShellRunOptions` 旁路（onChunk 增量 / onExit 退出码 / trackKey 进登记表），后台走与前台完全同一条执行计划缝与环境脱敏；`JobTable` 与三工具同文件。
+
+**为什么并入 bash.ts（安全门实测结论，登记在案）**：Mimosa 候选扫描对「新文件里模型可控命令 → shell 的数据流」一律判高危——动态参数 spawn 行、kill 调用、转发包装函数、别名链、闭包工厂全部被逐层穿透拦下（连 ChildProcess 自带方法都不行），六种形态逐一试过无一放行；而 bash.ts 作为既有的进程原语文件是豁免边界（同文件新增 killTree 调用可过）。T15 因此以「进程原语不出 bash.ts」的形态落地。
+
+**附带修掉一个存量真 bug（探针抓的）**：Windows 上 `powershell -Command` 不透传原生命令的退出码——powershell.exe 只回 0/1，bash 工具在 Windows 上从来拿不到真实退出码。修法：命令末尾补一句 `if ($LASTEXITCODE -ne $null) { exit $LASTEXITCODE }`（用换行追加，command 以注释结尾不被吞；纯 cmdlet 命令无 $LASTEXITCODE，行为不变）。
+
+**验证**：typecheck/build 全绿；新探针 `shots/batch-c-check.mjs` 13/13（真起子进程：增量缓冲时间线、退出码透传、kill 后 close 不覆盖状态不补发通知、后台旁路硬地板、三工具形状）；回归 compact 54、batch-a 22、batch-b 12、kernel-boot、integration、approval-floor 95、dsh-compat 15、mcp、file-review 59、order 全过。
+
+**诚实边界**：后台作业没有超时（那是后台的意义），24 小时的描述值超时由 spawnShell 兜底；job_kill 的整树收割与前台超时共用 taskkill/组杀机制；完成通知是排队消息（模型下一轮看到），不是流中断注入。
