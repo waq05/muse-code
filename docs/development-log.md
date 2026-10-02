@@ -1304,3 +1304,21 @@ T15（对标 dsh tool-jobs）：长命令不占住回合。bash 工具新增 `ru
 **诚实边界**：带消息的会话、轨迹页、队友记录的布局不动（那些分支不挂居中类）；第一条消息发出后 composer 从居中组落回底部，行为与 dsh 的 blank-draft → conversation 切换一致，探针未单独取证（同一容器的两个 class 分支，逻辑已由 centeredOk 覆盖一半）。
 
 **Mimosa 重扫密封（0.6.36）**：scanId `scan-2026-10-02T15-56-56.056Z-530f870f93a8`（seal `sha256:9a0879fc…`），138 finding、src 面 13 项与 0.6.35 密封结论逐条一致（本轮增量仅 UI 布局，无安全面变化）；依赖 298 包 0 命中。另：本轮首次出现提交门 L3 硬拦——拦的全是 `desktop/runtime-staging/dsc-core`（**未入库**的本地构建产物，prepare-runtime 打包时再生）里 src 已定性 finding 的编译镜像；提交文件本身零 finding，重试走 enobufs 兼容路径通过。若要消除这种「构建产物镜像反复触发门」的摩擦，可考虑让扫描范围排除 `desktop/runtime-staging/`（regenerable 构建输出，非源码）——留给用户决定。
+
+## 阶段 56：体积与性能落地 + 死代码清理 + P3 立项（0.6.37）
+
+用户裁决「落地」优化清单并把一批已披露边界正式立项。体积优化的实测构成（改前）：安装包 114MB；win-unpacked 407MB = Electron ~318MB + locales 49MB + app.asar 20MB（渲染层产物 13MB）+ dsc-core 20MB（node_modules 16MB）。渲染层 chunk：真入口 2.1MB + **vscode-icons 图标全集 3.7MB**（file-icons.tsx 动态 import，但文件树/预览页签/改动卡出现得早，懒加载名存实亡）+ xlsx 0.9 / pdf 0.8 / shiki 各语言（本就懒）+ CSS 296KB。
+
+**四项体积/性能落地**：
+1. **图标集瘦身（最大单项）**：新增 `desktop/scripts/build-icon-map.mjs`——按常用扩展名/文件名清单（~250 项）经 vscode-icons-js 解析、从全集抽出 115 个图标 body 固化成 `file-icon-map.generated.ts`（≈511KB，生成器校验每个名字可解析、default-file 必须在内）；`file-icons.tsx` 改同步查表，未知图标回落 default-file。**3.7MB chunk 从产物消失**，入口 2.1→2.24MB。
+2. **xterm 懒加载**：新 `xterm-lazy.ts` 收拢动态 import（CSS 仍静态，几 KB 换首开不闪无样式帧）；`Dock.tsx` TerminalPane 的装配改异步——`disposed + teardown` 双保险处理卸载竞态。实机新用例 `ui-term`（展开 dock → 点「新建终端」→ 断言 `.term-host .xterm` 挂载且可见 407×794）termOk:true。
+3. **electronLanguages**：electron-builder.yml 加 `electronLanguages: [zh-CN, en-US]`，Electron 自带 55 语言包（49MB）只留两份。
+4. **zod 裁剪**：dsc src 零 import zod，它经 dsh 兼容生态（dsh-llm 等 peer 链）进闭包；全闭包 rg 证实对 `zod/v3|mini|v4-mini|locales|src` 零引用（只裸 `'zod'`）——prepare-runtime.mjs 复制后裁掉这五个子路径。**诚实边界**：仓库外的 dsh 插件若真 import 这些子路径会在运行时才炸，属兼容承诺外的长尾。
+
+**死代码清理（依据阶段 55 的审查报告）**：CLI 侧删 `src/core/tools/index.ts`（旧工具注册表 barrel，插件体系取代）、11 个死导出（allowAllApproval / verdictLine / dropBackup / relativeToSkills / marketErrorText 别名 / isPluginDisabled / RUNNER_FAILURE_SIGNATURE / inboxSummary / makeTerminalChildExperiment「用后即删」实验块 / CommandRunnerEntry / defaultTools 随死文件）、abi.ts 与 net-abi.ts 里 12 个零引用 FFI 常量、`UiConfig.ui` 死字段（boot/headless 只用 `ui.plugins`；boot.ts 头注释「UI 由 config.yaml 的 ui 段选择」与实现不符，一并修正——UI 由 spawn 哪个入口决定）。桌面侧删 `IconGrip`、primitives.css 孤儿层（dsc-ctl/field/badge/row/sect/date-sep/tabs/pop/menu/loader/skeleton/state-*/notice/inline-code/hairline/grip/focusable，~10KB）、styles.css 的 `.group-row .grip` 三条与 `.pop-hint`、base.css 的 `.sr-only`。**探针契约恢复 3 项**：win-net-setup 钉住 IPPROTO_TCP/UDP 的值、self-improve-check 钉住 lastChangeOf、win-token-smoke 钉住 RUNNER_FAILURE_SIGNATURE——agent 审查看不到 gitignored 探针，删后探针当场抓住，按契约恢复并在注释里写明「删项前先看探针」。`risk-high`/`tone-*`/`status-*` 等是模板拼接（保留）；`.sweep`/`.fadeTop`/`.fadeBottom` 只是 CSS 注释里的对照物引用（无规则，不动）。
+
+**roadmap 立项（§7.8，编号接 §7.5 的 T29–T47）**：T48 T20 完整版（PTY + signal，Mimosa 门预研前置）、T49 T28 升级 npm 包形态插件、T50 @ 补全多工作区/异根修正、T51 T26 完整回滚/部分行接受（用户裁决立项，hermes shadow git 方向）、T52 checkpoint/rewind、T53 对外 SDK、T54 SSH 远程执行（后三项自 §7.3 P3 升出，行内已标注）、V1 实机走查欠账（侧栏状态点 working/waiting、T16 标题、/export 落盘提示——deepseek 限流 10-06 解除后回销）。§7.7 的 T20/T28/T26 三行同步标注立项编号。
+
+**Mimosa 排除配置的探索结论（用户「算了先这样」）**：`security-policy.json` 的 `threatModel.exclusions` 是威胁模型字段不是扫描范围（试配 `desktop/runtime-staging` 后 138→211，把 schedule/renderer 等更多区域翻出来）；扫描器不尊重 .gitignore（`shots/` 在 ignore 里照样被扫）；引擎为加密包无可见排除面。实验产生的策略文件已删除恢复未配置基线。
+
+**验证**：根 build + desktop build + 双侧 typecheck 全绿；CLI 探针 21 个零失败——batch-a 22、batch-b 12、batch-c 13、batch-d 32、batch-e 33（退出阶段 libuv 噪声同前）、compact 53、order、kernel-boot、integration、approval-floor 95、mcp、file-review 59、file-review-kernel 9、dock-model、dsh-compat 15、llm-adapter 18、memory、remote-server 12、lsp 167、browser 210、tool-search、session-search、win-net-setup 160、self-improve 181、win-token-smoke 19、model-caps、preset；桌面 fold-check 220。产物：图标 chunk 消失、xterm 独立懒 chunk 404KB。

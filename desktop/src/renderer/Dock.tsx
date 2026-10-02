@@ -17,12 +17,10 @@
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type JSX, type MouseEvent as ReactMouseEvent } from 'react'
 import type { DiffHunkView } from '@dsc/runtime/contract.js'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import '@xterm/xterm/css/xterm.css'
 import { dsc, type RuntimeProxy } from './bridge.js'
 import { Select } from './components/Select.js'
 import { readTerminalFontSize, readTerminalTheme, watchAppearance } from './components/terminalTheme.js'
+import { loadXterm } from './xterm-lazy.js'
 import {
   IconBranch,
   IconChevronDown,
@@ -473,116 +471,129 @@ function TerminalPane(props: { cwd: string; proxy: RuntimeProxy; visible: boolea
 
   useEffect(() => {
     if (!booted || props.cwd === '') return
-    const term = new Terminal({
-      fontSize: readTerminalFontSize(),
-      fontFamily: 'Consolas, "Courier New", monospace',
-      cursorBlink: true,
-      theme: readTerminalTheme(),
-    })
-    const fit = new FitAddon()
-    term.loadAddon(fit)
-    if (host.current === null) return
-    term.open(host.current)
-    fit.fit()
-    fitRef.current = () => fit.fit()
-    // 外观偏好变了就照令牌重算并推给 xterm：appearance.ts 把三项写在 <html> 的
-    // data-theme、data-density 与内联 --dsc-font-scale 上，这里只跟着读，不另起一套状态。
-    // theme 每轮都得是新对象（xterm 对 theme 按引用比较，同对象赋值会被忽略）。
-    const offAppearance = watchAppearance(() => {
-      term.options.theme = readTerminalTheme()
-      const size = readTerminalFontSize()
-      if (size === term.options.fontSize) return
-      term.options.fontSize = size
-      fit.fit()
-    })
-    term.writeln(`\x1b[90m${shellMeta.label} · 管道模式：输入命令回车执行，不支持交互式全屏程序\x1b[0m\r\n`)
-
+    // xterm 懒加载：Dock 常驻挂载，终端类库等第一次真开终端才拉（见 xterm-lazy.ts）。
+    // 装配是异步的，卸载竞态用 disposed + teardown 双保险：then 回来时组件已卸载
+    // 就直接丢弃；已装配则走 teardown 收拾（杀会话、退订、dispose）。
     let disposed = false
-    let currentId = ''
-    // 行缓冲：管道 stdin 无行编辑，回车前由 renderer 维护输入行
-    let line = ''
-    let promptShown = false
-
-    const showPrompt = (): void => {
-      if (!promptShown) {
-        term.write(`\x1b[90m${shellMeta.prompt}\x1b[0m `)
-        promptShown = true
+    let teardown: (() => void) | null = null
+    void loadXterm().then(({ Terminal, FitAddon }) => {
+      if (disposed) return
+      const term = new Terminal({
+        fontSize: readTerminalFontSize(),
+        fontFamily: 'Consolas, "Courier New", monospace',
+        cursorBlink: true,
+        theme: readTerminalTheme(),
+      })
+      const fit = new FitAddon()
+      term.loadAddon(fit)
+      if (host.current === null) {
+        term.dispose()
+        return
       }
-    }
-    const sendLine = async (text: string): Promise<void> => {
-      promptShown = false
-      try {
-        await props.proxy.dock('term-input', { id: currentId, data: `${text}\n` })
-      } catch (error) {
-        term.write(`\r\n\x1b[31m${error instanceof Error ? error.message : String(error)}\x1b[0m\r\n`)
-      }
-    }
+      term.open(host.current)
+      fit.fit()
+      fitRef.current = () => fit.fit()
+      // 外观偏好变了就照令牌重算并推给 xterm：appearance.ts 把三项写在 <html> 的
+      // data-theme、data-density 与内联 --dsc-font-scale 上，这里只跟着读，不另起一套状态。
+      // theme 每轮都得是新对象（xterm 对 theme 按引用比较，同对象赋值会被忽略）。
+      const offAppearance = watchAppearance(() => {
+        term.options.theme = readTerminalTheme()
+        const size = readTerminalFontSize()
+        if (size === term.options.fontSize) return
+        term.options.fontSize = size
+        fit.fit()
+      })
+      term.writeln(`\x1b[90m${shellMeta.label} · 管道模式：输入命令回车执行，不支持交互式全屏程序\x1b[0m\r\n`)
 
-    const offData = dsc.onDockData(({ id, data }) => {
-      if (disposed || id !== currentId) return
-      // shell 管道模式不回显命令本身，输出后补提示符
-      term.write(data.replace(/\n/g, '\r\n'))
-      if (data.includes('\n')) showPrompt()
-    })
+      // 行缓冲：管道 stdin 无行编辑，回车前由 renderer 维护输入行
+      let currentId = ''
+      let line = ''
+      let promptShown = false
 
-    void props.proxy
-      .dock('term-spawn', { cwd: props.cwd, shell })
-      .then((result) => {
-        const id = String((result as { id?: string }).id ?? '')
-        if (id === '') {
-          term.write(`\r\n\x1b[31m终端启动失败\x1b[0m\r\n`)
-          return
+      const showPrompt = (): void => {
+        if (!promptShown) {
+          term.write(`\x1b[90m${shellMeta.prompt}\x1b[0m `)
+          promptShown = true
         }
-        currentId = id
-        setSession({ id, exited: false })
-        showPrompt()
-      })
-      .catch((error: unknown) => {
-        // 常见失败：目标 shell 未安装（如 pwsh 未装、Git Bash 不在 PATH）
-        setError(error instanceof Error ? error.message : String(error))
-        term.write(`\r\n\x1b[31m${shellMeta.label} 启动失败：${error instanceof Error ? error.message : String(error)}\x1b[0m\r\n`)
+      }
+      const sendLine = async (text: string): Promise<void> => {
+        promptShown = false
+        try {
+          await props.proxy.dock('term-input', { id: currentId, data: `${text}\n` })
+        } catch (error) {
+          term.write(`\r\n\x1b[31m${error instanceof Error ? error.message : String(error)}\x1b[0m\r\n`)
+        }
+      }
+
+      const offData = dsc.onDockData(({ id, data }) => {
+        if (disposed || id !== currentId) return
+        // shell 管道模式不回显命令本身，输出后补提示符
+        term.write(data.replace(/\n/g, '\r\n'))
+        if (data.includes('\n')) showPrompt()
       })
 
-    const dataHandler = term.onData((data) => {
-      if (currentId === '') return
-      for (const char of data) {
-        if (char === '\r') {
-          // 回车：本地回显换行，发送整行
-          term.write('\r\n')
-          const command = line
-          line = ''
-          if (command.trim() === '') {
-            showPrompt()
-            void props.proxy.dock('term-input', { id: currentId, data: '\n' })
-          } else {
-            void sendLine(command)
+      void props.proxy
+        .dock('term-spawn', { cwd: props.cwd, shell })
+        .then((result) => {
+          const id = String((result as { id?: string }).id ?? '')
+          if (id === '') {
+            term.write(`\r\n\x1b[31m终端启动失败\x1b[0m\r\n`)
+            return
           }
-        } else if (char === '\u007f') {
-          // 退格：本地编辑行缓冲
-          if (line.length > 0) {
-            line = line.slice(0, -1)
-            term.write('\b \b')
-          }
-        } else if (char === '\u0003') {
-          // Ctrl+C：取消当前行（管道模式无法中断运行中的命令）
-          term.write('^C')
-          line = ''
+          currentId = id
+          setSession({ id, exited: false })
           showPrompt()
-        } else {
-          line += char
-          term.write(char) // 本地回显
+        })
+        .catch((error: unknown) => {
+          // 常见失败：目标 shell 未安装（如 pwsh 未装、Git Bash 不在 PATH）
+          setError(error instanceof Error ? error.message : String(error))
+          term.write(`\r\n\x1b[31m${shellMeta.label} 启动失败：${error instanceof Error ? error.message : String(error)}\x1b[0m\r\n`)
+        })
+
+      const dataHandler = term.onData((data) => {
+        if (currentId === '') return
+        for (const char of data) {
+          if (char === '\r') {
+            // 回车：本地回显换行，发送整行
+            term.write('\r\n')
+            const command = line
+            line = ''
+            if (command.trim() === '') {
+              showPrompt()
+              void props.proxy.dock('term-input', { id: currentId, data: '\n' })
+            } else {
+              void sendLine(command)
+            }
+          } else if (char === '\u007f') {
+            // 退格：本地编辑行缓冲
+            if (line.length > 0) {
+              line = line.slice(0, -1)
+              term.write('\b \b')
+            }
+          } else if (char === '\u0003') {
+            // Ctrl+C：取消当前行（管道模式无法中断运行中的命令）
+            term.write('^C')
+            line = ''
+            showPrompt()
+          } else {
+            line += char
+            term.write(char) // 本地回显
+          }
         }
+      })
+
+      teardown = () => {
+        offAppearance()
+        dataHandler.dispose()
+        offData()
+        fitRef.current = null
+        if (currentId !== '') void props.proxy.dock('term-kill', { id: currentId }).catch(() => {})
+        term.dispose()
       }
     })
-
     return () => {
       disposed = true
-      offAppearance()
-      dataHandler.dispose()
-      offData()
-      fitRef.current = null
-      if (currentId !== '') void props.proxy.dock('term-kill', { id: currentId }).catch(() => {})
-      term.dispose()
+      teardown?.()
     }
   }, [booted, props.cwd, props.proxy, shell, shellMeta])
 

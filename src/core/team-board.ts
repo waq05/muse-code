@@ -339,18 +339,3 @@ export function inboxRead(teammate: string): string[] {
     return []
   }
 }
-
-/** 列出现有信箱（队友名 → 消息条数），设置页展示用。 */
-export function inboxSummary(): Record<string, number> {
-  const out: Record<string, number> = {}
-  try {
-    if (!existsSync(INBOX_DIR)) return out
-    for (const entry of readdirSync(INBOX_DIR)) {
-      if (!entry.endsWith('.jsonl')) continue
-      out[entry.replace(/\.jsonl$/, '')] = inboxRead(entry.replace(/\.jsonl$/, '')).length
-    }
-  } catch {
-    // 目录读不到就交空表，不因为展示而失败
-  }
-  return out
-}

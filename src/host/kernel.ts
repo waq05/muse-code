@@ -365,29 +365,26 @@ export async function loadExternalPlugins(root: Context, configured: string[]): 
   }
 }
 
-// ── config.yaml 的 ui/plugins 段（向后兼容：缺省 tui、无外部插件） ────────────
+// ── config.yaml 的 plugins 段（外部插件清单） ────────────────────────────────
 
 export interface UiConfig {
-  /** 'tui' = 终端 ink；'headless' = stdio 协议桥（桌面端宿主）。 */
-  ui: 'tui' | 'headless'
   plugins: string[]
 }
 
 export function readUiConfig(): UiConfig {
   try {
-    if (!existsSync(DSC_CONFIG_YAML)) return { ui: 'tui', plugins: [] }
+    if (!existsSync(DSC_CONFIG_YAML)) return { plugins: [] }
     const doc = parseTolerantYaml(readFileSync(DSC_CONFIG_YAML, 'utf8')) as {
       ui?: unknown
       plugins?: unknown
     }
     return {
-      ui: doc.ui === 'headless' ? 'headless' : 'tui',
       plugins: Array.isArray(doc.plugins)
         ? doc.plugins.filter((entry): entry is string => typeof entry === 'string')
         : [],
     }
   } catch {
-    return { ui: 'tui', plugins: [] }
+    return { plugins: [] }
   }
 }
 

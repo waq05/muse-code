@@ -667,8 +667,3 @@ function suggestPrefix(segment: CommandSegment): string[] | null {
   if (sub === 'run' || sub === 'test' || sub === 'check') return [head, sub, segment.tokens[2] ?? '*']
   return [head, sub]
 }
-
-/** 无头/自动场景的一句话解释（给 tool 结果与审计看）。 */
-export function verdictLine(verdict: CommandVerdict): string {
-  return `${verdict.decision}：${verdict.reason}`
-}

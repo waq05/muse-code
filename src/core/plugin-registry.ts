@@ -129,11 +129,6 @@ export function writePluginEntries(entries: PluginEntry[]): void {
   )
 }
 
-export function isPluginDisabled(file: string): boolean {
-  const entry = readPluginEntries().find((candidate) => candidate.file === file)
-  return entry?.disabled ?? false
-}
-
 export function getPluginConfig(file: string): Record<string, unknown> {
   const entry = readPluginEntries().find((candidate) => candidate.file === file)
   return entry?.config ?? {}

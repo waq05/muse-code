@@ -34,7 +34,7 @@ import { createNetProxy, proxyEnvVars, type NetProxy } from '../net-proxy.js'
 /** 执行器 id（宿主诊断与 `enforcement` 上报用这个键）。 */
 export const WINDOWS_TOKEN_RUNNER_ID = 'sandbox-windows-token'
 
-/** runner 自身失败的 stderr 签名：宿主靠它把「runner 挂了」与「命令失败了」分开。 */
+/** runner 自身失败的 stderr 签名：宿主与 win-token 冒烟探针靠它把「runner 挂了」与「命令失败了」分开。 */
 export const RUNNER_FAILURE_SIGNATURE = 'dsc-sandbox-run: '
 
 /** 询问顺序：与容器后端同档（策略围栏先问，它之后才轮到换执行体）。 */

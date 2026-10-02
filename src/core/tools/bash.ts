@@ -708,11 +708,6 @@ export interface TerminalOutputView {
   atEnd: boolean
 }
 
-/** T20 实验块：定位扫描判定边界（用后即删）。 */
-export function makeTerminalChildExperiment(): ChildProcess {
-  return spawnTerminalShell('')
-}
-
 /**
  * 终端会话表。open 起一个长命交互 shell（stdin 打开、无超时），send 往里写、
  * read 增量读、close 走 {@link stopBackgroundChild} 整树收尾——进程登记与

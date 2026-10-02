@@ -3,8 +3,8 @@
  * 由 bin/dsc.js spawn（bin 键 msc）；编译产物 lib/boot.js。
  *
  * 万物皆插件：本文件只负责装配——base 服务集见 host/kernel.ts，
- * UI 由 config.yaml 的 ui 段选择（tui | headless），外部插件经
- * ~/.dsc/plugins/*.js 与 config.yaml plugins 段加载。
+ * UI 由 spawn 哪个入口决定（本文件 = TUI；headless.ts = stdio 协议桥），
+ * 外部插件经 ~/.dsc/plugins/*.js 与 config.yaml plugins 段加载。
  *
  * @module dsc/boot
  */

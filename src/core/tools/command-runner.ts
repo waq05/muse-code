@@ -133,5 +133,3 @@ export async function finishCommand(run: CommandRun, plan: SpawnPlan, changed: r
 export function resetCommandRunners(): void {
   runners.clear()
 }
-
-export type { Entry as CommandRunnerEntry }

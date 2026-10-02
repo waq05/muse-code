@@ -386,6 +386,3 @@ export async function installPluginMarketEntry(entry: MarketEntry, pluginsDir: s
   writeFileSync(target, bytes)
   return target
 }
-
-/** 供错误信息复用（避免上层再判一次类型）。 */
-export { errText as marketErrorText }

@@ -987,10 +987,3 @@ export function archivedCount(): number {
     return 0
   }
 }
-
-/** 把路径压成技能根下的相对路径（显示用；不在根下就原样返回）。 */
-export function relativeToSkills(target: string): string {
-  const root = normalize(skillsRoot())
-  const full = normalize(resolve(target))
-  return full.startsWith(root) ? relative(root, full) || basename(full) : target
-}

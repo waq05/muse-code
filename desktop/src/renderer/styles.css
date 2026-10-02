@@ -655,13 +655,6 @@
   color: var(--dsc-accent);
 }
 
-.group-row .grip {
-  align-items: center;
-  color: var(--dsc-text-tertiary);
-  cursor: grab;
-  display: none;
-}
-
 /* 行内操作按钮默认藏着，hover 或键盘聚焦到行里才出现 */
 .row-actions {
   display: none;
@@ -671,7 +664,6 @@
 
 .group-row:hover .row-actions,
 .group-row:focus-within .row-actions,
-.group-row:hover .grip,
 .sess-item:hover .row-actions,
 .sess-item:focus-within .row-actions {
   display: inline-flex;
@@ -686,8 +678,7 @@
 /* 截图钩子（?reveal=1）：把 hover 才出现的行内按钮常驻，便于留证。
    消息操作条只提不透明度、不动 display：它是一条两端对齐的横栏，
    换成 inline-flex 会让右边的用量缩到正文末尾，拍出来的构图就不是真的。 */
-.shot-reveal .row-actions,
-.shot-reveal .group-row .grip {
+.shot-reveal .row-actions {
   display: inline-flex;
 }
 
@@ -2177,11 +2168,6 @@
   font-size: var(--dsc-fs-tool);
   letter-spacing: 0.04em;
   user-select: none;
-}
-
-.pop-hint {
-  font-size: var(--dsc-fs-tool);
-  letter-spacing: 0;
 }
 
 .effort-row {

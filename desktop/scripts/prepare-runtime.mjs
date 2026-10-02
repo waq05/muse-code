@@ -186,6 +186,20 @@ for (const [name, source] of closure) {
   console.log(`+ ${name} (${source})`)
 }
 
+// zod 只被 dsh 兼容生态以裸 `'zod'` 引用（经典 v4 面，dsh-llm 等 peer 链）；整个依赖
+// 闭包对 `zod/v3`、`zod/mini`、`zod/v4-mini`、`zod/locales`、`zod/src` 的引用为零
+// （rg 证据见 development-log 阶段 56）。整包拷贝里一半以上是没人 import 的旧面与
+// TS 源码目录，这里按证据裁掉。边界：仓库外的 dsh 插件若真 import 这些子路径会在
+// 运行时才炸——那是兼容承诺外的长尾，登记在 development-log 的诚实边界里。
+const ZOD_UNUSED_SUBPATHS = ['src', 'v3', 'mini', 'v4-mini', 'locales']
+const zodDir = join(staging, 'node_modules', 'zod')
+if (existsSync(zodDir)) {
+  for (const sub of ZOD_UNUSED_SUBPATHS) {
+    rmSync(join(zodDir, sub), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+  }
+  console.log(`− zod 裁掉无引用子路径：${ZOD_UNUSED_SUBPATHS.join('、')}`)
+}
+
 // 真加载一次：解析对了不代表传递依赖齐全（漏一个传递依赖，require 时才炸）。
 // 这里从产物目录里 require，缺谁当场报出来。
 const stagedRequire = createRequire(join(staging, 'package.json'))

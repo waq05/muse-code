@@ -40,10 +40,3 @@ export interface ApprovalOptions {
 export interface ApprovalHandler {
   decide(request: ApprovalRequest, signal: AbortSignal, options?: ApprovalOptions): Promise<ApprovalDecision>
 }
-
-/** M1 / 自动化场景用：全部放行。 */
-export const allowAllApproval: ApprovalHandler = {
-  async decide() {
-    return 'allow-once'
-  },
-}

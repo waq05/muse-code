@@ -353,10 +353,10 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 
 | 项 | 对标 | 不做的理由 |
 | --- | --- | --- |
-| checkpoint / rewind / backtrack | codex Esc-Esc 回退重编辑；hermes shadow git | 与 T26 同族，动内核，等真实痛点 |
+| checkpoint / rewind / backtrack | codex Esc-Esc 回退重编辑；hermes shadow git | 与 T26 同族，动内核，等真实痛点；**已升出立项 T52（§7.8）** |
 | 轮中途插话 steering / 消息排队 | dsh steering inbox；codex turn steer + `codex queue` | 无 steering 数据模型，已裁定不做（§3.2 有意不做清单） |
-| 对外 SDK / 协议面 | dsh SDK（TS+Python）；codex app-server v2 | 个人版没有第三方集成方；host-stdio 协议 v2 内部够用 |
-| SSH 远程执行 | dsh `packages/ssh/*` | 手机遥控已覆盖「人不在电脑前」的主场景 |
+| 对外 SDK / 协议面 | dsh SDK（TS+Python）；codex app-server v2 | 个人版没有第三方集成方；host-stdio 协议 v2 内部够用；**已升出立项 T53（§7.8）** |
+| SSH 远程执行 | dsh `packages/ssh/*` | 手机遥控已覆盖「人不在电脑前」的主场景；**已升出立项 T54（§7.8）** |
 | 消息评分反馈 | dsh Like/Dislike + `/feedback` | 无消费方（dsh 的评分喂官方日志上传，dsc 没有这条链路） |
 | 快捷键自定义 / Vim 模式 | codex keymap + Vim；dsh shortcuts 持久化 + 冲突检测 | 快捷键只有 8 个，冲突面小 |
 | GitHub PR 审查 webhook | dsh `webhook-github` 自动建只读审查会话 | 个人版没有 CI 场景 |
@@ -468,12 +468,29 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 | T15 bash 后台任务 | ✅ 0.6.31 | `run_in_background` + `job_output/job_list/job_kill` 三件 + `JobTable`；附带修 Windows 退出码透传 |
 | T18 /review 升级 | ✅ 0.6.32 | `reviewer` 内置角色 + `ReviewService.spawn`（工牌强制只读交集）+ findings 结构化卡 + 行号跳转；subagent 插件没开回落 v1 |
 | T24 MCP 扩展 | ✅ 0.6.33 | 协议升 2025-06-18；resources/prompts 客户端方法 + `mcp_resources`/`mcp_prompts` 工具（按 server 能力注册）；elicitation 接审批卡（stdio 通道声明能力，http 不声明） |
-| T20 持久终端 | ✅ 0.6.33 | 降级版五动作 `terminal` 工具（open/read/send/close/list）+ `TerminalTable`；无 PTY、无中途打断（披露） |
+| T20 持久终端 | ✅ 0.6.33 | 降级版五动作 `terminal` 工具（open/read/send/close/list）+ `TerminalTable`；无 PTY、无中途打断（披露）；**完整版已立项 T48（§7.8）** |
 | T27 检查更新 | ✅ 0.6.33 | 检查链路已备（0.6.18 起）+ `sourceUrl` 测试缝探针覆盖；`UPDATE_CHECK_URL` 仍待发布后填；**不做自动安装**（用户只要检查），有新版打开发布页手动换包 |
-| T28 插件远程安装 | ✅ 0.6.33 | `plugin_manager` 加 `browse_remote`/`install_remote`；`core/market.ts` 插件市场两函数（GitHub 目录/索引 JSON 两类源）；必须 https，risk=write 装前过审批 |
-| T26 回滚 / 部分行接受 | ◑ 评估完毕，暂不做 | 见下方评估结论 |
+| T28 插件远程安装 | ✅ 0.6.33 | `plugin_manager` 加 `browse_remote`/`install_remote`；`core/market.ts` 插件市场两函数（GitHub 目录/索引 JSON 两类源）；必须 https，risk=write 装前过审批；**npm 包形态已立项 T49（§7.8）** |
+| T26 回滚 / 部分行接受 | ▶ 已立项（T51，2026-10-03 用户裁决） | 见下方评估结论与 §7.8 |
 
-**T26 评估结论（2026-10-02）**：完整回滚语义暂不立项。理由：(1) dsc 的 write/edit 已带回合前全文基线（0.6.24 的 fileChanges pre-image），但只覆盖第一方工具——bash/sed 改的文件只有 git 状态码差集没有 pre-image，「回滚到回合前」在混合改动场景语义残缺；(2) 「回滚保手改」（hermes writer-ledger 的核心价值）需要 per-hunk 三方合并（基线 × 当前 × 手改），个人版没有这层算力与数据模型基建；(3) 有 git 的工作区，用户撤模型改动走 git checkout/恢复面板已是顺路动作，专属回滚 UI 的频次撑不起维护成本；(4) 部分行接受（codex apply_patch 语义）把 diff 审查面板从只读改成双向数据流，动审批模型与转录契约，与 checkpoint/rewind 同族的全部风险都要背。**重启条件**：用户高频出现「撤模型某文件改动但保手改」的真实诉求时再立项，届时走 hermes shadow git 方向（checkpoint writer-ledger），不做反向 patch。
+**T26 评估结论（2026-10-02）**：完整回滚语义暂不立项。理由：(1) dsc 的 write/edit 已带回合前全文基线（0.6.24 的 fileChanges pre-image），但只覆盖第一方工具——bash/sed 改的文件只有 git 状态码差集没有 pre-image，「回滚到回合前」在混合改动场景语义残缺；(2) 「回滚保手改」（hermes writer-ledger 的核心价值）需要 per-hunk 三方合并（基线 × 当前 × 手改），个人版没有这层算力与数据模型基建；(3) 有 git 的工作区，用户撤模型改动走 git checkout/恢复面板已是顺路动作，专属回滚 UI 的频次撑不起维护成本；(4) 部分行接受（codex apply_patch 语义）把 diff 审查面板从只读改成双向数据流，动审批模型与转录契约，与 checkpoint/rewind 同族的全部风险都要背。**2026-10-03 用户裁决：立项（T51），走 hermes shadow git 方向（checkpoint writer-ledger），不做反向 patch；动工前先补 per-hunk 三方合并的设计轮。**
+
+### 7.8 立项登记（2026-10-03，0.6.37 起；全部「已立项待排期」）
+
+用户裁决把下列已披露的降级边界与 §7.3 P3 项正式立项。编号接 §7.5（T29–T47 已被深度复核占用）。每项动工前仍需一轮设计探索（对标、落点、验收），表里给的是立项时的范围锚点。
+
+| 项 | 范围锚点 | 主要前置 |
+| --- | --- | --- |
+| T48 T20 完整版：PTY + 中途打断 | node-pty 换掉管道 shell（全屏程序可跑）；signal 动作恢复（Ctrl+C 真中断）；prepare-runtime 依赖闭包带 node-pty 原生二进制 | Mimosa 门预研：spawn/kill 原语的判定边界（T20 降级时被拦 5 次的教训），signal 通路先设计再动内核 |
+| T49 T28 升级：npm 包形态插件远程安装 | registry tarball 拉取（npm 源 + 自定义 registry）、依赖解析、完整性校验（integrity/shasum）、审批卡带包名与版本；装后热挂载同现有路径 | tarball 解包安全（路径穿越/任意代码已由 risk=write 审批覆盖）；market.ts 加第三类源 |
+| T50 T14 边界修正：@ 补全多工作区/异根 | 遍历范围从「dock 根目录」改为「当前会话 cwd + 工作区集合」；候选路径显示与 insertMention 用同一套归一化；跨盘/异根场景路径不再错位 | mention-complete.ts 的 collectWorkspaceFiles 改多根遍历；@ 候选命中率的探针补多根用例 |
+| T51 T26 完整回滚 / 部分行接受 | hermes shadow git 方向：checkpoint writer-ledger 记回合前快照（含 bash/sed 触碰的文件），「回滚到回合前」「保手改」先做前者；部分行接受（apply_patch 语义）二期 | per-hunk 三方合并基建设计轮；§7.7 评估结论的四条顾虑逐条在设计轮里给答案 |
+| T52 checkpoint / rewind（§7.3 升出） | codex Esc-Esc 回退重编辑、hermes shadow git；与 T51 同族，设计轮合并做 | 同 T51 |
+| T53 对外 SDK / 协议面（§7.3 升出） | dsh SDK（TS+Python）、codex app-server v2 对标；host-stdio 协议 v2 稳定化 + 客户端库 | 有真实集成方需求时排期优先级才升 |
+| T54 SSH 远程执行（§7.3 升出） | dsh `packages/ssh/*` 对标：远程宿主跑命令与会话；手机遥控场景的延伸 | 安全面（远程执行授权模型）先于实现 |
+| V1 实机走查欠账（非功能项） | 侧栏状态点 working/waiting 两档、T16 会话标题自动生成、/export 落盘提示——逻辑均有单测/探针，缺真模型轮的实机目检 | deepseek 限流 2026-10-06 解除后补走查并回销 |
+
+§7.3 中被升出的三行（checkpoint/rewind、对外 SDK、SSH 远程执行）保留原文并在行内标注「已升出（T52/T53/T54）」；其余 P3 行维持「登记免遗忘」不变。
 
 ---
 

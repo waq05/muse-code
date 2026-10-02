@@ -102,8 +102,6 @@ export const REVOKE_ACCESS = 4
 export const TRUSTEE_IS_SID = 0
 /** TrusteeType：不指名类型。 */
 export const TRUSTEE_IS_UNKNOWN = 0
-/** TrusteeType：内置已知组（Everyone 用）。 */
-export const TRUSTEE_IS_WELL_KNOWN_GROUP = 5
 
 /** EXPLICIT_ACCESS_W 在 x64 上共 48 字节。 */
 export const EXPLICIT_ACCESS_SIZE = 48
@@ -179,25 +177,17 @@ export const LOGON32_PROVIDER_DEFAULT = 0
 // ── 等待与错误 ──────────────────────────────────────────────────────────────
 
 export const WAIT_OBJECT_0 = 0
-export const WAIT_TIMEOUT = 0x00000102
 export const INFINITE = 0xffffffff
-/** 进程还活着的探测退出码。 */
-export const STILL_ACTIVE = 259
 
 export const ERROR_BROKEN_PIPE = 109
 export const ERROR_NO_DATA = 232
-export const ERROR_INSUFFICIENT_BUFFER = 122
 export const ERROR_INVALID_PARAMETER = 87
 export const ERROR_ACCESS_DENIED = 5
-export const ERROR_LOGON_FAILURE = 1326
-export const ERROR_ACCOUNT_DISABLED = 1331
-export const ERROR_NONE_MAPPED = 1332
 
 // ── 锁文件 ──────────────────────────────────────────────────────────────────
 
 export const GENERIC_READ = 0x80000000
 export const GENERIC_WRITE = 0x40000000
-export const OPEN_EXISTING = 3
 export const OPEN_ALWAYS = 4
 export const FILE_SHARE_READ = 0x00000001
 export const FILE_SHARE_WRITE = 0x00000002

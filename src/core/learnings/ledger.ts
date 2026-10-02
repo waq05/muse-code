@@ -168,7 +168,7 @@ export function findLedgerEntry(id: string): LedgerEntry | undefined {
   return readLedger().find((entry) => entry.id === id)
 }
 
-/** 台账里某个技能最新的一条非回滚变更（插件拿来判断「这个技能是我们建的吗」）。 */
+/** 台账里某个技能最新的一条非回滚变更（self-improve 自检探针钉住；插件侧暂无调用方）。 */
 export function lastChangeOf(skill: string): LedgerEntry | undefined {
   return readLedger().find((entry) => entry.skill === skill && entry.action !== 'rollback')
 }
@@ -287,18 +287,6 @@ export function ledgerSize(): number {
     return existsSync(file) ? readFileSync(file, 'utf8').length : 0
   } catch {
     return 0
-  }
-}
-
-/** 清掉某条台账留下的副本（用户明确说「不要这些副本」时才调）。 */
-export function dropBackup(entry: LedgerEntry): void {
-  const path = backupPathOf(entry)
-  if (path === null || !existsSync(path)) return
-  try {
-    // 副本是文件不是目录，用 unlink 语义的 rmSync（不递归）
-    rmSync(path, { force: true })
-  } catch {
-    // 删不掉就留着：副本是保险，不是负担
   }
 }
 

@@ -53,6 +53,8 @@ export const FWPM_CONDITION_IP_PROTOCOL = '3971ef2b-623e-4f9a-8cb1-6e79b806b9a7'
 export const FWPM_CONDITION_IP_REMOTE_PORT = 'c35a604d-d22b-4e1a-91b4-68f674ee674b'
 
 // ── IP 协议号（RFC 1700 / winsock 的 IPPROTO_*）───────────────────────────────
+// 这张表是「文档化的协议号台账」：win-net-setup 自检探针钉住 TCP/UDP 两项的值，
+// 删项前先看探针（shots/win-net-setup-check.mjs）。
 
 export const IPPROTO_ICMP = 1
 export const IPPROTO_TCP = 6
@@ -91,8 +93,6 @@ export const FWPM_FILTER_FLAG_PERSISTENT = 0x1
 export const FWPM_PROVIDER_FLAG_PERSISTENT = 0x1
 /** sublayer 标志：持久。 */
 export const FWPM_SUBLAYER_FLAG_PERSISTENT = 0x1
-/** sublayer 权重：高于防火墙默认子层，保证 BLOCK 先于 MPSSVC 的 permit 被评估。 */
-export const DSC_WFP_SUBLAYER_WEIGHT = 0x8000
 
 /** FwpmEngineOpen0 的认证服务：RPC_C_AUTHN_WINNT。 */
 export const RPC_C_AUTHN_WINNT = 10
@@ -131,8 +131,6 @@ export const FWP_E_LOOKUP_MISSING: readonly number[] = [FWP_E_SUBLAYER_NOT_FOUND
 export const DSC_WFP_PROVIDER_GUID = '6457c14d-3d0d-4bb7-af2a-07311a5c18c2'
 /** dsc 的持久 WFP sublayer（12 条 filter 全挂它下面；探测存在性就是查它）。 */
 export const DSC_WFP_SUBLAYER_GUID = 'bd22d574-59b1-4f71-ab24-7856770ddb51'
-/** provider / sublayer / filter 的显示名前缀（在 netsh wfp show 与防火墙 UI 里认得出是 dsc 的）。 */
-export const DSC_WFP_DISPLAY_PREFIX = 'dsc Windows Sandbox WFP'
 
 // ── 12 条 BLOCK filter 的规格表 ──────────────────────────────────────────────
 

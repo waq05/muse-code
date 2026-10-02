@@ -17,6 +17,10 @@ extraResources:
     to: icon-tray.png
 afterPack: scripts/after-pack.cjs
 asar: true
+# Electron 自带 55 个语言包（~49MB）：界面只有中文，留中英两份就够
+electronLanguages:
+  - zh-CN
+  - en-US
 win:
   target:
     - target: nsis

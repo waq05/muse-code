@@ -383,21 +383,6 @@ export function IconPin(props: IconProps): JSX.Element {
   )
 }
 
-/** 拖动手柄（两列三点，用于可拖动的工作区行）。 */
-export function IconGrip(props: IconProps): JSX.Element {
-  return base(
-    <g fill="currentColor" stroke="none">
-      <circle cx="9.5" cy="6.5" r="1.05" />
-      <circle cx="9.5" cy="12" r="1.05" />
-      <circle cx="9.5" cy="17.5" r="1.05" />
-      <circle cx="14.5" cy="6.5" r="1.05" />
-      <circle cx="14.5" cy="12" r="1.05" />
-      <circle cx="14.5" cy="17.5" r="1.05" />
-    </g>,
-    props,
-  )
-}
-
 /** 终端（方框 + 提示符）。 */
 export function IconTerminal(props: IconProps): JSX.Element {
   return base(
