@@ -3,6 +3,11 @@
  * 「按工作区树」分组时按目录前缀算层级与祖先链。
  * 单独成文件是为了能脱离界面直接跑断言（见 `shots/order-check.mjs`）。
  *
+ * 命名约定：这里的值本身是会话的 `cwd`（会话在哪个目录里开的）；「工作区」是
+ * 界面对它的称呼——分组、拖拽排序、别名都按它。持久化键名沿用
+ * `workspaceOrder` / `workspaceAliases`（老用户存档不动），代码里读到这两个键名
+ * 想到「按 cwd 存的界面偏好」即可。
+ *
  * @module desktop/renderer/workspace-order
  */
 

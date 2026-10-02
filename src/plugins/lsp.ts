@@ -28,7 +28,7 @@
  *     有的服务器回 `file:///c%3A/…`；盘符大小写、UNC、`%5C`、`%00` 都要过）；
  *   - 列偏移不用换算：JS 字符串长度天然是 UTF-16 code unit，只做一基/零基转换。
  *
- * 支撑模块（本插件独占）：`src/core/lsp/{framing,client,servers,uri}.ts`
+ * 支撑模块（本插件独占）：`src/core/lsp/{framing,client,manager,normalize,line-shift,servers,uri}.ts`
  *
  * @module dsc/plugins/lsp
  */
@@ -47,11 +47,10 @@ import {
   type LspQueryOutcome,
   type LspStatusEntry,
   LSP_OPERATIONS,
-  LspManager,
-  buildLineShift,
-  diagnosticKey,
-  shiftDiagnostics,
 } from '../core/lsp/client.js'
+import { LspManager } from '../core/lsp/manager.js'
+import { buildLineShift, shiftDiagnostics } from '../core/lsp/line-shift.js'
+import { diagnosticKey } from '../core/lsp/normalize.js'
 import {
   BUILTIN_SERVERS,
   type LspServerDef,

@@ -592,7 +592,11 @@ function TerminalPane(props: { cwd: string; proxy: RuntimeProxy; visible: boolea
   }, [props.visible])
 
   const pickShell = (value: ShellValue): void => {
-    localStorage.setItem('dsc.dockShell', value)
+    try {
+      localStorage.setItem('dsc.dockShell', value)
+    } catch {
+      // 存不下（隐私模式/配额满）只影响下次启动的默认 shell，不该打断选择
+    }
     setShell(value)
     setError('')
   }
@@ -638,7 +642,11 @@ function BrowserPane(): JSX.Element {
     const offState = dsc.onBrowserState((state) => {
       setUrl(state.url)
       setAddress(state.url)
-      localStorage.setItem('dsc.dock.browserUrl', state.url)
+      try {
+        localStorage.setItem('dsc.dock.browserUrl', state.url)
+      } catch {
+        // 存不下就只影响下次打开浏览器页签时的记忆地址
+      }
     })
     return () => {
       observer.disconnect()

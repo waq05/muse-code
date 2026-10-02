@@ -26,7 +26,9 @@ import { confirmAction } from './components/confirm.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { dsc, type RuntimeProxy } from './bridge.js'
 import { SIDEBAR_MAX, SIDEBAR_MIN, readRootPx, setRootVar, useWidthDrag } from './panels.js'
-import { moveToEnd, moveWithin, nestByPath, type NestedPath } from './workspace-order.js'
+import { moveToEnd, moveWithin } from './workspace-order.js'
+import { buildWorkGroups, displayName, lastSegment, orderedSessions, relative, type WorkGroup } from './sidebar-groups.js'
+import { formatTokens } from './token-estimate.js'
 import {
   IconArchive,
   IconArchiveOff,
@@ -59,11 +61,6 @@ import {
 
 /** 左栏页面（技能/插件各占一页，其余时间显示对话）。 */
 export type SidebarView = 'chat' | 'plugins' | 'skills'
-
-/** 侧栏里的一个工作区分组：树的层级来自 {@link NestedPath}，这里再挂上会话。 */
-interface WorkGroup extends NestedPath {
-  sessions: SessionSummary[]
-}
 
 /** 归档确认框里那句后果说明：写清去向与「消息不删」，免得用户把归档当成删除。 */
 const ARCHIVE_DETAIL_ONE = '会话会离开侧栏，移进「设置 → 归档」的归档区；消息一个字不删，想回来去归档里点「恢复」。'
@@ -177,93 +174,22 @@ export function Sidebar(props: {
   const group = props.uiPrefs.sessionGroup
   const archived = props.uiPrefs.archivedFilter
 
-  /**
-   * 会话行排序：置顶块照旧排最前（置顶时间倒序）；manual 档按 `sessionOrder`
-   * 里拖出来的顺序走（dsh 的 reconcileManualOrder 语义——表里没有的会话按
-   * 最近使用接在所属置顶块末尾），其余档按时间。cwd 缺省（单列表）没有拖拽序。
-   */
-  const orderedSessions = (cwd: string | undefined, list: SessionSummary[]): SessionSummary[] => {
-    const sorted = [...list].sort((a, b) => {
-      if ((a.pinnedAt ?? 0) !== (b.pinnedAt ?? 0)) return (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0)
-      return sort === 'created' ? b.createdAt - a.createdAt : b.updatedAt - a.updatedAt
-    })
-    if (sort !== 'manual' || cwd === undefined) return sorted
-    const saved = props.uiPrefs.sessionOrder[cwd]
-    if (saved === undefined || saved.length === 0) return sorted
-    const rank = new Map(saved.map((id, index) => [id, index]))
-    // 置顶块约束：拖拽只在同一块内进行，落盘序也只在块内生效，两块之间仍是置顶在前。
-    const weave = (part: SessionSummary[]): SessionSummary[] =>
-      [...part].sort((a, b) => {
-        const ra = rank.get(a.id)
-        const rb = rank.get(b.id)
-        if (ra !== undefined && rb !== undefined) return ra - rb
-        if (ra !== undefined) return -1
-        if (rb !== undefined) return 1
-        return 0
-      })
-    return [...weave(sorted.filter((session) => session.pinnedAt !== undefined)), ...weave(sorted.filter((session) => session.pinnedAt === undefined))]
-  }
-
-  /** 归档筛选：hide 只看活动区，only 只看归档区，show 两区并成一份列表。 */
-  const keepArchived = (session: SessionSummary): boolean =>
-    archived === 'hide'
-      ? session.archivedAt === undefined
-      : archived === 'only'
-        ? session.archivedAt !== undefined
-        : true
-
-  const groups = useMemo(() => {
-    const map = new Map<string, SessionSummary[]>()
-    // 只有「切过去还没发消息」的工作区没有会话，也要留在列表里；只看归档时它们没意义
-    if (archived !== 'only') for (const dir of props.recentCwds) map.set(dir, [])
-    for (const session of props.sessions) {
-      if (!keepArchived(session)) continue
-      const key = session.cwd || '(未指定)'
-      const list = map.get(key) ?? []
-      list.push(session)
-      map.set(key, list)
-    }
-    const match = (cwd: string, list: SessionSummary[]): boolean =>
-      trimmed === '' ||
-      displayName(cwd, aliases).toLowerCase().includes(trimmed) ||
-      cwd.toLowerCase().includes(trimmed) ||
-      list.some((session) => (session.title ?? '新会话').toLowerCase().includes(trimmed))
-    const visible = [...map.entries()].filter(([cwd, list]) => match(cwd, list))
-    const rank = (cwd: string): number => order.indexOf(cwd)
-    const lastUsed = (list: SessionSummary[]): number => list.reduce((max, s) => Math.max(max, s.updatedAt), 0)
-    const lastCreated = (list: SessionSummary[]): number => list.reduce((max, s) => Math.max(max, s.createdAt), 0)
-    const sorted = visible
-      .map(([cwd, list]) => [cwd, orderedSessions(cwd, list)] as [string, SessionSummary[]])
-      .sort((a, b) => {
-        if (sort === 'manual') {
-          // 手动排过序就完全按手动顺序（活动组不再抢位）；没排过则活动组置顶，其余按最近使用
-          if (order.length > 0) {
-            const ra = rank(a[0])
-            const rb = rank(b[0])
-            if (ra !== rb) {
-              if (ra < 0) return 1
-              if (rb < 0) return -1
-              return ra - rb
-            }
-          } else if ((a[0] === props.cwd) !== (b[0] === props.cwd)) {
-            return a[0] === props.cwd ? -1 : 1
-          }
-          return lastUsed(b[1]) - lastUsed(a[1])
-        }
-        // 最近更新 / 创建时间这两档两级都按时间，不再人为把活动组顶上去
-        return sort === 'created' ? lastCreated(b[1]) - lastCreated(a[1]) : lastUsed(b[1]) - lastUsed(a[1])
-      })
-    if (group !== 'tree') {
-      return sorted.map(
-        ([cwd, list]): WorkGroup => ({ cwd, sessions: list, depth: 0, parent: null, ancestors: [], hasChildren: false }),
-      )
-    }
-    const lists = new Map(sorted)
-    return nestByPath(sorted.map(([cwd]) => cwd)).map(
-      (node): WorkGroup => ({ ...node, sessions: lists.get(node.cwd) ?? [] }),
-    )
+  const groups = useMemo(
+    () => buildWorkGroups({
+      sessions: props.sessions,
+      recentCwds: props.recentCwds,
+      cwd: props.cwd,
+      sort,
+      group,
+      archived,
+      trimmed,
+      aliases,
+      order,
+      sessionOrder: props.uiPrefs.sessionOrder,
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.sessions, props.recentCwds, props.cwd, order, aliases, trimmed, sort, group, archived, props.uiPrefs.sessionOrder])
+    [props.sessions, props.recentCwds, props.cwd, order, aliases, trimmed, sort, group, archived, props.uiPrefs.sessionOrder],
+  )
 
   const isActiveGroup = (cwd: string): boolean => cwd === props.cwd
   /** 树里带子分组的行（折叠它要连带收起后代，且默认展开）。 */
@@ -319,7 +245,7 @@ export function Sidebar(props: {
   const hiddenByAncestor = (item: WorkGroup): boolean => item.ancestors.some((ancestor) => !isExpanded(ancestor))
 
   /** 单列表：不分工作区，所有会话混成一条按排序方式排好的流。 */
-  const flatSessions = orderedSessions(undefined, groups.flatMap((item) => item.sessions))
+  const flatSessions = orderedSessions(undefined, groups.flatMap((item) => item.sessions), sort, props.uiPrefs.sessionOrder)
 
   /** 视图选项菜单的三组（对照 dsh 的「分组方式 / 排序方式 / 筛选会话」）。 */
   const viewSections: { label: string; items: { id: string; text: string; icon: JSX.Element; active: boolean }[] }[] = [
@@ -441,7 +367,7 @@ export function Sidebar(props: {
     if (over.id === sourceId) return
     const group = groups.find((item) => item.cwd === cwd)
     if (group === undefined) return
-    const ordered = orderedSessions(cwd, group.sessions)
+    const ordered = orderedSessions(cwd, group.sessions, sort, props.uiPrefs.sessionOrder)
     const full = ordered.map((session) => session.id)
     const section = ordered.filter((session) => (session.pinnedAt !== undefined) === pinned)
     const sourceIndex = section.findIndex((session) => session.id === sourceId)
@@ -1259,31 +1185,7 @@ export function Sidebar(props: {
   )
 }
 
-/** 工作区显示名：用户起的别名优先，否则末级目录名。 */
-function displayName(cwd: string, aliases: Record<string, string>): string {
-  return aliases[cwd] ?? lastSegment(cwd)
-}
-
 /** 会话 uuid：会话文件（`…\.dsc\sessions\<目录>\<uuid>.jsonl`）的文件名去掉扩展名。 */
 function uuidOf(path: string): string {
   return lastSegment(path).replace(/\.jsonl$/, '')
-}
-
-function lastSegment(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() ?? path
-}
-
-function relative(ts: number): string {
-  const minutes = Math.floor((Date.now() - ts) / 60000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes}分钟`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}小时`
-  return `${Math.floor(hours / 24)}天`
-}
-
-function formatTokens(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(2)}M`
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`
-  return String(count)
 }

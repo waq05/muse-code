@@ -13,6 +13,7 @@
  */
 import type { ChatMessage, LlmRoute, LlmStream } from './llm.js'
 import { contentText } from './llm.js'
+import { estimateTextTokens } from './token-estimate.js'
 import type { Session } from './session.js'
 import {
   buildAnchorIndex,
@@ -44,23 +45,8 @@ export const DEFAULT_COMPACT_LIMITS: CompactLimits = {
 }
 
 /**
- * 粗略 token 估算（2026-09-29 从 chars/3 改为 CJK 分开算）：
- * 中文一个字约 0.6~0.7 token，chars/3 会把中文低估约一半——自动压缩要等真实用量
- * 冲到窗口 100% 以上才触发，直接爆窗。这里中文按 0.65、其余按 0.33（≈3 字符/token）
- * 估，整体宁可高估（早压一次很便宜）也不低估（报错结束回合）。
+ * 粗略 token 估算（口径见 core/token-estimate.ts 的模块注释：中文 0.65、其余 0.33）。
  */
-const CJK_CHAR = /[\u1100-\u11FF\u2E80-\u9FFF\uA000-\uA4CF\uAC00-\uD7FF\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF]/
-
-function estimateTextTokens(text: string): number {
-  let cjk = 0
-  let other = 0
-  for (const char of text) {
-    if (CJK_CHAR.test(char)) cjk += 1
-    else other += 1
-  }
-  return cjk * 0.65 + other * 0.33
-}
-
 export function estimateTokens(messages: readonly ChatMessage[]): number {
   let tokens = 0
   for (const message of messages) {

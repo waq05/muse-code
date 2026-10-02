@@ -247,13 +247,21 @@ export function DiffPane(props: {
   }
   const toggleSplit = (): void => {
     setSplit((current) => {
-      localStorage.setItem(VIEW_KEY, current ? 'unified' : 'split')
+      try {
+        localStorage.setItem(VIEW_KEY, current ? 'unified' : 'split')
+      } catch {
+        // 存不下就只影响下次启动的默认视图，不该打断切换
+      }
       return !current
     })
   }
   const toggleWrap = (): void => {
     setWrap((current) => {
-      localStorage.setItem(WRAP_KEY, current ? 'nowrap' : 'wrap')
+      try {
+        localStorage.setItem(WRAP_KEY, current ? 'nowrap' : 'wrap')
+      } catch {
+        // 同上
+      }
       return !current
     })
   }

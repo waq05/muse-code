@@ -1129,3 +1129,47 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 - T39 只记忆 provider/model 两元组，思考档位（effort）仍是进程级的。
 - 结构审查的大项（ChatView 约 1200 行 / Sidebar 约 1189 行 / App 约 823 行的巨型组件拆分、lsp/client.ts 1578 行拆三件、remote createRemoteServer 451 行拆路由、token 粗估三份口径合一、字节数格式化三份合一、localStorage 收敛单一出口、cwd/workspace 同物两名）登记未动——都是纯重构，与本批正确性修复混在一起会搅乱回归口径，单独立项做。
 - `setAuditEnabled` / `renderDiff` 两个导出的唯一消费者是本机不入库的自检脚本，保留（脚本是自检工作流的一部分）。
+
+## 阶段 47：结构收敛批——巨型文件全量拆分 + 重复实现归一（0.6.28）
+
+上一阶段登记未动的结构大件，本批全部落账。纯结构重构（行为等价的代码搬移 + 类型收紧），没有新功能。
+
+**lsp/client.ts（1578 行）拆四件**：
+
+- `client.ts`（860 行）只留「一个连接怎么说话」：spawn、握手、JSON-RPC、请求超时取消、无状态文档生命周期；`LspInstance` / `LspQueryError` 转为 export 供 manager 使用。
+- `manager.ts`（479 行，新）：实例池 + 按 (服务器, 根) 串行队列 + idle 回收 + 破键退避——「池化与调度」与「传输」分层；`errorText` 直接换成 core/err-text 的 `errText`（上一阶段的归一收尾）。
+- `normalize.ts`（150 行，新）：应答归并纯函数（Location / LocationLink / Hover / Diagnostic），自检重点覆盖对象，只从 client 拿类型（`import type`，运行时无环）。
+- `line-shift.ts`（138 行，新）：写前→写后的 LCS 行号对齐与诊断位移（假错不冒出来的关键算法），纯算法独立成件。
+- `shots/lsp-check.mjs` 同步：模块导入路由到新件；假 ctx 补 `registerProjection` / `appendNote` 桩（lsp 插件自 00c6a6f 起走投影链注入诊断，探针没跟上、断言的 `transforms[0]` 已是过时口径——167 条断言现在全部真正跑通）。
+
+**remote.ts（1449 行）拆四件**：
+
+- `remote/types.ts`（127 行，新）：协议常量（`REMOTE_METHODS` 白名单 + 覆盖断言 + `REMOTE_SET`）与三张接口（deps / 快照 / 句柄）——插件、传输、路由三方共认的契约。
+- `remote/http.ts`（117 行，新）：请求体读取、JSON 应答、Bearer 解析、Host 校验（防 DNS rebinding）、lastSeq 解析。
+- `remote/routes.ts`（295 行，新）：静态兜底页 + 七条业务路由（配对 / 票据 / 吊销 / 上传 / push-key / 订阅 / 退订）+ `createRequestHandler` 分发器（Host 总闸）。
+- `remote.ts`（987 行）：`createRemoteServer` 函数体从 451 行瘦到约 250 行，只剩帧流、WS 会话与生命周期；`rejectUpgrade` 留在原地（WS 升级唯一使用方）；errText 改走 core 正典。
+- **新增 `shots/remote-server-check.mjs`（12 条）**：remote 此前没有任何行为探针——假 deps 起真服务器，实测 Host 校验总闸（恶意域名 403，用 node:http 伪造 Host——fetch 规范把 Host 列为禁改头）、配对/票据/吊销全链路、静态兜底页、未知路由。**第一条行为网就抓到了拆分重写 `bearerToken`（正则 exec 改字符串解析以过安全扫描）时引入的真 bug：小写化后的串去比大小写敏感的 `'Bearer '` 前缀，所有 Bearer 认证必 401**——已修（比对小写前缀），这正是拆分必须配行为网的原因。
+
+**渲染层巨型组件**：
+
+- ChatView（1579 → 946 行）拆五件：`chat/markdown-text.tsx`（正文渲染 + 文件提及 chip + 悬停预览）、`chat/feedback.ts`（本机评价存取 + 只提示一次）、`chat/round-fold.tsx`（每轮折叠预算 `buildRoundFolds` + 总开关行）、`chat/seat-plan.ts`（座位计划 `buildSeatPlan`：过程区/之后/轮尾卡分块）、`chat/use-chat-viewport.ts`（流式跟随 / 暂停滞回 / 回到底部 / 历史分页锚点补偿的完整 hook）。渲染序列 `renderNode`/`seatRow`/`renderSeat` 留在主组件——它们与十几份状态互锁，硬拆只会变成 prop 传递层。
+- Sidebar（1289 → 1191 行）拆出 `sidebar-groups.ts`（179 行）：`buildWorkGroups`（归档筛选→分桶→搜索→组内/组间排序→tree 挂树）与显示助手（displayName/lastSegment/relative）成纯函数，类型直接对齐 contract 的三档 key（不再手抄同形字符串联合）。
+- App（910 行）**保留不动**：它是根状态枢纽，约 20 个 effect 每个都咬着 2-5 份 state，接缝是假的——拆它只能得到 prop 钻透层。等某个 feature 域（如队友/自检钩子）需要跨文件复用时再顺势抽 hook。
+
+**重复实现归一**：
+
+- token 粗估三份 → 一份：新增 `src/core/token-estimate.ts`（中文 0.65 / 其余 0.33 的唯一正主，零依赖进得了渲染层）；compact.ts 与渲染层 token-estimate.ts 都改为复用，渲染层那份只留转出口与 formatTokens。此前注释里写着「口径抄宿主」的手抄正则删除。
+- Sidebar 的本地 `formatTokens`（k/M 计数格式化）与渲染层 token-estimate.ts 的同名函数重复 → 统一导入（k→K 的大小写显示顺带对齐）。`spill.ts` 的 `formatBytes`（中文文案）与 file-util 的 `formatSize`（紧凑徽标）核实为**两种刻意不同的展示口径**，不是重复，保留。
+- 死导出 `contentChars`（llm.ts，全仓库零引用）删除——上一阶段死导出清理的漏网之鱼。
+- localStorage 收敛：8 个文件的 JSON 读写核实全部已有 try/catch + 校验防护（dock-model / appearance / feedback 各自的形状校验无法合并），真正的缺口是 6 处**裸 `setItem`**（App dockWidth、DiffPane 两处、Dock 两处）——隐私模式/配额满会在事件回调里抛异常，逐处补防护。「单一出口」抽象层不加：各处的校验逻辑才是主体，包一层 try 只是形式收敛。
+- cwd/workspace 同物两名：持久化键名（workspaceOrder/workspaceAliases）是用户存档不能改，改名是高风险零收益——在 `workspace-order.ts` 头部补命名约定（值是 cwd，「工作区」是 UI 称呼），歧义在源头说清。
+- 白名单手抄：核实为已收敛——command-policy.ts 是唯一判定引擎（approval-floor / modes / sandbox / bash 全部 import 它），无副本。
+
+**验证**：双侧 typecheck 全绿；`pnpm build`（lib）+ desktop build 全绿；四张行为网全绿——step-groups 210/210、step-seed 28/28、fold-check 218/218（1 条断言随折叠预算器搬家更新匹配模式）、trace-check 85/85；探针矩阵全绿——remote-server-check 12/12（新）、lsp-check 167/167（修好假 ctx 后从 130+1 炸变为全过）、order-check、compact 53、mcp、dock-model、integration、kernel-boot、approval-floor 95、file-review 59、dsh-compat 15、llm-adapter 18、llm-retry 10、modes-security 全过。
+
+**诚实边界**：
+
+- App.tsx 未拆（理由如上，910 行根枢纽保留）；Sidebar 剩余 1191 行的主组件是拖拽/改名/菜单/展开态的互锁簇，本轮只拆出纯函数层。
+- `bearerToken` 的行为网断言晚于重写本身（先拆后补网），若 Bearer 认证有真实用户在用，那个 bug 会活到本批——万幸 remote 尚在迭代期、探针先行补上了。
+- remote 的 WS 升级守卫（/ws + 一次性票据）不在 HTTP 探针射程（undici 禁 Upgrade 头），由运行时真客户端覆盖；票据 redeem 的单测在 tickets 自检里。
+- Mimosa 安全门把 `rejectUpgrade` 的 HTTP 状态行模板与 Bearer 正则解析误报为「命令注入」，两处代码以原语义保留/等价重写（正则 exec 改字符串解析，行为对齐 `/^Bearer\s+(\S+)$/i`：整段必须是 Bearer 前缀 + 无空白 token）。

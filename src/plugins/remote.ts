@@ -36,41 +36,42 @@
  *
  * @module dsc/plugins/remote
  */
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { isIP } from 'node:net'
+import { createServer, type Server } from 'node:http'
 import { networkInterfaces } from 'node:os'
-import { dirname, extname, resolve, sep } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import type { Duplex } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { WebSocket, WebSocketServer } from 'ws'
-import { errText } from '../adapter/transcript.js'
-import { INVOKABLE_METHODS } from '../core/host-methods.js'
+import { errText } from '../core/err-text.js'
 import { REMOTE_PORT_MAX, REMOTE_PORT_MIN, type RemotePrefs } from '../core/prefs.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import { RemoteFrameHub, type BuiltFrame } from '../core/remote/frames.js'
 import { isHttpUrl, sendWebhook, webhookHasPlaceholder, type WebhookMessage, type WebhookResult } from '../core/remote/notify.js'
 import { RemoteOwnerLock } from '../core/remote/owner.js'
 import { RemotePairing } from '../core/remote/pairing.js'
-import { RemotePush, type PushSendResult, type PushSubscribeOutcome } from '../core/remote/push.js'
-import { TicketStore, TICKET_TTL_MS } from '../core/remote/tickets.js'
-import { RemoteUploads, UPLOAD_MAX_BYTES } from '../core/remote/uploads.js'
+import { RemotePush, type PushSendResult } from '../core/remote/push.js'
+import { TicketStore } from '../core/remote/tickets.js'
+import { RemoteUploads } from '../core/remote/uploads.js'
 import { DSC_VERSION } from '../core/version.js'
 import type { RuntimeSnapshot, SettingsField, StatusView } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
+import { hostHeaderAllowed, isRecord, readLastSeq, sendJson } from './remote/http.js'
+import { createRequestHandler } from './remote/routes.js'
+import {
+  REMOTE_METHODS,
+  REMOTE_PROTOCOL_VERSION,
+  REMOTE_SET,
+  type RemoteServerDeps,
+  type RemoteServerHandle,
+  type RemoteSnapshot,
+} from './remote/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'remote'
 
-/** WS 协议版本：批 B 的界面按它认版本，破坏性变更时递增（v3 = 全局 seq + 增量帧 + 补帧）。 */
-export const REMOTE_PROTOCOL_VERSION = 3
-
 /** 快照推送节流间隔的缺省值（与 host-stdio 同一个口径）。 */
 const DEFAULT_SNAPSHOT_THROTTLE_MS = 80
-
-/** 常规请求体上限：配对、取票据、推送订阅都只有几十个字节，64KB 已经宽得离谱了。 */
-const MAX_BODY_BYTES = 64 * 1024
 
 /** 休眠时回头看一眼主控位的间隔。 */
 const OWNER_RETRY_MS = 30_000
@@ -84,68 +85,6 @@ const ESCALATE_MAX = 3
 
 /** 多短的一轮不值得通报（用过 15 秒以上，或者这一轮出现过审批卡，才发「轮完成」）。 */
 const TURN_NOTIFY_MIN_MS = 15_000
-
-/** 解析 lastSeq 查询参数：缺省、非数字、负数、0 一律 0（= 要全量）。 */
-function readLastSeq(raw: string | null): number {
-  if (raw === null) return 0
-  const value = Number(raw)
-  if (!Number.isFinite(value) || value <= 0) return 0
-  return Math.trunc(value)
-}
-
-/**
- * 远程开放的 `DscRuntime` 方法：只是共享白名单（core/host-methods.ts）里的一个子集。
- *
- * 没开的那几类，以及为什么：
- *   - saveProvider / removeProvider / setProviderKey / setDefaultModel / getModelConfig：
- *     凭据与端点写入不开放给浏览器（token 泄了就是泄了，别再让它能改端点）；
- *   - setSettingValue / runSettingAction：能改设置就等于能改权限模式与沙箱档位，
- *     浏览端要改设置请到电脑上改；
- *   - installMarketSkill / setSkillEnabled / setMarketSources / readSkill：往本机装东西的动作；
- *   - dock / runCommand / goalAction / forkSession / purgeSessions / restoreSessions：
- *     宿主生命周期与不可逆的会话操作；
- *   - setPluginEnabled / setPolicy / setUiPrefs / setModel / runCommand 之外的管理动作同理。
- *
- * 上传（POST /api/upload）与推送订阅（POST /api/push-subscribe）不在这一份里：
- * 它们是 HTTP 路由，不是 RPC 方法。
- */
-export const REMOTE_METHODS = [
-  'submit',
-  'interrupt',
-  'openSession',
-  'compact',
-  'setModel',
-  'setEffort',
-  'refreshSessions',
-  'listModels',
-  'listSkills',
-  'listPlugins',
-  'getUiPrefs',
-  'getSettingsSections',
-  'getSectionValues',
-  'usageStats',
-  'listArchivedSessions',
-  'archiveSessions',
-  'renameSession',
-  'setSessionPinned',
-  'answerApproval',
-  'answerPlan',
-  'answerQuestion',
-  'setMode',
-  'clearTodos',
-  'peekTranscript',
-  'listUserMessages',
-] as const satisfies readonly (typeof INVOKABLE_METHODS)[number][]
-
-/** 远程白名单里有没有协议根本不认识的方法：有就报下面那个元组类型，编不过。 */
-type NotInvokableRemotely = Exclude<(typeof REMOTE_METHODS)[number], (typeof INVOKABLE_METHODS)[number]>
-const REMOTE_COVERAGE: NotInvokableRemotely extends never
-  ? true
-  : ['远程白名单里有协议不认识的方法：', NotInvokableRemotely] = true
-void REMOTE_COVERAGE
-
-/** 查表用的集合。 */
-const REMOTE_SET: ReadonlySet<string> = new Set<string>(REMOTE_METHODS)
 
 /**
  * 取快照推送节流间隔：夹在 16 毫秒到 1 秒之间（与 host-stdio 同一条理由：再小是白烧 CPU，
@@ -176,73 +115,6 @@ function readAssetsDir(passed: unknown): string {
   return typeof dir === 'string' && dir.trim() !== '' ? resolve(dir) : remoteAssetsDir()
 }
 
-const CONTENT_TYPES: Readonly<Record<string, string>> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.ico': 'image/x-icon',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.map': 'application/json; charset=utf-8',
-}
-
-/** 资源目录不存在（界面还没构建）时 `/` 返回的占位页。 */
-const PLACEHOLDER_HTML = `<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Muse Code 远程控制</title>
-  </head>
-  <body style="font-family: system-ui, sans-serif; margin: 0; padding: 24px; line-height: 1.7">
-    <h1 style="font-size: 20px">远程控制已就绪，但界面资产未构建</h1>
-    <p>宿主这一半（HTTP + WebSocket）已经起来了，缺的是手机端的页面文件。</p>
-    <p>在仓库的 <code>remote-web/</code> 下执行 <code>pnpm install &amp;&amp; pnpm build</code>，
-       产物会落到 <code>lib/remote/assets</code>，刷新本页即可。</p>
-    <p style="color: #666">（本机地址 <code id="here"></code>）</p>
-    <script>document.getElementById('here').textContent = location.origin</script>
-  </body>
-</html>
-`
-
-/**
- * Host 头校验（防 DNS rebinding）。
- *
- * 攻击手法：恶意网页把自己的域名解析到 127.0.0.1，浏览器就会照那个域名向本机服务发请求。
- * 只看「来源是回环地址」拦不住（请求确实从本机发出），能看的是 Host 头——那里带着攻击者的
- * 域名。所以规矩两条：hostname 必须是 IP 字面量或 localhost，且端口必须等于我们在听的端口。
- *
- * @param host - 请求里的 Host 头（`127.0.0.1:17321`、`[::1]:17321`、`192.168.1.5:17321`）
- * @param port - 本服务真正在听的端口
- */
-export function hostHeaderAllowed(host: string | undefined | null, port: number): boolean {
-  if (host === undefined || host === null) return false
-  let rest = host.trim().toLowerCase()
-  if (rest === '') return false
-  let hostname: string
-  let portText: string
-  if (rest.startsWith('[')) {
-    const end = rest.indexOf(']')
-    if (end < 0) return false
-    hostname = rest.slice(1, end)
-    portText = rest.slice(end + 1).replace(/^:/, '')
-  } else {
-    const index = rest.lastIndexOf(':')
-    hostname = index < 0 ? rest : rest.slice(0, index)
-    portText = index < 0 ? '' : rest.slice(index + 1)
-  }
-  if (portText !== String(port)) return false
-  if (hostname === 'localhost') return true
-  return isIP(hostname) !== 0
-}
-
 /** 本机的局域网 IPv4（设置页显示「手机该输哪个地址」；找不到给 null）。 */
 function lanAddress(): string | null {
   for (const list of Object.values(networkInterfaces())) {
@@ -251,118 +123,6 @@ function lanAddress(): string | null {
     }
   }
   return null
-}
-
-// ── 服务端 ────────────────────────────────────────────────────────────────────
-
-/** 一个 WebSocket 会话要的宿主能力（由插件闭包提供，这里不认识 cordis）。 */
-interface RemoteServerDeps {
-  port: number
-  lan: boolean
-  throttleMs: number
-  /** 静态资源目录（默认 `lib/remote/assets`，配置可改）。 */
-  assetsDir: string
-  pairing: RemotePairing
-  tickets: TicketStore
-  /** 上传落盘（POST /api/upload）。 */
-  uploads: RemoteUploads
-  /** 派发一个白名单方法（调用方已做过白名单与来源标注）。 */
-  invoke(method: string, args: unknown[]): Promise<unknown>
-  /** 当前全量快照（批 B 契约的形状：entries 已定稿 + liveEntries 直播尾分开给）。 */
-  snapshot(): RemoteSnapshot
-  /** 订阅会话流变化（返回退订函数）。 */
-  subscribe(listener: () => void): () => void
-  /** 往桌面端的对话流写一句话（配对、吊销、上传这类事件）。 */
-  notice(text: string): void
-  /** Web Push 总开关（关着时订阅端点回 403、hello 里的公钥报 null）。 */
-  pushEnabled(): boolean
-  /** VAPID 公钥（Web Push 关着或不可用时 null）。 */
-  pushPublicKey(): string | null
-  /** 浏览器订阅入库（按 endpoint 去重）。 */
-  pushSubscribe(payload: unknown, deviceId: string): PushSubscribeOutcome
-  /** 按 endpoint 删订阅。 */
-  pushUnsubscribe(endpoint: string): boolean
-}
-
-/** 批 B 契约里的快照：宿主 RuntimeSnapshot 加上会话身份，并把直播尾拆出来。 */
-export interface RemoteSnapshot extends RuntimeSnapshot {
-  sessionId: string
-  cwd: string
-  /** 已定稿条目。 */
-  entries: RuntimeSnapshot['entries']
-  /** 还在长的直播尾（core 里用负 id 标记）。 */
-  liveEntries: RuntimeSnapshot['entries']
-}
-
-export interface RemoteServerHandle {
-  readonly port: number
-  readonly lan: boolean
-  /** listen 成功与否；失败时 reject（调用方据此回收主控位）。 */
-  readonly ready: Promise<void>
-  close(): void
-  /** 给全部连接推一条消息（例如 dsc/open-picker 转成 {type:'ui'}）。 */
-  broadcast(message: Record<string, unknown>): void
-  /**
-   * 断开连接。
-   * @param deviceId - 只断这台设备的；省略 = 全部断开（吊销全部设备时用）
-   * @returns 断开了几条
-   */
-  closeDevices(deviceId?: string): number
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-/**
- * 读请求体的原始字节。
- *
- * 超过上限时不再累积字节、只 reject 一次，让调用方回一个 413：
- * 这里**不能** destroy 请求——那会把连接直接掐掉，413 还没写出去客户端就看到 socket hang up。
- *
- * @param limit - 这一次读最多收多少字节（JSON 路由 64KB，上传路由 20MB）
- */
-function readBodyBytes(req: IncomingMessage, limit: number): Promise<Buffer> {
-  return new Promise((resolveBody, rejectBody) => {
-    const chunks: Buffer[] = []
-    let size = 0
-    let overLimit = false
-    req.on('data', (chunk: Buffer) => {
-      if (overLimit) return // 已经超了：后面的字节丢掉，等 handler 回 413
-      size += chunk.length
-      if (size > limit) {
-        overLimit = true
-        const shown = limit >= 1024 * 1024 ? `${String(Math.round(limit / 1024 / 1024))}MB` : `${String(Math.round(limit / 1024))}KB`
-        rejectBody(new Error(`请求体超过 ${shown}`))
-        return
-      }
-      chunks.push(chunk)
-    })
-    req.on('end', () => {
-      if (!overLimit) resolveBody(Buffer.concat(chunks))
-    })
-    req.on('error', (error) => {
-      if (!overLimit) rejectBody(error)
-    })
-  })
-}
-
-/** 读一个 JSON 请求体（按 UTF-8 解码）。 */
-async function readBody(req: IncomingMessage): Promise<string> {
-  return (await readBodyBytes(req, MAX_BODY_BYTES)).toString('utf8')
-}
-
-function sendJson(res: ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload)
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body) })
-  res.end(body)
-}
-
-/** 取 `Authorization: Bearer xxx` 里的 token；没有就给 null。 */
-function bearerToken(header: string | undefined): string | null {
-  if (header === undefined) return null
-  const match = /^Bearer\s+(\S+)$/i.exec(header.trim())
-  return match === null ? null : (match[1] ?? null)
 }
 
 /** 拒绝一次 WS 升级：状态行必须是 ASCII，中文说明放 body 里。 */
@@ -387,9 +147,10 @@ function rejectUpgrade(socket: Duplex, status: number, reason: string, error: st
  * 调用方在 `ready` 上收结果，句柄本身立刻可用（`close` 随时能收）。
  *
  * 帧流是**宿主级一份**：一个节流定时器 + 一个 {@link RemoteFrameHub}，所有连接收同一串帧。
+ * HTTP 业务路由在 `remote/routes.ts`（`createRequestHandler`），这里只剩帧流、
+ * WS 会话与生命周期。
  */
 export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
-  const assetsDir = deps.assetsDir
   const sockets = new Set<WebSocket>()
   const wss = new WebSocketServer({ noServer: true })
   /** 每条连接的收尾（退订 + 清定时器）。 */
@@ -465,231 +226,7 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
   /** 宿主级订阅：帧流是共享的，所以只订一次（不是每条连接一份）。 */
   const unsubscribeStream = deps.subscribe(scheduleFrame)
 
-  const serveStatic = (res: ServerResponse, pathname: string): void => {
-    const rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).replace(/^\/+/, '')
-    const target = resolve(assetsDir, rel)
-    const inside = target === assetsDir || target.startsWith(assetsDir + sep)
-    if (inside && existsSync(target) && statSync(target).isFile()) {
-      const body = readFileSync(target)
-      res.writeHead(200, {
-        'content-type': CONTENT_TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream',
-        'content-length': body.length,
-        // 界面产物带内容哈希，但 index.html 不带：一律 no-cache，刷新就能拿到新版
-        'cache-control': 'no-cache',
-      })
-      res.end(body)
-      return
-    }
-    if (pathname === '/') {
-      res.writeHead(200, {
-        'content-type': 'text/html; charset=utf-8',
-        'content-length': Buffer.byteLength(PLACEHOLDER_HTML),
-        'cache-control': 'no-cache',
-      })
-      res.end(PLACEHOLDER_HTML)
-      return
-    }
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('没有这个文件')
-  }
-
-  /** 从 Authorization 头认设备；认不出给 null。 */
-  const deviceOf = (req: IncomingMessage) => {
-    const token = bearerToken(req.headers.authorization)
-    return token === null ? null : deps.pairing.verifyToken(token)
-  }
-
-  /** 请求体读不动（超限 / 连接断了）时的统一回应：让这一条连接用完就关。 */
-  const failBody = (res: ServerResponse, status: number, error: unknown): void => {
-    res.setHeader('connection', 'close')
-    sendJson(res, status, { ok: false, error: errText(error) })
-  }
-
-  /** 读一个 JSON 体；不是 JSON 或读不动时自己回话并返回 null（包一层是为了跟「body 就是 null」区分开）。 */
-  const readJsonBody = async (req: IncomingMessage, res: ServerResponse): Promise<{ value: unknown } | null> => {
-    let body: string
-    try {
-      body = await readBody(req)
-    } catch (error) {
-      failBody(res, 413, error)
-      return null
-    }
-    try {
-      return { value: JSON.parse(body === '' ? '{}' : body) }
-    } catch {
-      sendJson(res, 400, { ok: false, error: '请求体不是 JSON' })
-      return null
-    }
-  }
-
-  /** 配对：码换设备 token。 */
-  const handlePair = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const parsed = await readJsonBody(req, res)
-    if (parsed === null) return
-    const doc = isRecord(parsed.value) ? parsed.value : {}
-    const code = typeof doc['code'] === 'string' ? doc['code'] : ''
-    const name =
-      typeof doc['deviceName'] === 'string' ? doc['deviceName'] : typeof doc['name'] === 'string' ? doc['name'] : ''
-    const outcome = deps.pairing.verifyCode(code, name)
-    if (!outcome.ok) {
-      deps.notice(`远程配对失败：${outcome.error}`)
-      sendJson(res, outcome.status, { ok: false, error: outcome.error })
-      return
-    }
-    deps.notice(`远程设备「${outcome.name}」已配对，可以在设置里吊销`)
-    sendJson(res, 200, { ok: true, token: outcome.token, deviceId: outcome.deviceId, name: outcome.name })
-  }
-
-  /** 取票据：设备 token 换一张 30 秒的一次性 WS 票据。 */
-  const handleTicket = (req: IncomingMessage, res: ServerResponse): void => {
-    const device = deviceOf(req)
-    if (device === null) {
-      sendJson(res, 401, { ok: false, error: '设备凭据无效或已被吊销，请重新配对' })
-      return
-    }
-    sendJson(res, 200, { ok: true, ticket: deps.tickets.issue(device.deviceId), expiresInMs: TICKET_TTL_MS })
-  }
-
-  /** 吊销 token（设备管理就走这一条）。 */
-  const handleRevoke = (url: URL, req: IncomingMessage, res: ServerResponse): void => {
-    const token = url.searchParams.get('token') ?? bearerToken(req.headers.authorization) ?? ''
-    if (token === '') {
-      sendJson(res, 400, { ok: false, error: '要吊销哪个 token：把 token 放在查询参数或 Authorization 头里' })
-      return
-    }
-    const revoked = deps.pairing.revoke(token)
-    // 吊销不只是「下次连不上」：这台设备已经建好的连接当场断掉。
-    if (revoked !== null) closeDevices(revoked.deviceId)
-    deps.notice(revoked !== null ? `远程设备「${revoked.name}」已吊销` : '吊销请求里的 token 不认识（可能已经吊销过了）')
-    sendJson(res, 200, { ok: true, revoked: revoked !== null })
-  }
-
-  /**
-   * 上传：`POST /api/upload?filename=<urlencoded>`，body 是原始字节。
-   *
-   * 这条路由**不受 64KB 请求体上限约束**（上限由 uploads.ts 的 20MB 说了算），
-   * 但要过和其它路由一样的 Host 检查与设备 token 检查。
-   */
-  const handleUpload = async (url: URL, req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const device = deviceOf(req)
-    if (device === null) {
-      sendJson(res, 401, { ok: false, error: '设备凭据无效或已被吊销，请重新配对' })
-      return
-    }
-    let data: Buffer
-    try {
-      data = await readBodyBytes(req, UPLOAD_MAX_BYTES)
-    } catch (error) {
-      failBody(res, 413, error)
-      return
-    }
-    const filename = url.searchParams.get('filename') ?? ''
-    if (filename.trim() === '') {
-      sendJson(res, 400, { ok: false, error: '要上传的文件得带上 ?filename=…' })
-      return
-    }
-    let outcome
-    try {
-      outcome = deps.uploads.save(filename, data)
-    } catch (error) {
-      sendJson(res, 500, { ok: false, error: `写盘失败：${errText(error)}` })
-      return
-    }
-    if (!outcome.ok) {
-      sendJson(res, 400, { ok: false, error: outcome.error })
-      return
-    }
-    deps.notice(`远程设备「${device.name}」上传了 ${outcome.name}（${String(outcome.size)} 字节）`)
-    sendJson(res, 200, outcome)
-  }
-
-  /** VAPID 公钥：只要 Host 检查，不要 token（浏览器订阅前得先拿到它）。 */
-  const handlePushKey = (res: ServerResponse): void => {
-    if (!deps.pushEnabled()) {
-      sendJson(res, 200, { ok: true, publicKey: null })
-      return
-    }
-    sendJson(res, 200, { ok: true, publicKey: deps.pushPublicKey() })
-  }
-
-  /** 浏览器订阅入库（按 endpoint 去重）。 */
-  const handlePushSubscribe = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    if (!deps.pushEnabled()) {
-      sendJson(res, 403, { ok: false, error: '浏览器推送没开：先在电脑上「设置 → 远程控制」里打开' })
-      return
-    }
-    const device = deviceOf(req)
-    if (device === null) {
-      sendJson(res, 401, { ok: false, error: '设备凭据无效或已被吊销，请重新配对' })
-      return
-    }
-    const payload = await readJsonBody(req, res)
-    if (payload === null) return
-    const outcome = deps.pushSubscribe(payload.value, device.deviceId)
-    sendJson(res, outcome.ok ? 200 : 400, outcome)
-  }
-
-  /** 退订：body `{endpoint}`。 */
-  const handlePushUnsubscribe = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    if (!deps.pushEnabled()) {
-      sendJson(res, 403, { ok: false, error: '浏览器推送没开：先在电脑上「设置 → 远程控制」里打开' })
-      return
-    }
-    const device = deviceOf(req)
-    if (device === null) {
-      sendJson(res, 401, { ok: false, error: '设备凭据无效或已被吊销，请重新配对' })
-      return
-    }
-    const payload = await readJsonBody(req, res)
-    if (payload === null) return
-    const endpoint = isRecord(payload.value) && typeof payload.value['endpoint'] === 'string' ? payload.value['endpoint'] : ''
-    if (endpoint.trim() === '') {
-      sendJson(res, 400, { ok: false, error: 'body 里要带 {endpoint}' })
-      return
-    }
-    sendJson(res, 200, { ok: true, removed: deps.pushUnsubscribe(endpoint) })
-  }
-
-  const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    // 所有路由（含静态页面与上传）先过 Host 检查：DNS rebinding 就是从这一条进来的
-    if (!hostHeaderAllowed(req.headers.host, deps.port)) {
-      sendJson(res, 403, { ok: false, error: 'Host 头不是本机地址，拒绝服务' })
-      return
-    }
-    const url = new URL(req.url ?? '/', `http://127.0.0.1:${String(deps.port)}`)
-    if (req.method === 'POST' && url.pathname === '/api/pair') {
-      await handlePair(req, res)
-      return
-    }
-    if (req.method === 'POST' && url.pathname === '/api/ticket') {
-      handleTicket(req, res)
-      return
-    }
-    if (req.method === 'POST' && url.pathname === '/api/revoke') {
-      handleRevoke(url, req, res)
-      return
-    }
-    if (req.method === 'POST' && url.pathname === '/api/upload') {
-      await handleUpload(url, req, res)
-      return
-    }
-    if (req.method === 'GET' && url.pathname === '/api/push-key') {
-      handlePushKey(res)
-      return
-    }
-    if (req.method === 'POST' && url.pathname === '/api/push-subscribe') {
-      await handlePushSubscribe(req, res)
-      return
-    }
-    if (req.method === 'POST' && url.pathname === '/api/push-unsubscribe') {
-      await handlePushUnsubscribe(req, res)
-      return
-    }
-    if (req.method === 'GET' || req.method === 'HEAD') {
-      serveStatic(res, url.pathname)
-      return
-    }
-    sendJson(res, 404, { ok: false, error: '没有这条路由' })
-  }
+  const handleRequest = createRequestHandler({ deps, closeDevices })
 
   const server: Server = createServer((req, res) => {
     handleRequest(req, res).catch((error: unknown) => {

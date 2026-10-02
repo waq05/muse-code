@@ -1,6 +1,6 @@
 {
   "name": "muse-code",
-  "version": "0.6.27",
+  "version": "0.6.28",
   "private": true,
   "description": "Muse Code（msc）— 独立的终端 AI harness（自研 ReAct loop + ink TUI）",
   "type": "module",

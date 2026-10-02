@@ -98,13 +98,6 @@ export function contentImages(content: string | null | ChatContentPart[]): strin
   return content.flatMap((part) => (part.type === 'image_url' ? [part.image_url.url] : []))
 }
 
-/** 粗估消息的字符量（图像每张按 4000 字符 ≈ 1000 token 估算，供压缩阈值用）。 */
-export function contentChars(content: string | null | ChatContentPart[]): number {
-  if (content === null) return 0
-  if (typeof content === 'string') return content.length
-  return content.reduce((sum, part) => sum + (part.type === 'text' ? part.text.length : 4000), 0)
-}
-
 /**
  * 把散落在历史里的 system 消息全部并进开头那条系统提示。
  *

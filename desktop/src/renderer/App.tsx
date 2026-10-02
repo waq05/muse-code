@@ -858,7 +858,11 @@ export function App(): JSX.Element {
           width={dockWidth}
           onResize={(width) => {
             setDockWidth(width)
-            localStorage.setItem('dsc.dockWidth', String(width))
+            try {
+              localStorage.setItem('dsc.dockWidth', String(width))
+            } catch {
+              // 存不下（隐私模式/配额满）只影响下次启动的默认宽，不该打断拖拽
+            }
           }}
         />
       )}

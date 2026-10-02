@@ -63,57 +63,30 @@
  *
  * @module desktop/renderer/ChatView
  */
-import { cloneElement, isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX, type ReactElement, type ReactNode } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import type { ChangedFileView, StatusView, TranscriptEntry, TurnEndReason, UiProcessFold } from '@dsc/runtime/contract.js'
+import { useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
+import type { ChangedFileView, StatusView, TranscriptEntry, UiProcessFold } from '@dsc/runtime/contract.js'
 import type { RuntimeProxy } from './bridge.js'
 import { processFoldPolicy } from './fold-policy.js'
-import { AT_BOTTOM_EPS, JumpStrip } from './JumpStrip.js'
+import { JumpStrip } from './JumpStrip.js'
 import { PlanReview } from './TaskDock.js'
 import { RowSeat, StepGroupSeat } from './fold-seats.js'
 import { ThinkingBlock } from './ThinkingBlock.js'
 import { ToolCard } from './ToolCard.js'
 import { TurnFooter } from './TurnFooter.js'
 import { TurnStatusLine } from './TurnStatusLine.js'
-import { ChangedFilesCard, DiffHoverCard, mergeChangesByPath } from './ChangedFiles.js'
-import { useHoverDelay } from './hover-delay.js'
+import { ChangedFilesCard, mergeChangesByPath } from './ChangedFiles.js'
 import { isSessionMarker } from './session-marker.js'
-import { TURN_PROCESS_INDEPENDENT, groupSteps, type StepGroup, type StepGrouping } from './process-groups.js'
+import { groupSteps, type StepGroup, type StepGrouping } from './process-groups.js'
 import { readFold, stepGroupFoldKey, turnFoldKey, writeFold } from './fold-state.js'
-import { formatDuration, liveActivity, roundDuration, roundInfos, turnStartedAt, type RoundInfo } from './turn-timing.js'
+import { liveActivity, roundInfos, turnStartedAt, type RoundInfo } from './turn-timing.js'
 import { toastErr, toastOk } from './components/toast.js'
-import { IconChevronDown, IconEdit } from './icons.js'
+import { IconEdit } from './icons.js'
 import { estimateTextTokens } from './token-estimate.js'
-import { FileIcon } from './file-icons.js'
-
-/**
- * 「用户真的离开底部了」的门槛（px）：比贴底判定 AT_BOTTOM_EPS（32px）宽一档。
- *
- * 为什么是 120：一格滚轮约走 100px。用户贴在底部时轻推一格，scrollTop 立刻退到底以上
- * 约 100px，按 32px 判的话「回到底部」按钮马上弹出来——可他只是想把最后几行往上挪一点
- * 看清楚，人没打算走。门槛放到 120px 以后，单格上滑（约 100px）落在 120px 以内，算
- * 「还在原地」；两格以上（约 200px）才认「这是要去看历史了」。
- *
- * 暂停用这一档、恢复仍用 AT_BOTTOM_EPS（32px），两档之间（32~120px）是滞回区间：
- * 用户停在这一带时既不恢复也不暂停，省得在阈值附近来回抖着把按钮弹进弹出。
- */
-const PAUSE_EPS = 120
-
-/**
- * 一页画多少轮（更早的轮先不进 DOM，点「加载更早」再放出来）。
- *
- * 为什么是渲染量而不是数据量：dsc 的会话是一次性全量读进内存的（`Session.load` 读整个
- * jsonl），而且那份 `messages` 同时是模型请求上下文——给展示分页并不会少加载任何东西
- * （实测：最大的真实会话 1 MB / 25 条消息，`load` 4.9ms、堆增量 3.3 MB）。
- * 所以这一层分的是**对话流的 DOM 数量**，那才是长会话真的会拖慢的地方。
- *
- * 为什么是 8：常见窗口一屏半到两屏，首屏要挂的过程 DOM 从「几十轮」降到「八轮」。
- */
-const PAGE_ROUNDS = 8
-
-/** 一条回复的本机评价：只有赞 / 踩两态，再点一次取消。 */
-type Feedback = 'up' | 'down'
+import { MarkdownText } from './chat/markdown-text.js'
+import { loadFeedback, recordFeedback, type Feedback } from './chat/feedback.js'
+import { buildRoundFolds, TurnFoldRow, type RoundFold } from './chat/round-fold.js'
+import { buildSeatPlan, type ChatPlanItem, type RoundSeatPlan } from './chat/seat-plan.js'
+import { useChatViewport, PAGE_ROUNDS } from './chat/use-chat-viewport.js'
 
 /**
  * 「不分阶段组」的空结果（完全展开档用，见 stepGrouping 的注释）。
@@ -126,256 +99,6 @@ const EMPTY_STEP_GROUPING: StepGrouping = { groups: [], headAt: new Map(), at: n
 
 /** 不需要「被查找命中时放行」这个动作的座位用它（不属于任何轮的条目）。 */
 const NO_REVEAL = (): void => undefined
-
-/** 一条渲染块：一个独立过程条目，或者一个阶段组（组头 + 组体里的那几条）。 */
-type ChatBlock = { kind: 'row'; index: number } | { kind: 'group'; group: StepGroup; members: number[] }
-
-/**
- * 一轮的座位：用户消息 → 整轮总开关 → 过程区 → 过程区之后 → 页脚。
- *
- * 为什么要先算出这张表再渲染，而不是边遍历边判：阶段组的组体要包住「连续的那几条」，
- * 于是渲染必须按块产出；而哪些条目成组、页脚画在哪一条之后，都要先看完整轮才知道。
- */
-interface RoundSeatPlan {
-  round: RoundInfo
-  /** 这一轮的过程折叠情况；没有过程内容时是 undefined。 */
-  fold: RoundFold | undefined
-  /** 用户消息在 entries 里的下标（永远可见，不参与任何折叠）。 */
-  lead: number
-  /** 整轮总开关画在过程区最前面吗（只有可折的定稿轮为真）。 */
-  withFoldRow: boolean
-  /** 过程区：整轮收起时整条挂 hidden（但仍在 DOM 里，Ctrl+F 能命中）。 */
-  process: ChatBlock[]
-  /** 过程区之后那几条（最终回答、计划卡）：永远可见。 */
-  after: ChatBlock[]
-  /**
-   * 这一轮成功 write / edit 的实际改动（changes 条目的聚合）。
-   * 条目本身不单独渲染——轮尾统一画一张「文件已更改」卡（dsh 的 turn-tail 位置），
-   * 不参与整轮折叠。
-   */
-  changes: ChangedFileView[]
-  /**
-   * 回合聚合的改动（`turnDiff` 条目，同文件多刀一份准确差异）。有它优先用——
-   * 没有（轮中途 / 重启后重放）才回退把 changes 逐刀合并（mergeChangesByPath）。
-   */
-  turnDiff: ChangedFileView[] | undefined
-  /** 页脚画在这一轮末尾吗（还没回复的轮次不画）。 */
-  withFoot: boolean
-}
-
-/** 渲染序列里的一项：不属于任何轮的条目，或者一整轮的座位。 */
-type ChatPlanItem = { kind: 'loose'; index: number } | { kind: 'seat'; seat: RoundSeatPlan }
-
-/**
- * inline code 文本 ↔ 本轮改动文件的提及匹配（dsh producedFileMentions 的思路）：
- * 精确相等，或命中路径以分隔符结尾的后缀（`fs-tools.ts` 命中 `…/core/fs-tools.ts`）。
- * 带 `\n` 的不是 inline（fenced 块），短得像扩展名的（`md`）不会越过分隔符边界误命中。
- */
-function matchMentionPath(text: string, paths: ReadonlyMap<string, ChangedFileView>): string | undefined {
-  const trimmed = text.trim()
-  if (trimmed === '' || trimmed.includes('\n')) return undefined
-  if (paths.has(trimmed)) return trimmed
-  for (const path of paths.keys()) {
-    if (path.endsWith(`/${trimmed}`) || path.endsWith(`\\${trimmed}`)) return path
-  }
-  return undefined
-}
-
-/**
- * 一条助手正文的 markdown 渲染（会话流同款 remark-gfm），外加文件提及 chip：
- * inline code 命中本轮改动文件时变成可点的文件徽章——点击进预览页签，悬停停够
- * 半秒出该文件的 diff（与轮尾卡文件行同一份悬停预览，dsh 的 producedFileMentions
- * 也带 hover 预览）。块级 code 用 `pre` 覆盖给子元素打 `data-block` 标记来区分——
- * fenced 块没有 language- 类名时不能靠 className 判定，误判会把整块代码变成一颗 chip。
- */
-function MarkdownText({
-  text,
-  mentionPaths,
-  onOpenFile,
-  cwd = '',
-}: {
-  text: string
-  mentionPaths: ReadonlyMap<string, ChangedFileView>
-  onOpenFile?: (path: string) => void
-  /** 工作目录：悬停预览头行显示相对路径。 */
-  cwd?: string
-}): JSX.Element {
-  const hoverDelay = useHoverDelay<ChangedFileView>()
-  return (
-    <>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          pre(props) {
-            const { children, ...rest } = props
-            const child = Array.isArray(children) ? children[0] : children
-            return (
-              <pre {...rest}>
-                {isValidElement(child)
-                  ? cloneElement(child as ReactElement<Record<string, unknown>>, { 'data-block': true })
-                  : child}
-              </pre>
-            )
-          },
-          code(props) {
-            const { className, children, node: _node, ...rest } = props
-            const block = (rest as Record<string, unknown>)['data-block'] === true
-            if (block || className !== undefined) return <code className={className} {...rest}>{children}</code>
-            const hit = matchMentionPath(String(children ?? ''), mentionPaths)
-            if (hit === undefined || onOpenFile === undefined) return <code {...rest}>{children}</code>
-            return (
-              <button
-                type="button"
-                className="mention-chip"
-                title={hit}
-                onClick={() => onOpenFile(hit)}
-                onMouseEnter={(event) => {
-                  const file = mentionPaths.get(hit)
-                  if (file === undefined) return
-                  // 卡宽取所在消息气泡的宽（dsh 的 preview 宽 = 触发卡宽 − 48）；
-                  // 拿不到就用 520 的兜底。
-                  const host = (event.currentTarget as HTMLElement).closest('.entry-text')
-                  hoverDelay.arm(file, event.currentTarget.getBoundingClientRect(), (host?.clientWidth ?? 568) - 48)
-                }}
-                onMouseLeave={hoverDelay.disarm}
-              >
-                <FileIcon name={hit} size={13} />
-                {hit.split(/[\\/]/).pop() ?? hit}
-              </button>
-            )
-          },
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-      {hoverDelay.hover !== null && (
-        <DiffHoverCard
-          file={hoverDelay.hover.item}
-          anchor={hoverDelay.hover.anchor}
-          cardWidth={hoverDelay.hover.cardWidth}
-          cwd={cwd}
-          onKeep={hoverDelay.keep}
-          onClose={hoverDelay.close}
-        />
-      )}
-    </>
-  )
-}
-
-/** 本机评价的存档键（localStorage）。 */
-const FEEDBACK_KEY = 'dsc.messageFeedback'
-
-/**
- * 读本机评价存档。为什么存在浏览器本地而不是发给宿主：宿主协议里没有
- * 「用户对某条回复的评价」这一项，界面能做的只有如实记在自己这台机器上。
- * 存档坏了就当没点过——不能因为一段历史记录把消息流卡住。
- */
-function loadFeedback(): Record<string, Feedback> {
-  if (typeof localStorage === 'undefined') return {}
-  try {
-    const raw = localStorage.getItem(FEEDBACK_KEY)
-    if (raw === null) return {}
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    const out: Record<string, Feedback> = {}
-    for (const [key, value] of Object.entries(parsed)) {
-      if (value === 'up' || value === 'down') out[key] = value
-    }
-    return out
-  } catch {
-    return {}
-  }
-}
-
-/** 本机评价只说明一次（第一次点的时候），免得每点一次都弹一条提示。 */
-let toldFeedbackOnce = false
-
-/**
- * 一轮过程区的折叠情况（下标 = round.index 存进 Map）。
- *
- * 为什么单独算一份：哪些条目归总开关管、开关画在哪一行、这一轮能不能折，是三件互相牵连的事，
- * 分散在 map 回调里每次渲染重算一遍既慢又容易前后不一致（比如开关画了、组内却没有条目）。
- */
-interface RoundFold {
-  /** 轮次序号（0 基，与 RoundInfo.index 同源）：存展开态时要用它拼键。 */
-  roundIndex: number
-  /** 总开关行画在这一条前面（= 组内第一条可折叠条目）；-1 = 这一轮没有过程内容。 */
-  startIndex: number
-  /** 组内最后一条可折叠条目的下标（含）。 */
-  endIndex: number
-  /** 过程区里有没有可折的内容。没有时照样画总开关，只是画成不可点的（照 dsh 的 disabled）。 */
-  hasContent: boolean
-  /** 这一轮可不可以折整轮（= 有过程内容）。 */
-  foldable: boolean
-  /** 跑动中：整组强制展开、连总开关都不画（dsh 的 `turnProcessAlwaysOpen` 的 status === 'open'）。 */
-  running: boolean
-  /**
-   * 这一轮**不能**折整轮，但总开关照画（画成不可点的）。
-   *
-   * 三种情况（逐个对照 dsh 的 `turnProcessAlwaysOpen`，contract/turn-process.ts:69-74）：
-   * 轮中途插过话（`hasInterleavedInput`）、这一轮被中断（aborted）、这一轮跑挂了（error）。
-   * 为什么要区分它和 `running`：跑动中的轮**连这一行都不画**，而这三种情况的轮已经结束了，
-   * 得留一行告诉用户「这一轮收成什么样」——「已停止」「过程失败」就在这一行上。
-   */
-  blocked: boolean
-  /** 让这一轮不能折的那个原因；正常结束或还在跑的轮是 undefined。 */
-  endReason: TurnEndReason | undefined
-}
-
-/**
- * 整轮过程折叠的总开关行（对照 dsh 的 TurnProcessNodeView.tsx:36-53）：
- * 一行左对齐的小字按钮，「用时 X」（算不出用时就是「已完成」，绝不显示 NaN）+ 行尾箭头，整行可点。
- *
- * 只给定稿轮画（跑动中的轮不渲染这一行，见下面 seat 里那处条件）：dsh 的 turn-process 节点
- * 同样只在本轮 status === 'closed' 时才渲染（TurnProcessNodeView.tsx:18）。
- *
- * 三种结束状态各有一句话（逐字对照 dsh 的 TurnProcessNodeView.tsx:26-29）：
- * 被中断说「已停止」、跑挂说「过程失败」，其余才报到「用时 X」。后两种把这一行画成不可点的
- * （dsh 的 `disabled={!canCollapse}`），因为那一轮的过程要一直摊着给用户看。
- *
- * 为什么标题是「用时」而不是「思考过程 / 工具调用」：dsh 那一行报的是「这一轮花了多久」
- * （TurnProcessNodeView.tsx:21-29 的 took / worked），条数之类的统计留在 data-* 属性上给
- * 自检用，不占人眼。这一行收起来的是过程，用户最想知道的是「值不值得展开看一眼」。
- *
- * @param props.disabled 这一轮不让折（中断 / 失败 / 轮内插过话 / 压根没有过程内容）
- */
-function TurnFoldRow(props: {
-  open: boolean
-  round: RoundInfo
-  disabled: boolean
-  endReason: TurnEndReason | undefined
-  onToggle(): void
-}): JSX.Element {
-  const used = formatDuration(roundDuration(props.round))
-  const label = props.endReason === 'aborted' ? '已停止'
-    : props.endReason === 'error' ? '过程失败'
-      : used === null ? '已完成' : `用时 ${used}`
-  return (
-    <button
-      type="button"
-      className="turn-fold"
-      // 展开态走 data-open（对照 dsh 的 css.root[data-open]），样式里靠它转箭头
-      data-open={props.open ? '1' : undefined}
-      data-round-index={props.round.index}
-      data-turn-blocked={props.disabled ? '1' : undefined}
-      disabled={props.disabled}
-      // 不可折时这一行只是抬头：报一句「这一轮收成什么样」，不给开合承诺
-      aria-expanded={props.disabled ? undefined : props.open}
-      data-tip={
-        props.disabled
-          ? props.endReason === 'aborted'
-            ? '这一轮被中断，过程保持展开'
-            : props.endReason === 'error'
-              ? '这一轮跑挂了，过程保持展开'
-              : '这一轮没有可折叠的过程内容'
-          : props.open ? '收起这一轮的过程（思考与工具调用）' : '展开这一轮的过程（思考与工具调用）'
-      }
-      onClick={props.onToggle}
-    >
-      <span className="turn-fold-label">{label}</span>
-      {props.disabled ? null : <IconChevronDown size={11} className="turn-fold-chevron" />}
-    </button>
-  )
-}
 
 export function ChatView(props: {
   entries: TranscriptEntry[]
@@ -422,7 +145,6 @@ export function ChatView(props: {
   /** 当前工作目录：write/edit 卡的「将做的改动」与轮尾卡把绝对路径显示成相对路径。 */
   cwd?: string
 }): JSX.Element {
-  const scroller = useRef<HTMLDivElement | null>(null)
   const [feedback, setFeedback] = useState<Record<string, Feedback>>(loadFeedback)
   /** 正在原地编辑的那条用户消息（下标 = 在 entries 里的位置）+ 编辑框里的正文。 */
   const [editing, setEditing] = useState<{ index: number; text: string } | null>(null)
@@ -441,225 +163,18 @@ export function ChatView(props: {
    * 只会让那次复位多触发一次渲染。
    */
   const [foldOpen, setFoldOpen] = useState<Record<string, boolean>>({})
-  /**
-   * 还在不在「跟随最新内容」（流式输出时自动贴底）。
-   *
-   * 为什么要有这一位：改版前每来一块新内容就把 scrollTop 钉到底，用户想往上翻历史，
-   * 刚滚上去就被下一块拽回来，长回答里根本翻不动。现在的规矩是——
-   * 用户主动往上翻（滚轮向上 / 触摸拖动 / 拖滚动条，落到 scrollTop 离开底部这一件事上）
-   * 就暂停跟随——「离开」按 PAUSE_EPS（120px）判，滚回距底 AT_BOTTOM_EPS（32px，与
-   * JumpStrip 贴底判定同一档）以内、或点「回到底部」就恢复。两档之差是滞回区间（见 PAUSE_EPS）。
-   *
-   * 用 ref 存而不是 state：这个判断挂在滚动事件与每次渲染上，走 state 会为了一个
-   * 只在切换瞬间才变的值多渲染一轮；配套的 state 只用来画那颗「回到底部」按钮。
-   * 只认「用户主动」这一路：内容自己变高（图片解码、代码块展开、流式追加）不发
-   * scroll 事件，程序性的高度变化因此不会被误判成「用户滚离」。
-   */
-  const followRef = useRef(true)
-  /** 暂停跟随时显示的「回到底部」按钮。 */
-  const [followPaused, setFollowPaused] = useState(false)
-  /**
-   * 「这一次必须落到最新一条」：换会话、自己刚发出一条用户消息。
-   * 这两个场景是用户主动产生的，不该被上一轮的暂停态挡住（改版前靠无条件贴底实现）。
-   */
-  const forceFollowRef = useRef(true)
-  /**
-   * 我们自己钉底时落到的那个 scrollTop。
-   *
-   * 为什么要记这一笔：`scrollTop = scrollHeight` 是程序性滚动，但它同样会（异步）发一个
-   * scroll 事件；而滚动事件是下一帧才投递的，这中间流式内容可能又长高了一截，只按
-   * 「离底还有多远」判的话，自动跟随会把**自己钉的那一下**判成「用户滚离」，
-   * 于是长回答写着写着就自己停了跟随。拿位置和这一笔对上，就能把两者分开。
-   */
-  const autoTopRef = useRef(-1)
-  /**
-   * 用户已经放出的**最早轮号**（null = 还没点过「加载更早」，只画最近一页）。
-   *
-   * 为什么记轮号而不是「放出了几页」：会话一直在长，按页数记的话每来一条新消息，
-   * 窗口就整体后移一轮，最上面那一轮会被悄悄收走——用户正看着它。记绝对轮号，
-   * 新消息只影响末端（最近一页跟着走），前面放出来的那些原地不动。
-   */
-  const [earliestVisible, setEarliestVisible] = useState<number | null>(null)
-  /** 点「加载更早」时记下的锚点：新内容插到上方之后，把它拉回原来的视口位置。 */
-  const earlierAnchorRef = useRef<{ node: HTMLElement; viewportTop: number } | null>(null)
-  /** 「加载更早」那颗按钮（锚点按正文顺序从它后面找，不按视口位置挑）。 */
-  const earlierRef = useRef<HTMLButtonElement | null>(null)
-
-  /** 改跟随态：ref 与按钮用的 state 一起动，值没变就不惊动 React。 */
-  const setFollowing = (next: boolean): void => {
-    if (followRef.current === next) return
-    followRef.current = next
-    setFollowPaused(!next)
-  }
-
-  /**
-   * 把视角钉到最新一条，并把落点记进 autoTopRef（见那里的注释）。
-   * 自动跟随的每一次贴底、以及「回到底部」那颗按钮，都走这一处。
-   */
-  const pinToBottom = (): void => {
-    const element = scroller.current
-    if (element === null) return
-    element.scrollTop = element.scrollHeight
-    autoTopRef.current = element.scrollTop
-  }
-
-  /**
-   * 放出一页更早的轮。
-   *
-   * 锚定规则照 dsh 的 conversation-nodes/README.zh.md:98：「按正文顺序锚定按钮下的第一个
-   * 可见内容项，不根据它在视口中的位置选择」——所以从按钮往后找第一个有高度的兄弟节点，
-   * 记下它此刻的视口位置，DOM 更新后由下面那个 layout effect 把它拉回原处。
-   */
-  const loadEarlier = (): void => {
-    const button = earlierRef.current
-    if (button === null) return
-    let node = button.nextElementSibling as HTMLElement | null
-    while (node !== null && node.getBoundingClientRect().height === 0) {
-      node = node.nextElementSibling as HTMLElement | null
-    }
-    earlierAnchorRef.current = node === null
-      ? null
-      : { node, viewportTop: node.getBoundingClientRect().top }
-    setEarliestVisible(Math.max(0, firstVisibleRound - PAGE_ROUNDS))
-  }
-
-  /**
-   * 把锚点拉回原来的视口位置。
-   *
-   * 更早的内容插在上面会把锚点整套往下推，不补偿的话点「加载更早」像把页面弹走
-   * （dsh 的规矩：「分页把更早内容加到保留的锚点上方，不主动跳到新内容顶部」）。
-   *
-   * 限高组先在自己的滚动范围内吸收位移，吸不下的才交给外层（同一条规矩的后半句）：
-   * 锚点若落在某个阶段组体里，先把那个组体往上滚，剩下的再动 transcript——
-   * 这样「组内滚到一半时被分页推走」也会被正确抵消。
-   */
-  useLayoutEffect(() => {
-    const anchor = earlierAnchorRef.current
-    if (anchor === null) return
-    earlierAnchorRef.current = null
-    let delta = anchor.node.getBoundingClientRect().top - anchor.viewportTop
-    if (delta === 0) return
-    const body = anchor.node.closest('.step-body')
-    if (body !== null) {
-      const before = body.scrollTop
-      body.scrollTop = before + delta
-      // 吸掉多少按实际滚动量算：组体滚不动时（内容不够高）这部分原样留给外层
-      delta -= body.scrollTop - before
-      if (delta === 0) return
-    }
-    const element = scroller.current
-    if (element === null) return
-    element.scrollTop += delta
-    autoTopRef.current = element.scrollTop
-  }, [earliestVisible])
-
-  // 换会话（entries 整表换成另一条会话的内容）时把编辑框收掉：留着它，提交时
-  // 那条下标指向的已经是别人会话里的消息了。同一件事还捎带一条：换会话必须落到
-  // 最新一条（用户刚点开一条会话，看到的是它的末尾，不是上次停留的滚动位置）。
-  useEffect(() => {
-    setEditing(null)
-    forceFollowRef.current = true
-    setFollowing(true)
-    // 分页窗口也跟着回默认：换了一条会话，「已放出到第几轮」是上一条会话的事
-    setEarliestVisible(null)
-  }, [props.sessionId])
-
-  /**
-   * 流式自动跟随：entries 变了就把尾巴贴到底——前提是「还在跟随」。
-   * 两个例外无条件跟随：刚换会话（forceFollowRef），以及末尾新出现的一条用户消息
-   * （自己刚发出去的，要立刻看到它和它的回复）。
-   * 注意这里不改 followRef 之外的任何东西：暂停期间内容照旧长高，只是不替用户决定视角。
-   */
-  useEffect(() => {
-    const element = scroller.current
-    if (element === null) return
-    const tail = props.entries[props.entries.length - 1]
-    const tailIsUser = tail !== undefined && tail.kind === 'user' && tail.id >= 0
-    if (forceFollowRef.current || tailIsUser) {
-      forceFollowRef.current = false
-      setFollowing(true)
-    }
-    if (followRef.current) pinToBottom()
-  }, [props.entries])
-
-  /**
-   * 滚动 = 用户对视角的表态：离开底部就暂停跟随，回到 32px 以内就恢复。
-   *
-   * 滚轮、触摸拖动、拖滚动条三条路最后都落成同一个事实——scrollTop 离开底部，
-   * 所以判定只写在 scroll 这一处，不各挂一份。滚轮向上额外抢一帧：滚动事件是异步
-   * 投递的，而流式内容可能先到一步（它一到就会贴底），只等 scroll 事件会有一次回弹。
-   * 触摸按「手指往下拖（clientY 变大）」认往回翻，与滚动方向一致。
-   *
-   * 两个门槛分工（见 PAUSE_EPS）：暂停用宽的 120px，恢复用窄的 AT_BOTTOM_EPS（32px），
-   * 中间 32~120px 是滞回区间，停在这一带两边都不动，按钮不会反复弹进弹出。
-   * 唯一要排除的是「自己钉的那一下」：落点与 autoTopRef 重合就不算用户滚离。
-   */
-  useEffect(() => {
-    const element = scroller.current
-    if (element === null) return
-    /**
-     * 现算可滚距离。为什么是函数而不是一个变量：流式内容一直在长，算一次存下来，
-     * 下一帧就不作数了。返回值 <= 0 表示这一屏根本装得下，那就不存在「离开底部」。
-     */
-    const maxScroll = (): number => element.scrollHeight - element.clientHeight
-    const onScroll = (): void => {
-      if (Math.abs(element.scrollTop - autoTopRef.current) <= 1) return
-      const limit = maxScroll()
-      // 装得下：任何路径都不暂停，跟随照旧（也顺带把按钮收掉）
-      if (limit <= 0) {
-        setFollowing(true)
-        return
-      }
-      const away = limit - element.scrollTop
-      // 回到贴底档（32px）以内：恢复跟随。恢复门槛刻意比暂停门槛窄
-      if (away <= AT_BOTTOM_EPS) {
-        setFollowing(true)
-        return
-      }
-      // 越过宽门槛才算「用户真的要走」；落在滞回区间里维持现状，什么都不做
-      if (away > PAUSE_EPS) setFollowing(false)
-    }
-    const onWheel = (event: WheelEvent): void => {
-      if (event.deltaY >= 0) return
-      const limit = maxScroll()
-      // 一屏装得下就没有「离开底部」可言（没有滚动条时滚轮本来也滚不动）
-      if (limit <= 0) return
-      // 预估这一格滚完的落点离底还有多远：当前位置离底是 limit - scrollTop，
-      // 再减掉这一格的行程——deltaY 向上为负，所以「- deltaY」是正的，落点更靠上、离底更远。
-      //
-      // 为什么要预估而不是等 scroll 事件：滚动事件下一帧才投递，流式内容可能先到一步
-      // 把视角又拽回底部；抢在内容前头暂停，能省掉那一下回弹。预估落点要是还没越过宽门槛
-      // （贴底时单格上滑就是这样）就什么都不做，交给随后的 scroll 事件按同一把尺子判。
-      const landingAway = limit - element.scrollTop - event.deltaY
-      if (landingAway > PAUSE_EPS) setFollowing(false)
-    }
-    let touchY = 0
-    const onTouchStart = (event: TouchEvent): void => {
-      touchY = event.touches[0]?.clientY ?? 0
-    }
-    const onTouchMove = (event: TouchEvent): void => {
-      const y = event.touches[0]?.clientY ?? touchY
-      if (y > touchY + 2) {
-        // 手指往回拖时 scrollTop 已经实时跟着变了，直接拿当前位置判，不用预估
-        const limit = maxScroll()
-        if (limit > 0 && limit - element.scrollTop > PAUSE_EPS) setFollowing(false)
-      }
-      touchY = y
-    }
-    element.addEventListener('scroll', onScroll, { passive: true })
-    element.addEventListener('wheel', onWheel, { passive: true })
-    element.addEventListener('touchstart', onTouchStart, { passive: true })
-    element.addEventListener('touchmove', onTouchMove, { passive: true })
-    return () => {
-      element.removeEventListener('scroll', onScroll)
-      element.removeEventListener('wheel', onWheel)
-      element.removeEventListener('touchstart', onTouchStart)
-      element.removeEventListener('touchmove', onTouchMove)
-    }
-  }, [])
-
   // 每一轮的起止与时间（见 turn-timing.ts）；entries 变了才重算
   const rounds = useMemo(() => roundInfos(props.entries), [props.entries])
+  // 视口（流式跟随 / 暂停 / 回到底部 / 历史分页与锚点补偿）整体收进 hook：
+  // 这些状态与消息怎么渲染无关，全属「视口」自己，见 use-chat-viewport.ts。
+  const viewport = useChatViewport({ entries: props.entries, sessionId: props.sessionId, roundCount: rounds.length })
+
+  // 换会话（entries 整表换成另一条会话的内容）时把编辑框收掉：留着它，提交时
+  // 那条下标指向的已经是别人会话里的消息了。落到最新一条、分页窗口回默认这两件
+  // 视口的事，由 hook 在同一个 dep 的 effect 里办。
+  useEffect(() => {
+    setEditing(null)
+  }, [props.sessionId])
   /**
    * 会话里出现过的改动文件（逐刀 + 回合聚合，同文件多刀先合并）：markdown 正文里的
    * inline code 命中其中之一就渲染成可点 chip，悬停出该文件的 diff——值是合并后的
@@ -673,16 +188,8 @@ export function ChatView(props: {
     }
     return new Map(mergeChangesByPath(flat).map((file) => [file.path, file]))
   }, [props.entries])
-  /**
-   * 从第几轮开始画（更早的轮先不进 DOM）。
-   *
-   * 取两者较小的那个：默认窗口是「最近一页」，而用户点过「加载更早」之后有了一个更靠前的
-   * 起点——会话又长长了的时候，窗口后方跟着走，但用户已经放出来的那些不会被收走。
-   */
-  const pageStart = Math.max(0, rounds.length - PAGE_ROUNDS)
-  const firstVisibleRound = earliestVisible === null ? pageStart : Math.min(earliestVisible, pageStart)
-  /** 上面还有没画出来的轮吗（决定画不画那颗「加载更早」）。 */
-  const hasEarlier = firstVisibleRound > 0
+  // 视口的派生量与动作按原名解构：下面的渲染层照旧用这些名字。
+  const { scroller, followPaused, firstVisibleRound, hasEarlier, earlierRef, setFollowing, pinToBottom, loadEarlier } = viewport
   // entries 下标 → 这条用户消息在会话里是第几条（0 起算）。口径与宿主的
   // readUserMessages / forkSession 一致：只数用户消息，从 0 开始。
   const userOrdinalAt = useMemo(() => {
@@ -739,66 +246,13 @@ export function ChatView(props: {
   const showReasoningPreview = policy.reasoningPreview
   /**
    * 每轮的过程区（下标 = round.index）：哪些条目归总开关管、开关画在哪、这一轮跑不跑。
-   *
-   * 为什么把「哪几条算过程」算在这里而不是散在 map 回调里：这条线是「用户消息之后、
-   * 这一轮最后一条定稿正文之前」，要一次看完这一轮才知道末条正文在哪；逐条判的话每条都要
-   * 反扫一遍自己的轮次。同时这也让「开关画了、组内却没条目」这种不一致根本不可能发生。
-   *
-   * 三类条目不进组：
-   * - plan：审批流的一部分（dsh 的 TURN_PROCESS_INDEPENDENT_KINDS），收起过程不能把
-   *   「等你点批准」一起藏掉；
-   * - 本轮最后一条定稿 text（id>=0）：那是这一轮的最终回答，折叠的目标就是「过程收起来、
-   *   回答留着」；
-   * - 定稿轮里的直播尾（id<0）——它只可能出现在还没收尾的那一轮，而那一轮强制展开。
+   * 预算器的完整规则（三类条目不进组、跑动的三种形态）见 chat/round-fold.ts 的
+   * buildRoundFolds——口径只留在那一处。
    */
-  const roundFold = useMemo(() => {
-    const out = new Map<number, RoundFold>()
-    for (const round of rounds) {
-      // 本轮最后一条定稿正文（从后往前找，找到就走）；它之后（含它自己）都不折叠。
-      let answerIndex = -1
-      for (let at = round.endIndex; at > round.startIndex; at -= 1) {
-        const entry = props.entries[at]
-        if (entry !== undefined && entry.kind === 'text' && entry.id >= 0) {
-          answerIndex = at
-          break
-        }
-      }
-      let startIndex = -1
-      let endIndex = -1
-      let hasLiveEntry = false
-      /** 轮内插过话（steering）——dsh 的 hasInterleavedInput：插过话的轮不给整轮折叠。 */
-      let hasSteering = false
-      /** 轮尾标记给的结束原因。只有中断 / 失败才落这一条（见 adapter 的 turn/end 分支）。 */
-      let endReason: TurnEndReason | undefined
-      for (let at = round.startIndex + 1; at <= round.endIndex; at += 1) {
-        const entry = props.entries[at]
-        if (entry === undefined) continue
-        if (entry.id < 0) hasLiveEntry = true
-        if (entry.kind === 'user' && entry.steering === true) hasSteering = true
-        if (entry.kind === 'turn-end') endReason = entry.reason
-        if (entry.kind !== 'thinking' && entry.kind !== 'tool' && entry.kind !== 'text') continue
-        if (answerIndex >= 0 && at >= answerIndex) continue
-        if (startIndex < 0) startIndex = at
-        endIndex = at
-      }
-      const hasContent = startIndex >= 0
-      out.set(round.index, {
-        roundIndex: round.index,
-        startIndex,
-        endIndex,
-        hasContent,
-        // foldable 只说「这一档允许折整轮」；有没有东西可折看 hasContent——
-        // 没内容的轮照样画那一行抬头，只是画成不可点的（照 dsh 的 disabled 分支）。
-        foldable: foldTurns,
-        // 跑动中的两种形态都算「这一轮还没收尾」：出现了直播条目（id<0），或者这就是最后一轮
-        // 而回合还没结束，或者用户刚发完消息、助手一个字都还没回（answered 为假）。
-        running: hasLiveEntry || (live && round.index === lastRoundIndex) || !round.answered,
-        blocked: hasSteering || endReason === 'aborted' || endReason === 'error',
-        endReason,
-      })
-    }
-    return out
-  }, [props.entries, rounds, foldTurns, live, lastRoundIndex])
+  const roundFold = useMemo(
+    () => buildRoundFolds(props.entries, rounds, { foldTurns, live, lastRoundIndex }),
+    [props.entries, rounds, foldTurns, live, lastRoundIndex],
+  )
   /**
    * 阶段分组（见 process-groups.ts）：把每一轮的过程条目按「阶段正文」切成若干组。
    *
@@ -971,21 +425,13 @@ export function ChatView(props: {
     return out
   }, [props.entries, roundAt, rounds])
 
-  /** 记一条本机评价（同一项再点一次 = 取消）。 */
+  /** 记一条本机评价（同一项再点一次 = 取消）。落盘与「只提示一次」见 chat/feedback.ts。 */
   const vote = (key: string, next: Feedback): void => {
     const merged = { ...feedback }
     if (merged[key] === next) delete merged[key]
     else merged[key] = next
     setFeedback(merged)
-    try {
-      localStorage.setItem(FEEDBACK_KEY, JSON.stringify(merged))
-    } catch {
-      // 存不下（本地存储被禁用/写满）也不影响这次会话里的显示
-    }
-    if (!toldFeedbackOnce) {
-      toldFeedbackOnce = true
-      toastOk('已在本机记下你的评价（宿主还没有评价上传通道）')
-    }
+    recordFeedback(merged)
   }
 
   const activity = liveActivity(props.entries, props.turnState)
@@ -1099,92 +545,13 @@ export function ChatView(props: {
   }
 
   /**
-   * 渲染序列：先按轮算出座位，再按 entries 的原顺序把不属于任何轮的条目插回原位。
-   *
-   * 「哪些条目算过程区」的判据沿用 roundFold 给的那段下标区间，但**计划卡要单独摘出来**：
-   * 它可能落在区间里面（夹在两条工具之间），而它是审批流的一部分——收起整轮不能把
-   * 「等你点批准」一起藏掉（对照 dsh 的 TURN_PROCESS_INDEPENDENT_KINDS）。
+   * 渲染序列：先按轮算出座位，再按 entries 的原顺序把不属于任何轮的条目插回原位
+   * （计划卡单独摘出来、组体按块包住——完整规则见 chat/seat-plan.ts 的模块注释）。
    */
-  const plan = useMemo<ChatPlanItem[]>(() => {
-    const seats = new Map<number, RoundSeatPlan>()
-    for (const round of rounds) {
-      // 更早的那几轮先不进 DOM（点「加载更早」再放出来）：分的是渲染量，不是数据量
-      if (round.index < firstVisibleRound) continue
-      const fold = roundFold.get(round.index)
-      const process: ChatBlock[] = []
-      const after: ChatBlock[] = []
-      // 这一轮的文件改动单独收走：条目不进过程区也不进 after，轮尾一张聚合卡代它出场。
-      // turnDiff（回合聚合）是整轮一份；changes 是逐刀快照，聚合条目缺席时回退合并它们。
-      const changes: ChangedFileView[] = []
-      let turnDiff: ChangedFileView[] | undefined
-      let withFoldRow = false
-      // 总开关画在过程区第一条之前。没有过程内容时（hasContent 为假）改画在用户消息之后——
-      // dsh 的整轮控件位置就是「该轮所有起始输入之后、最终答案之前」，那种轮那一行照样出现，
-      // 只是画成不可点的（TurnProcessNodeView.tsx:19,44 的 disabled={!canCollapse}）。
-      const foldRowAt = fold === undefined || !fold.foldable
-        ? -1
-        : fold.hasContent ? fold.startIndex : round.startIndex + 1
-      for (let at = round.startIndex + 1; at <= round.endIndex; at += 1) {
-        const entry = props.entries[at]
-        if (entry === undefined) continue
-        if (entry.kind === 'changes') {
-          changes.push(entry.file)
-          continue
-        }
-        if (entry.kind === 'turnDiff') {
-          turnDiff = entry.files
-          continue
-        }
-        if (at === foldRowAt) withFoldRow = true
-        const head = stepGrouping.headAt.get(at)
-        if (head !== undefined) {
-          const members: number[] = []
-          for (let member = head.startIndex; member <= head.endIndex; member += 1) {
-            members.push(member)
-            const memberEntry = props.entries[member]
-            if (memberEntry?.kind === 'changes') changes.push(memberEntry.file)
-            else if (memberEntry?.kind === 'turnDiff') turnDiff = memberEntry.files
-          }
-          process.push({ kind: 'group', group: head, members })
-          // 组里那几条已经收进组体，跳过（组头只画一次，画在这个块上）
-          at = head.endIndex
-          continue
-        }
-        const inProcess =
-          fold !== undefined && fold.foldable && fold.hasContent
-          && at >= fold.startIndex && at <= fold.endIndex
-        // 独立节点不进过程区：收起整轮不能把「等你点批准」「这一轮出错了」也一起藏掉
-        // （对照 dsh 的 TURN_PROCESS_INDEPENDENT_KINDS）
-        if (inProcess && !TURN_PROCESS_INDEPENDENT.has(entry.kind)) process.push({ kind: 'row', index: at })
-        else after.push({ kind: 'row', index: at })
-      }
-      seats.set(round.index, {
-        round,
-        fold,
-        lead: round.startIndex,
-        withFoldRow,
-        process,
-        after,
-        changes,
-        turnDiff,
-        withFoot: round.answered,
-      })
-    }
-    const items: ChatPlanItem[] = []
-    props.entries.forEach((_entry, index) => {
-      const round = roundAt.get(index)
-      if (round === undefined) {
-        // 不属于任何一轮：开场那条 system 提示、轮之间冒出来的错误提示或宿主通知
-        items.push({ kind: 'loose', index })
-        return
-      }
-      // 轮内的其它条目由这一轮的座位自己渲染；只在轮首插一次座位
-      if (index !== round.startIndex) return
-      const seat = seats.get(round.index)
-      if (seat !== undefined) items.push({ kind: 'seat', seat })
-    })
-    return items
-  }, [props.entries, rounds, roundFold, stepGrouping, roundAt, firstVisibleRound])
+  const plan = useMemo(
+    () => buildSeatPlan(props.entries, rounds, roundFold, stepGrouping, roundAt, firstVisibleRound),
+    [props.entries, rounds, roundFold, stepGrouping, roundAt, firstVisibleRound],
+  )
 
   /**
    * 一条条目的内容（**不含**外层 `.entry-row` 座位）。
