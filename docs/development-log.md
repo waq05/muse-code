@@ -1287,3 +1287,5 @@ T15（对标 dsh tool-jobs）：长命令不占住回合。bash 工具新增 `ru
 **验证**：desktop typecheck + build 全绿；新实机自检 `desktop/shots/ui-seed.mjs` + `ui-fix-shots.ps1` 两用例六判定全绿——种子会话第 0 轮无过程内容（精确复现「用时 2秒」形态：disabled、无 chevron）、第 1 轮带工具调用（可点、带 chevron），computed 边框 solid 非零、折叠行高 33、`::-webkit-scrollbar` 宽 5px；真实 ~/.dsc 跑前跑后 171 文件聚合 SHA256 逐文件一致（零污染）。
 
 **诚实边界**：自检种子的侧栏只有 1 个会话、对话只有 2 轮，两个区域都没溢出，5px 滚动条只有样式表断言（thumb 色与 dsh 本就同值）没有溢出态实机特写；hover 提字色同样只有断言（截图钩子 `.shot-reveal` 已同步改成提字色，可复验）。
+
+**Mimosa 重扫密封（0.6.35）**：提交时门仍报 `scanner_enobufs`，按上轮纪律重扫——scanId `scan-2026-10-02T15-46-21.830Z-ed45f0d7e50e`（seal `sha256:99cc271b…`），138 个 finding 里真实源码面仍是同样 13 个（文件与规则逐条同 0.6.34 密封结论：12 误报/功能本质 + 1 已加固的 push.ts），总数 +2 落在 `lib/remote/assets` 与 `shots/icon-preview` 的非运行时副本/探针资产；依赖 298 包 0 命中。按扫描结论纪律：不宣称「项目完全安全」，只登记复核结论。
