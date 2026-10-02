@@ -13,6 +13,7 @@
 - **codex**：`D:\codex\codex`，Rust 主体 `codex-rs`（150+ crate）+ `sdk/`（TS/Python）+ `docs/`。
 - **Muse Code**：本仓库，基于代码取证 + [development-log.md](development-log.md) 全部 44 个阶段。
 - 全部为只读源码梳理，未运行任何一家；「未见」指在该仓库活动代码中未找到，不排除文档口径或仓库外实现。
+- dsc 清单经两轮：第一轮按能力域盘点（本节主体），第二轮对已具备能力做**实现深度复核**（与 dsh/codex 同层细比，确认的疏漏编号 T29–T47，登记在 [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) §7.5）——本节各「差距」行已并入第二轮结论。
 
 ---
 
@@ -249,14 +250,14 @@
 - 重命名/置顶/归档/回收站（30 天）/恢复/永久删除/分叉；sidecar `meta.json` 不污染重放
 - 跨会话全文检索：纯 TS 倒排索引（中文 1+2-gram），`session_search` 工具 + `/search` 命令 + 后台回填
 - 恢复启动：`--resume auto`（.last-session 指针）；孤儿 tool_calls 自愈清洗
-- 差距：会话标题靠首条消息截断（无 LLM 生成）；无会话导出；侧栏无运行状态点/待审批圆点（`Sidebar.tsx:671` 占位）；无轮中途插话（有意不做）
+- 差距：会话标题靠首条消息截断（无 LLM 生成）；无会话导出；侧栏无运行状态点/待审批圆点（`Sidebar.tsx:671` 占位）；无轮中途插话（有意不做）。**深度复核**（T30/T31/T32）：无跨进程写锁——桌面端与 TUI 同开一个工作区即交叉写坏同一份日志（dsc 在 schedule/sandbox 都做了锁，唯独会话没有）；会话头行损坏即整个会话打不开且静默回落新会话；中断 turn 恢复后模型对未完成动作失忆（孤儿调用被静默剔除，dsh 是落盘合成闭合 + 重试指引）
 
 ### 2. 模型与 provider ——【完整】
 - 协议接缝 `registerAdapter`（内置 openai-completions，SSE 手写解析）；config.yaml 多端点多模型，`/model` 带参数级补全
 - 推理档位五档（default/off/low/high/max）+ 档位字段三态（thinking/reasoning-effort/none）+ 模型能力字段（model-caps.ts 唯一真源：thinkingLevels/modalities/effortMap）
 - 用量统计：usage.jsonl + 设置页聚合（汇总卡 + 全年热力图 + 分模型趋势 + 环形图）
 - dsh 配置一次性只读迁移
-- 差距：无在线模型发现（手填清单）；无会话内上下文占用表；无 /status；账号 OAuth 不做
+- 差距：无在线模型发现（手填清单）；无会话内上下文占用表；无 /status；账号 OAuth 不做。**深度复核**（T39）：无会话级模型记忆——/model 切换只改进程内存，恢复会话回落 config 默认模型（dsh 从会话日志投影实际用过的模型）。深度复核（T33）：流式响应中途断线时半截回复直接丢弃且不落库、流期零重试（重试预算「连接期 3 次、流期 0 次」；dsh 已收内容 durable 落库 + step 重试，codex stream_max_retries 缺省 10）
 
 ### 3. 工具集 ——【完整，多为官方插件可开关】
 - 内置六件 bash/read/write/edit/glob/grep（预算可配、进程树收割、输出遮红、外部内容围栏）；大输出溢出落盘（spill）
@@ -267,7 +268,7 @@
 - PTC：`run_code` 同进程 node:vm（15s/120s/调用数上限）；runtime_api（创造模式）
 - 工具渐进披露（tool_search/tool_describe/tool_call + BM25，默认关）
 - ask_user（批量选项）、exit_plan_mode、todo_write、goal、memory、skill/skill_write、session_search、self-improve（三闭环）
-- 差距：无后台任务（bash.ts 自认）；无持久终端工具（终端面板是人用的）；read 不支持图片文件；MCP 无 elicitation/resources/prompts
+- 差距：无后台任务（bash.ts 自认）；无持久终端工具（终端面板是人用的）；read 不支持图片文件；MCP 无 elicitation/resources/prompts。**深度复核**（T34/T35/T36/T37/T38/T46）：read 无字节上限、行长上限与二进制检测（spill 刻意排除 read，成了全系统唯一无防线输出入口）；edit/write 无 CAS 版本校验（读改写窗口静默覆盖第三方修改；write 有 mtime 检测、edit 全裸）；bash 超时丢全部已收输出且无 SIGTERM 优雅档（直接强杀）；MCP server instructions 被丢弃（initialize 响应不接）；PTC 脚本可并发写调用（无 dsh 的写/执行串行屏障；守卫链重入本身复核通过）；web_search 无域过滤（tavily 原生 include_domains 白白不用，对标 codex 成立）
 
 ### 4. 权限与审批 ——【完整，本仓库最重】
 - 双旋钮：协作模式四档（build/plan/explore/quiet）× 权限模式四档（readonly/auto-edit/full-access/ai-review）
@@ -287,21 +288,21 @@
 - 悬停预览：轮尾卡行/正文提及 chip 停 500ms 出该文件 diff（Esc capture 截停防误拒审批）
 - git 页签 diff：全量/单文件 `git diff HEAD --no-textconv --no-ext-diff` + stage/commit
 - `/review [关注点]`：收集工作区未提交改动组装审查轮（v1）
-- 差距：/review 无独立子代理与结构化 findings；审查面板纯只读（无部分行接受）；面板不追文件后续变化；bash 改文件不进聚合卡
+- 差距：/review 无独立子代理与结构化 findings；审查面板纯只读（无部分行接受）；面板不追文件后续变化；bash 改文件不进聚合卡（dsh 用 turn 首尾 git 快照 diff 兜底能抓到 bash/sed 的改动，dsc 只认 write/edit 第一方归因——T42）
 
 ### 6. 命令系统 ——【完整】
 - 内置 7 条：/new /resume /compact /model /review /help /exit（`src/core/commands-completion.ts:16-22`，单一真源）；/effort 保留「已移除」占位
 - 插件注册约 18 条：/search /plugins /floor /hooks /learn /learnings /lifecycle-hooks /memory /mode /sandbox /schedule /skills /skills-ledger /todo /goal /browser 等
 - 补全：命令前缀候选 + `/model` 参数级候选 + 唯一前缀自动展开（渲染层/TUI/插件共用同一纯模块）
 - 自定义命令：外部插件 `ctx.commands.register`
-- 差距：输入端无 @ 文件提及补全（输出端已有内联 chip）；无 @session 引用
+- 差距：输入端无 @ 文件提及补全（输出端已有内联 chip）；无 @session 引用。**深度复核**（T44）：命令可用性无声明矩阵、三端防护不一致——桌面审批等待期禁输入框但侧栏「新会话」按钮可绕过直接打断挂着审批的回合（codex 每条命令声明 available_during_task）
 
 ### 7. 上下文工程 ——【完整】
 - system prompt 分段注册（稳定在前缓存友好）；AGENTS.md/CLAUDE.md/cursorrules 逐级上找 8 层 + 用户全局，20k 预算头尾保留
 - compact：手动 + 自动阈值（80%×contextWindow，CJK 感知），保头折尾 + 锚点索引 + 用户原话逐字 + 细节找回指针
 - 长期记忆三格 Markdown（global/USER/workspace）+ 轮尾自动复盘；todo 实时进度条；goal 跨轮续跑（带刹车）；技能（四层发现根 + 市场缓存）
 - 模式（Agent 预设）：标准/极简/创造/PTC 四内置 + 自定义 presets/*.md
-- 差距：压缩前不对超限工具输出预裁剪；压缩时无图像预算卸载
+- 差距：压缩前不对超限工具输出预裁剪；压缩时无图像预算卸载。**深度复核**（T40/T41/T43/T47）：压缩不可取消且 /compact 无运行中守卫（回合运行中压缩会与工具落库交错）；AGENTS.md 无深层目录触达增量发现 / override·local 覆盖层 / project-root 有序发现（cwd 向上 8 层硬截断）；计划拒绝反馈回路断裂（模型被要求「吸收用户的反馈」但反馈无通道传入回执）；技能 whenToUse 解析了但不进目录行、无隐式调用识别
 
 ### 8. 终端与执行 ——【基础】
 - bash 前台一次性（30s/120s/8000 字符，超时收进程树）；桌面交互终端面板（xterm.js 多页签，人用）
@@ -315,7 +316,7 @@
 - 文件面板（树形懒加载 + vscode-icons 全集 + 多类型预览）；轨迹页（TraceView/Timeline/Inspector）；队友面板/用量面板/技能中心/插件中心/配对弹窗
 - 托盘（关窗缩托盘 + 一次性气泡）；检查更新（占位，UPDATE_CHECK_URL 空串）
 - **手机遥控（独有）**：PWA 遥控端（visualViewport 键盘适配、图片压缩上传、增量帧重连补帧）+ Web Push（VAPID）+ Webhook（Bark/ntfy）+ 二维码半小时配对 + 逐台设备吊销
-- 差距：无会话运行状态点；桌面无原生系统通知（只有托盘气泡+toast）；手机端无团队/模式面板、归档只读
+- 差距：无会话运行状态点；桌面无原生系统通知（只有托盘气泡+toast）；手机端无团队/模式面板、归档只读。**深度复核**（T45）：推送盲区——审批久等无升级再提醒、10 秒同类节流会吞掉第二张审批卡的推送、ask_user 提问卡与计划评审卡完全不推（审批推送本身仍是 dsc 领先项）
 
 ### 10. 传输部署 ——【完整】
 - 远程宿主：HTTP+WS（配对/票据/上传/推送 7 条路由 + 主控位锁 + 多设备 devices.json + INVOKABLE_COVERAGE 编译期兜底）

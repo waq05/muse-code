@@ -33,7 +33,7 @@
 
 紧随其后：MCP 客户端与 Tool Search 要绑在一起上（否则 schema 吃掉上下文）。「自我改进闭环」「OS 级沙箱」是独立路线，各自要先立前置条件，不进快赢清单。
 
-这三件连同紧随其后的 spill、生命周期钩子、MCP + Tool Search 都已落地，逐项状态与验收证据见 §5.1。**2026-10-02 又按三家源码清单全面重梳了一轮差距**（LSP、浏览器、定时任务、PTC、沙箱、diff 审查链在此之后陆续落地，旧矩阵曾把它们还标成缺失），修订后的矩阵见 §3，新登记的差距 T14–T28 见 §7。
+这三件连同紧随其后的 spill、生命周期钩子、MCP + Tool Search 都已落地，逐项状态与验收证据见 §5.1。**2026-10-02 又按三家源码清单全面重梳了一轮差距**（LSP、浏览器、定时任务、PTC、沙箱、diff 审查链在此之后陆续落地，旧矩阵曾把它们还标成缺失），修订后的矩阵见 §3，新登记的差距 T14–T28 见 §7。同日还做了一轮**已具备能力的实现深度复核**（对标同层实现抓「表面都有、细节不如」，确认 19 条疏漏含 1 个死锁级缺陷），见 §7.5。
 
 ---
 
@@ -379,9 +379,73 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 6. 定时任务 pre-dispatch 校验（坏配置一次 token 不花）；
 7. 轨迹页（整轮折叠 + 时间线 + 独立节点检查器）。
 
-### 7.5 建议的落地顺序
+### 7.5 已具备能力的实现深度复核（第二轮，2026-10-02，T29–T47）
 
-P1 六件里，**T14（@ 提及）与 T16（标题生成）最轻**（不动内核、半天级），先做；**T15（后台任务）价值最高但动内核**，单独立项；**T17（占用表）/ T19（压缩前置裁剪）同用 token 估算器，连着做**；**T18（review 子代理）等 T15 的 subagent 通道热身完再上**。P2 按 T22 → T21 → T23 → T25 → T24 → T20 → T27 → T28 → T26 的大致成本升序排。
+§3 矩阵与 §7.1–7.3 管的是「能力有没有」；本节管「**已标 ● 的能力，实现深度够不够**」。方法：18 个定向疑点 + 双侧开放扫描，逐条与 dsh/codex 同层实现细比，每条给三态结论（确认疏漏 / 不成立 / 部分成立）与两侧文件:行号证据。共确认 19 条疏漏、澄清 4 条「其实已覆盖」（见 7.5.4，防未来重复立案）。
+
+#### 7.5.1 P0：缺陷级（真 bug 或数据安全，先修）
+
+**T29. 计划评审卡挂起时切换会话 → agent 循环永久死锁**
+- dsc：`plan.ts:34-62` 的 `propose` 挂起等审批，abort 清理走 `finish('rejected')`，但 `finish` 首行 `if (planDone === null) return`（`plan.ts:39`）；`dsc/session-open` 监听器把 `planDone` 置 null **且不 resolve 挂起的 promise**（`plan.ts:114-117`）；插件顺序 plan 先于 agent（`kernel.ts:326,328`）——切换会话时监听器先清空、agent 的 abort 后到，清理落空，`exit_plan_mode` 的 await 永不返回，`running` 永真，之后所有消息变 steering，宿主只能重启。入口现成：侧栏「新会话」/SessionPicker/`/new`/`/resume` 全不受挂起计划约束。
+- 对标：dsh 对「评审比插件 fiber 活得久」有明确工程化（`plan-mode/index.ts:336-339`）；dsc 自家 approval 插件的同类清理是对的（`approval.ts:582-588` exit 时调 `done`）。
+- 修法：session-open 分支先 `planDone?.('rejected')` 再置空（对齐 approval 的写法），一行级。
+
+**T30. 会话 jsonl 无跨进程写锁**
+- dsc：append 直写无任何跨进程锁（`session.ts:556`）；「打开中的会话不能归档」只查本进程内存（`plugins/session.ts:117-126`）。桌面端（utilityProcess）与 TUI 都从同一份 `.last-session` 取默认会话，同开一个工作区 → 两条对话交错 append 进同一份日志，重放串线；fork/归档的 `renameSync` 可在另一侧持句柄时移动文件。meta.json sidecar 的读改写同样无锁、损坏即被空表覆盖（`session-meta.ts:77-91`，:44-67 注释自认）。**dsc 自己会做锁**：schedule 的 `.lock` 互斥（`schedule/runner.ts:10,328,364`）、sandbox ACL 的 LockFileEx（`sandbox/win/acl.ts:88-117`），唯独会话没有这层。
+- 对标：codex `rollout/writer_lock.rs:43-86`（try_lock + 陈锁清理）；dsh `SessionWriteLease`（`lease.ts:70-116`，Windows 命名信号量 + POSIX flock + inode 校验），恢复时「先拿写所有权再读」。
+- 修法：会话写租约，争用时报「会话已在另一窗口打开」；meta.json 纳入同一把锁。
+
+**T31. 会话头行损坏 = 整个会话永久打不开**
+- dsc：首行 meta 半截 JSON 直接 throw「缺少 meta 行」（`session.ts:329`），恢复失败**静默回落开新会话**（`plugins/session.ts:59-64`）——后面 99% 完好的对话再也进不去，用户无感知地丢了整个会话。坏行本可静默跳过（`session.ts:229-241`），唯独 meta 行没有抢救路径。
+- 对标：codex rollout 有 reverse_jsonl_scanner / maintenance / state_db 巡检恢复面；dsh 有格式迁移链 + `repair.ts`。
+- 修法：meta 损坏时向后重同步（按第一条 user 记录重建 meta），或至少隔离损坏文件并明确告知。
+
+**T32. 中断 turn 恢复后模型对未完成动作失忆**
+- dsc：`sanitizeToolOrphans` 每次请求在副本上**静默剔除**配不上对的 tool_calls/tool 消息（`llm.ts:153-190`）——崩溃中断的回合恢复后，模型不知道「我发起过一个可能已产生副作用的操作、结果未知」，无从决定是否核查；界面显示有这个调用、模型以为没有，两者矛盾。
+- 对标：dsh `repair.ts` 的 `interruptedTurnClosers` 生成**合成闭合事件并落盘**——「已启动但结果未知」与「根本没启动」两种文案 + 明确行为指引（仅只读/幂等可重试；可能有副作用先核查），resume 时一次修复持久化。
+- 修法：恢复会话时仿 dsh 落盘修复，`sanitizeToolOrphans` 退居协议兜底。
+
+**T33. 流中断半截回复丢弃，且流期零重试**
+- dsc：流已开始后网络错误半截直接 throw（`llm.ts:426-430`），半截 assistant **不落库**（`appendAssistant` 只在流正常返回后执行，`loop.ts:241`）——用户看到半截正文 + 报错，上下文里却没有这条消息；408 与流空闲超时刻意 `retryable=false`（`llm.ts:282,462`）。dsc 的重试预算是「连接期 3 次、流期 0 次」。
+- 对标：dsh 已收内容 durable 落库（`agent.ts:476-520`）+ llm-retry step 边界整体重试；codex `turn.rs:1621-1707` `stream_max_retries` 缺省 10（注释原话 retry dropped SSE streams）。
+- 修法：① 流错误时把已收 text/合计 toolCalls 落一条截断 assistant 记录；② 对「已收字节未到 finish」的流中断加一次可配重试；③ 408 纳入可重试清单。
+
+#### 7.5.2 P1：防线补齐
+
+| 编号 | 疏漏 | dsc 证据 | 对标证据 |
+| --- | --- | --- | --- |
+| T34 | **read 输出无字节/行长/limit 封顶、无二进制检测**——spill 插件刻意排除 read（`plugins/spill.ts:32`），read 成了全系统唯一无字节数防线的输出入口，单行超长文件（bundle/锁文件）可直接撑爆窗 | `fs-tools.ts:88-97`（`limit` 无上限） | dsh `maybeTruncate` 按 maxOutputChars（缺省 16000）截断附提示；dsc 自家 bash 有 8000 字符 + spill |
+| T35 | **edit/write 无 CAS 版本校验**（读→改→写窗口内文件被第三方改，拿旧基线整篇写回；write 有 mtime 陈旧检测只覆盖「读之后被改」，edit 完全没有） | `fs-tools.ts:129-131,164-169` | dsh 写回带 `replaceIfVersion` 原子比对（`tool-str-replace-editor:314-322`）；codex 每次从盘上现值重算。另：dsh 的 edit 强制先读（FS_NOT_OBSERVED），dsc edit 不要求先读（自读现值，风险小） |
+| T36 | **bash 超时丢全部已收输出 + 无优雅终止档**：超时只回一句「命令超时」，编译错误印在前 20 秒、31 秒超时时模型什么线索都拿不到；直接 SIGKILL/`/F` 跳过构建工具的清理逻辑 | `bash.ts:87-90,48-59` | dsh SIGTERM→3s grace→SIGKILL 树级两档，被杀进程输出仍可读；codex terminate→kill 两档（`exec-server/connection.rs:187-223`） |
+| T37 | **MCP server instructions 被丢弃**：initialize 响应整个不接（只 await 不取返回值），server 用 instructions 传达的工具用法预期模型永远看不到 | `mcp.ts:692-696` | dsh 读 instructions 并注册进 system prompt（`mcp-client/connection.ts:305-321` + `server-context.ts:16-37`，带字节上限） |
+| T38 | **PTC 脚本可并发写调用**：`Promise.all` 两个写调用并发跑，无互斥（总次数上限 200 是唯一的闸）——守卫链重入本身没问题（每调用走 `ctx.guards.gate`），缺的是 dsh 的「写/执行串行」屏障 | `plugins/ptc.ts:102-135` | dsh `core/tools/README.md:194` "mutating calls run alone" + `ptc.ts:419-441` 提交游标 + barrier |
+| T39 | **会话级模型记忆缺失**：/model 切换只改进程级内存，恢复会话回落 config 默认模型 | `plugins/llm.ts:22-25`；SessionStateMap 无 model 条目（`session.ts:103-130`） | dsh 会话事件流持久投影（`model-selection-projection.ts:35-56`）：日志里记录实际发过请求的模型，恢复优先取它 |
+| T40 | **计划拒绝反馈回路断裂**：`answerPlan` 只收决策枚举，拒绝后模型收到「把用户的反馈吸收进方案」但反馈无通道传入，只能盲猜 | `contract.ts:79,1087`；`plan.ts:109` 固定文案 | dsh 计划评审带自定义文本输入，反馈原文直接进工具结果（`plan-mode/index.ts:307-348`） |
+| T41 | **压缩不可取消、/compact 无运行中守卫**：三条路径都传一次性 AbortController，用户 interrupt 停不掉压缩的 LLM 调用；回合运行中 /compact 会让摘要落库与进行中工具落库交错 | `plugins/compact.ts:126,146,163` | dsh `compactNow(invocation.agent, invocation.signal, …)` + 取消回执（`command-compact/index.ts:67,75`） |
+| T42 | **轮尾「文件已更改」卡漏 bash/脚本改动**：只认 write/edit 第一方归因，bash/sed/构建脚本改的文件不进卡，用户看到「无更改」而工作区已变 | `loop.ts:374-378`；`session.ts:439-464` | dsh turn 首尾 git 快照 diff 兜底（私有对象库 + scratch index，含未跟踪与重命名检测，maxFiles=500），文件工具捕获只补 git 盲区（`workspace-changes/index.ts:143-165`） |
+
+#### 7.5.3 P2
+
+| 编号 | 疏漏 | dsc 证据 | 对标证据 |
+| --- | --- | --- | --- |
+| T43 | AGENTS.md 缺四手：深层目录触达的增量发现 / `AGENTS.override.md`·`*.local.md` 覆盖层 / 变更删除对账 / project-root 有序发现（dsc 是 cwd 向上 8 层硬截断，仓库根之上丢说明） | `prompt.ts:76-100,42-43` | dsh `agent-instructions`（fs 触达 → projectTouch 增量对账 + resume 对账）；codex `agents_md.rs:42-46`（override + fallback 配置 + root→cwd） |
+| T44 | 命令可用性无声明矩阵、三端防护不一致：桌面审批等待期禁 textarea（连 /help 都敲不了）但侧栏「新会话」可绕过直接打断挂着审批的回合；TUI 一刀切；远端无回合状态检查 | `commands.ts:49-66`；`App.tsx:786,596-600` | codex `slash_command.rs:239-302` 每条命令声明 `available_during_task` 的矩阵 + 测试锚定 |
+| T45 | 推送盲区：审批推送只在卡出现那一刻发一次，久等无升级再提醒；10 秒同类节流会吞掉第二张审批卡；ask_user 提问卡与计划评审卡**完全不推**（同样挂起等人的时机） | `remote.ts:961-970,1011-1032`（只盯 pendingApproval） | 审批推送本身 dsc 领先（codex notify 钩子只有回合完成一种）；此条是与自家场景对比出的盲区 |
+| T46 | web_search 无域过滤/位置参数（tavily 原生支持 include/exclude_domains 白白不用） | `web-search.ts:165-171` | codex `tool_spec.rs:39-48` `allowed_domains` + `user_location`（dsh 与 dsc 同水平，此条只对标 codex 成立） |
+| T47 | 技能两处小疏漏：whenToUse 解析了但不渲染进目录行（「何时该用」信号丢失）、目录引导语泛泛；无隐式调用识别（模型没调 skill 工具但实际踩到技能无记录无策略） | `skills.ts:102-108,110-112` | codex `skills/invocation.rs` 完整隐式检测 + `allow_implicit_invocation` 策略位；dsh 目录引导语明确（「任务明显匹配就先调 skill 工具」） |
+
+#### 7.5.4 复核为无疏漏（已有实现且不弱于对标，防重复立案）
+
+- **edit 多匹配**：dsc 报错（`fs-tools.ts:165-167`），比 codex 严——codex `seek_sequence` 只取第一个匹配静默替换（`apply-patch/seek_sequence.rs:39-70`）；可借鉴 dsh 的报错带匹配行号。
+- **PTC 守卫链重入**：每次 sdk 调用完整走 `ctx.guards.gate` + `observe`（`plugins/ptc.ts:102-119`），fail-closed 成立，与 dsh 的「嵌套重入完整管线」同构。
+- **超窗兜底**：`isContextOverflowError` + `forceCompact` 压完重试本轮已有（`loop.ts:59-65,160-171`）；与 dsh 的差异只是「400 + 措辞正则」vs「结构化错误码」，打磨级。
+- **write 的 read-before-write**：有，且带 mtime 陈旧检测（`path-policy.ts:200-215`），比 dsh 的版本检查多防一层「读到写之间被第三方改」。
+
+### 7.6 建议的落地顺序
+
+**第二轮的 P0 五件（T29–T33）优先于一切新能力**：T29 修法一行级最急；T30/T31 是会话数据安全；T32/T33 是恢复语义。P1 里 T34/T36/T37/T40 都是几十行级，可与 P0 打包成「正确性批次」先做；T35/T39/T41/T42 中等，随其后。
+
+第一轮登记的缺失能力（T14–T28）在正确性批次之后按原顺序：**T14（@ 提及）与 T16（标题生成）最轻**（不动内核、半天级）先做；**T15（后台任务）价值最高但动内核**，单独立项；**T17（占用表）/ T19（压缩前置裁剪）同用 token 估算器，连着做**；**T18（review 子代理）等 T15 的 subagent 通道热身完再上**。P2 按 T22 → T21 → T23 → T25 → T24 → T20 → T27 → T28 → T26 的大致成本升序排。
 
 ---
 
