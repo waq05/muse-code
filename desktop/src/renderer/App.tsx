@@ -740,6 +740,7 @@ export function App(): JSX.Element {
                   // 轮尾「文件已更改」卡：审查开右侧 diff 面板，打开进文件预览页签
                   onReviewChanges={(files, index) => setReview({ files, index })}
                   onOpenFile={(path) => dockActions.openPreview(path)}
+                  cwd={cwd}
                   // 过程折叠程度（设置 → 通用 → 过程折叠程度）：四档能力表在 appearance.ts，
                   // 渲染层只读能力。另两项是「单条思考 / 工具卡」的默认态（设置 → 通用）。
                   processFold={uiPrefs.processFold}
@@ -753,6 +754,7 @@ export function App(): JSX.Element {
                   <ApprovalCard
                     request={snapshot.surfaces.pendingApproval}
                     onAnswer={(answer) => proxy.answerApproval(answer)}
+                    cwd={cwd}
                   />
                 )}
                 {snapshot.surfaces.pendingPlan !== null && (
@@ -823,6 +825,7 @@ export function App(): JSX.Element {
                 <DiffPane
                   files={review.files}
                   index={review.index}
+                  cwd={cwd}
                   onSelect={(index) => setReview((current) => (current === null ? current : { ...current, index }))}
                   onOpen={(path) => dockActions.openPreview(path)}
                   onOpenSystem={(path) => {

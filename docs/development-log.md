@@ -1031,3 +1031,27 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 验收：根 build + desktop typecheck 0 错；transcript-usage 12/12（新增 turn/diff 折条目、重放不重建 turnDiff 两断言）；新增 `scripts/turn-changes-test.mjs` 14/14（基线幂等/终态回退不出条目/close 清空/jsonl 不带 baseline/**MiniAgent 整轮集成**——假 stream 吐同文件两刀，验证 finishCall 记基线、逐刀事件照发、turn/diff 在 turn/end 后到达且两刀合一）；实机探针（构造会话回退路径 + 渲染层全链）：`rows=2 counts="+6 -1" badges=2 preview=open（文件名+行数+内容）pane=open diffLines=7 add=4 del=1 split=6 wrap=y basis="560px"`，截图目检分栏两列/新增徽标/换行高亮/系统打开按钮全部就位；探针数据（构造会话、探针文件、udata 视图偏好）已清理。顺带修了 HoverPreview 的容错：读取中/读失败都渲染提示卡，不再无声无息。
 
 诚实边界：① 探针期间 deepseek 限流未恢复，「模型真改文件走 turnDiff 聚合」的端到端由 MiniAgent 假模型直测（14 断言）+ 实机回退路径探针两段覆盖；② bash 改文件仍不归因（codex 同口径：无法精确归因时宁可缺失）；③ skill_write 不并入聚合卡（技能库有 ledger + /skills-ledger rollback 专门台账）；④ 审批弹窗内嵌 diff 预览、git 工作区 diff 模式、review 子代理、会话 fork 留后续轮次；⑤ 重启恢复后无聚合条目，卡回退逐刀合并（同文件 hunks 顺序拼接，行号以各刀为准，如实降级）。
+
+## 阶段 44：吸纳 dsh + codex 剩余优势——审批/工具卡 intended diff、悬停预览出 diff、路径相对化、git 页签 diff、/review（0.6.26）
+
+探索修正了两个假设：dsh 的审批卡本身无 diff——「将做的改动」预览长在**会话流工具卡**上（intended diff：折叠行相对路径 + `+N -M` 徽标，展开体摊 diff）；dsh 的悬停预览显示的是**该文件的 diff**（不读盘、无工作目录限制），不是文件头内容。codex 侧：审批弹窗内嵌 diff（ApplyPatchApproval）、/diff 的 git 安全姿势（`--no-textconv --no-ext-diff` 防 diff driver 执行外部程序）、/review 三目标审查。
+
+**共享 diff 行渲染**：DiffPane.tsx 抽出导出 `DiffRows({ hunks, path, split?, wrap? })`（原 FileDiff 内核，hunks 拼一段喂 shiki 保跨行状态、effect 认字符串内容不认数组引用），四处复用——右栏审查面板 / 工具卡 intended diff / 审批卡内嵌 / 悬停预览；换行开关的 `data-wrap` 从 `.diff-pane` 挪到 `.diff-body` 上，各复用点自己决定折行还是横向滚。
+
+**工具卡「将做的改动」（dsh 形态）**：新增渲染层 `intended-diff.ts`——write/edit 且 `status === 'running'`（含审批等待期，adapter 里两者同为 running）时，解析参数 + 经 fs-read 读盘上现值 + 按语义推演写后全文（write=整写 content；edit=盘上 indexOf 首处替换）→ `diffLines`（直接 import `@dsc/runtime/core/diff-text.js`，渲染层 import lib/core 已有先例）→ 800 行预算砍尾（与宿主 summarizeChange 同口径）。三种降级：盘读不到（工作区外/文件不存在）→ write 从空串起算、edit 用 old→new 参数差异，标 `fellBack`；edit 的 old 匹配不到/匹配多处 → 标 `mismatch` 并在卡上提示「执行会失败」；参数不齐 → 不出。折叠行升级成 dsh 形态：相对路径（title 全路径）+ 增删徽标；落地后（status 离开 running）自动消失，轮尾卡接手。
+
+**审批卡内嵌 diff（codex 形态）**：contract 加 `ApprovalDiffView`（path/added/removed/hunks/truncated/status + fellBack/mismatch），`ApprovalRequestView.diff?` 挂载；宿主 approval 插件在**弹卡前**推演（`approvalDiffOf`：读盘 + 同款语义 + summarizeChange 同一算法，hunks 行文本过 redact——卡上会显示密钥形状的字符串不能裸奔），随视图下发；渲染层 ApprovalCard 默认收起一行「将写入/将修改 相对路径 + 计数」+「查看改动」切换展开 DiffRows。只有真要等人点卡的时刻才付一次读盘 + LCS 的成本。
+
+**悬停预览对齐 dsh（替换 0.6.25 的文件头预览）**：轮尾卡文件行 hover 500ms 出**该文件的 diff**（file.hunks 直出，不读盘、无工作目录限制、fs-read 缓存逻辑全删）；dsh HoverCard preview 规格：宽 = 聚合卡宽 − 48、锚上方优先放不下落下方、maxHeight 420、移开 100ms 后收（计时抽成 `hover-delay.ts` hook，行与提及 chip 两处共用）、移进卡里续命、**Escape 关闭走 capture 截停**——审批卡在冒泡阶段监听 Esc=拒绝，预览开着时按 Esc 只能收预览不能误拒。正文提及 chip（mentionPaths 从 Set 升 Map<path, 合并改动视图>，mergeChangesByPath 复用）hover 同款 diff。
+
+**路径显示对齐 dsh**：file-util.ts 新增 `displayPathOf(path, cwd, home?)`（cwd 内→相对、home 内→`~/`、否则 posix 化原样；两段比较按小写比——Windows 大小写不敏感）；轮尾卡行/审查面板文件名与 select option/hover 头/工具卡 tc-path/审批卡 diff 行全部走 display + title 全路径；cwd 经 props 传 ChatView（App 已有 state）与 ApprovalCard/DiffPane。
+
+**git 页签看 diff（codex /diff 姿势）**：dock `git-diff` 服务扩展——file 为空时全量 `git diff HEAD --no-textconv --no-ext-diff`（两个旗标防文本转换与外部 diff driver 当场执行程序），单文件同样加旗标；渲染层新增 `unified-diff.ts`（`parseUnifiedDiff`：@@ 头解析、`\ No newline` 容错、计数以实际行为准；`splitUnifiedDiffByFile`：全量按 `diff --git` 切段取 `b/` 侧路径）；GitPane 文件行（span 升级 button）点击在底部展开该文件 diff、「全部改动」按钮展开全量（多文件分段），stage/commit 后 diff 过期自动收起。**顺手修了既有 bug**：unstaged 行的 porcelain 前缀是 ` M `（空格开头），`fileOf` 的 `[AMDRCU?]+\s` 剥不掉——此前对未暂存文件点「+」暂存实际是带着前缀在调 git add。
+
+**/review 审查命令（codex /review 的 v1）**：BUILT_IN_COMMANDS 加 `/review [关注点]`——handler 用 execFile 固定子命令收集工作区未提交改动（core/git-info.ts 的 `collectWorkingTree`：diff HEAD 全量 + untracked 只列名单，60k 字符预算尾部截断）→ `reviewMessage` 组装 → `runtime.submit` 发起审查轮（回复即审查意见，与用户贴 diff 问「帮我看看」同一条链路）。codex 的独立 review 子会话/findings 渲染不搬。
+
+**白屏教训（本次最重要的架构约束）**：commands 插件最初把 `import { execFile } from 'node:child_process'` 写在顶层——渲染层 Composer import `@dsc/runtime/plugins/commands.js` 拿补全函数，vite 对 node 内置模块是「externalize 即炸」（顶层 import 一求值就抛），整个渲染进程白屏、探针 sessions=0 三连扑空才抓到。修复：spec 表与补全函数（BUILT_IN_COMMANDS/helpText/commandCompletions/modelCompletions/completionsFor/expandCommand + extraSpecs 注册表）挪到 `core/commands-completion.ts`（**顶层零 node 模块**），git 收集挪 `core/git-info.ts`，渲染层与 TUI Composer 都改 import 纯模块；插件模块保留 handler 注册与派发。约束写进两个模块的头注释。
+
+验证：根 build + desktop typecheck 0 错；回归全绿（composer / remote-host 140 / trace-data / transcript-usage / turn-changes 14 / settings-sections）；新增 `scripts/review-approval-test.mjs` 27/27（approvalDiffOf：write 新建 fellBack/覆盖 modified/edit 替换/mismatch 两种/工作区外回落/密钥遮红；collectWorkingTree：非 git null/临时仓库 diff+untracked；reviewMessage 组装；parseUnifiedDiff/splitUnifiedDiffByFile——node 24 type stripping 直跑渲染层 TS 源）；/review 补全与 expandCommand('/rev') node 直测。实机探针两轮：d626（构造「只有调用没有结果」的会话重放 → running 卡 intended diff：折叠行相对路径 `shots/probe-626-intended.txt` + `+2 -1`、展开 5 行 diff 增删着色、轮尾卡行悬停出 diff `previewDiff=2`、Esc 关闭 `escClose=y`、提及 chip 悬停 `chipPreview=open/2`，截图目检轮尾卡新增徽标+相对路径+审查/打开按钮）；d626b（git 页签：全量 `files=4 lines=437 highlights=4082`、单文件 `rowLines=21` 行高亮、截图目检底部 diff 视图与行号/增删色）；探针会话与临时文件已清理。
+
+诚实边界：① 限流期 /review 的「submit 之后模型真审查」未走端到端（消息组装 + 收集已直测，链路与用户贴 diff 提问完全同路）；② 审批卡内嵌 diff 的实机形态未截到（审批等待需真模型发起写请求）——approvalDiffOf 直测 + 渲染层与工具卡共用 DiffRows 覆盖；③ intended diff 推演的是「调用发起时」的盘上现值，等待审批期间文件被并行改动不追更（dsh 同口径）；④ 全量 git diff 沿用 20000 字符截断，特大工作区只显示前几个文件的完整 diff；⑤ untracked 文件没有 diff 可看（git diff 天然不含），列名单提示。

@@ -12,6 +12,10 @@ import type { ToolCallView } from '@dsc/runtime/contract.js'
 import { IconChevronDown, IconChevronUp } from './icons.js'
 import { readFold, writeFold } from './fold-state.js'
 import { formatDuration } from './turn-timing.js'
+import { displayPathOf } from './file-util.js'
+import { useIntendedDiff } from './intended-diff.js'
+import { DiffRows } from './DiffPane.js'
+import type { RuntimeProxy } from './bridge.js'
 
 const STATUS_TEXT: Record<ToolCallView['status'], string> = {
   // 模型已经吐了工具名、参数还没到齐（对照 dsh 的 preparing 阶段）
@@ -179,6 +183,8 @@ export function ToolCard({
   call,
   defaultOpen = false,
   storeKey,
+  cwd = '',
+  proxy,
 }: {
   call: ToolCallView
   defaultOpen?: boolean
@@ -187,6 +193,10 @@ export function ToolCard({
    * 会话切换会把条目整表重建，重挂时从这个键读回用户上次的展开选择。
    */
   storeKey?: string
+  /** 工作目录：「将做的改动」的折叠行拿它把目标路径显示成相对路径。 */
+  cwd?: string
+  /** 渲染层桥：write/edit 进行中时读盘推演「将做的改动」。不传（只读视图）就不推演。 */
+  proxy?: RuntimeProxy
 }): JSX.Element {
   const status = call.status
   const running = status === 'running'
@@ -200,6 +210,12 @@ export function ToolCard({
   const preparing = status === 'preparing'
   const [open, setOpen] = useState(() => readFold(storeKey, defaultOpen))
   const [barVisible, setBarVisible] = useState(false)
+  /**
+   * 「将做的改动」（dsh 的 intended diff）：write / edit 还在 running（含审批等待期）
+   * 时从参数 + 盘上现值推演这次调用将产生的 diff。落地后自动消失——那一刻轮尾的
+   * 「文件已更改」卡接手，卡上再挂一份实际 diff 就是重复。
+   */
+  const intended = useIntendedDiff(call, cwd, proxy)
 
   /** 展开态一变就写回存档：组件被重挂时下一个实例才读得到。 */
   const setOpenPersisted = (next: boolean): void => {
@@ -296,8 +312,28 @@ export function ToolCard({
         }}
       >
         <span className="name">{call.name}</span>
-        {/* 摘要这一格始终渲染（哪怕是空串）：它的 flex:1 负责把状态与箭头顶到行尾 */}
-        <span className="preview">{summary}</span>
+        {/* 摘要这一格始终渲染（哪怕是空串）：它的 flex:1 负责把状态与箭头顶到行尾。
+            write/edit 进行中时摘要升级成 dsh 折叠行的形态：相对路径 + 增删徽标。 */}
+        <span className="preview">
+          {intended !== null ? (
+            <>
+              <span className="tc-path" title={intended.absPath}>
+                {displayPathOf(intended.absPath, cwd)}
+              </span>
+              {intended.file !== null && (
+                <span className="changes-counts">
+                  {intended.file.status === 'added' && <span className="diff-badge">新增</span>}
+                  <span className="changes-added">{`+${String(intended.file.added)}`}</span>
+                  <span className="changes-removed">{`-${String(intended.file.removed)}`}</span>
+                </span>
+              )}
+              {intended.mismatch === 'missing' && <span className="tc-warn">old 不在当前文件里</span>}
+              {intended.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处</span>}
+            </>
+          ) : (
+            summary
+          )}
+        </span>
         <span className="status">
           {(running || preparing) && <i className="tc-spin" aria-hidden />}
           {STATUS_TEXT[status]}
@@ -320,6 +356,23 @@ export function ToolCard({
                   收起
                   <IconChevronUp size={11} />
                 </button>
+              )}
+            </div>
+          )}
+          {intended !== null && (
+            <div className="tc-intended">
+              <div className="tc-intended-head">
+                <span className="tc-intended-title">将做的改动</span>
+                {intended.fellBack && <span className="tc-warn">读不到文件当前内容，以下按参数推算</span>}
+                {intended.mismatch === 'missing' && <span className="tc-warn">old 在文件中不存在，执行会失败</span>}
+                {intended.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处，执行会失败</span>}
+              </div>
+              {intended.file === null ? (
+                <p className="tc-intended-note">两段内容一致，不会有实际改动。</p>
+              ) : (
+                <div className="tc-intended-diff">
+                  <DiffRows hunks={intended.file.hunks} path={intended.absPath} />
+                </div>
               )}
             </div>
           )}

@@ -7,8 +7,10 @@
  *
  * @module desktop/renderer/ApprovalCard
  */
-import { useEffect, type JSX } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import type { ApprovalAnswer, ApprovalRequestView } from '@dsc/runtime/contract.js'
+import { DiffRows } from './DiffPane.js'
+import { displayPathOf } from './file-util.js'
 
 /** 风险档位对应的中文与配色档位。 */
 const RISK: Record<ApprovalRequestView['risk'], { label: string; tone: string }> = {
@@ -21,9 +23,14 @@ const RISK: Record<ApprovalRequestView['risk'], { label: string; tone: string }>
 export function ApprovalCard(props: {
   request: ApprovalRequestView
   onAnswer(answer: ApprovalAnswer): void
+  /** 工作目录：内嵌 diff 的折叠行把目标路径显示成相对路径。 */
+  cwd?: string
 }): JSX.Element {
   const { request } = props
   const scopes: Array<'once' | 'session' | 'always'> = request.scopes.length > 0 ? request.scopes : ['once']
+  /** 内嵌的「将做的改动」默认收起（codex 是直接摊开，但 diff 一长就把决定按钮顶出视野），
+      折叠行已经给了路径与增删计数，要点开才看逐行差异。 */
+  const [diffOpen, setDiffOpen] = useState(false)
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const key = event.key.toLowerCase()
@@ -60,6 +67,40 @@ export function ApprovalCard(props: {
         </span>
       </div>
       <div className="approval-args">{request.argsSummary}</div>
+      {request.diff !== undefined && (
+        <div className="approval-diff">
+          <div className="approval-diff-head">
+            <span className="approval-diff-path" title={request.diff.path}>
+              {`${request.diff.status === 'added' ? '将写入' : '将修改'} ${displayPathOf(request.diff.path, props.cwd ?? '')}`}
+            </span>
+            <span className="changes-counts">
+              {request.diff.status === 'added' && <span className="diff-badge">新增</span>}
+              <span className="changes-added">{`+${String(request.diff.added)}`}</span>
+              <span className="changes-removed">{`-${String(request.diff.removed)}`}</span>
+            </span>
+            <button
+              type="button"
+              className="approval-diff-toggle"
+              aria-expanded={diffOpen}
+              onClick={() => setDiffOpen((value) => !value)}
+            >
+              {diffOpen ? '收起改动' : '查看改动'}
+            </button>
+          </div>
+          {request.diff.mismatch === 'missing' && <div className="tc-warn">old 在文件中不存在，执行会失败</div>}
+          {request.diff.mismatch === 'ambiguous' && <div className="tc-warn">old 匹配多处，执行会失败</div>}
+          {request.diff.fellBack === true && <div className="approval-diff-note">读不到文件当前内容，以下按参数推算</div>}
+          {diffOpen && (
+            <div className="approval-diff-body">
+              {request.diff.hunks.length === 0 ? (
+                <p className="tc-intended-note">不会有实际改动。</p>
+              ) : (
+                <DiffRows hunks={request.diff.hunks} path={request.diff.path} />
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div className="approval-reason">{request.reason}</div>
       {request.hardline ? (
         <div className="approval-hardline">这一步被安全策略判为不可放行，只能拒绝。</div>

@@ -16,6 +16,7 @@
  * @module desktop/renderer/Dock
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type JSX, type MouseEvent as ReactMouseEvent } from 'react'
+import type { DiffHunkView } from '@dsc/runtime/contract.js'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -44,6 +45,8 @@ import {
 import { FileIcon } from './file-icons.js'
 import { FilePreviewView } from './file-preview.js'
 import { basenameOf, formatSize, joinPath } from './file-util.js'
+import { DiffRows } from './DiffPane.js'
+import { parseUnifiedDiff, splitUnifiedDiffByFile, type UnifiedFileDiff } from './unified-diff.js'
 import {
   getTree,
   needsLoad,
@@ -814,6 +817,11 @@ function GitPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX.Elem
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  /**
+   * 底部 diff 视图：点文件行（或「查看全部改动」）展开，再点一次收起。
+   * `file === null` = 全量未提交改动；stage/commit 之后数据过期，主动收掉。
+   */
+  const [diff, setDiff] = useState<{ file: string | null; loading: boolean; text: string } | null>(null)
 
   const refresh = useCallback((): void => {
     if (cwd === '') return
@@ -841,13 +849,31 @@ function GitPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX.Elem
       .then(() => {
         setError('')
         after?.()
+        // 暂存/提交之后展开着的 diff 已经过期，收掉等用户再点
+        setDiff(null)
         refresh()
       })
       .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
       .finally(() => setBusy(false))
   }
 
-  const fileOf = (entry: string): string => entry.replace(/^[AMDRCU?]+\s+/, '')
+  /** 展开/收起一个文件的 diff；null = 全量。untracked 组不传这个（untracked 没有 diff）。 */
+  const toggleDiff = (file: string | null): void => {
+    if (diff !== null && diff.file === file) {
+      setDiff(null)
+      return
+    }
+    setDiff({ file, loading: true, text: '' })
+    void proxy
+      .dock('git-diff', file === null ? {} : { file })
+      .then((data) => {
+        setDiff({ file, loading: false, text: String((data as { diff?: string }).diff ?? '') })
+      })
+      .catch((cause: unknown) => {
+        setDiff(null)
+        setError(cause instanceof Error ? cause.message : String(cause))
+      })
+  }
 
   return (
     <div className="git-pane">
@@ -859,22 +885,35 @@ function GitPane({ cwd, proxy }: { cwd: string; proxy: RuntimeProxy }): JSX.Elem
           <div className="git-branch">
             <span className="round-no">{status.branch}</span>
             <span className="git-count">{status.staged.length + status.unstaged.length + status.untracked.length} 处更改</span>
+            <button
+              className="icon-btn git-diff-all"
+              data-tip="看全部未提交改动的 diff"
+              disabled={busy}
+              onClick={() => toggleDiff(null)}
+            >
+              全部改动
+            </button>
           </div>
           <GitGroup
             title={`已暂存 (${status.staged.length})`}
             files={status.staged}
             action={{ label: '−', title: '取消暂存', run: (file) => act('git-unstage', { files: [fileOf(file)] }) }}
+            onShowDiff={toggleDiff}
+            expandedFile={diff?.file ?? undefined}
           />
           <GitGroup
             title={`未暂存 (${status.unstaged.length})`}
             files={status.unstaged}
             action={{ label: '+', title: '暂存', run: (file) => act('git-stage', { files: [fileOf(file)] }) }}
+            onShowDiff={toggleDiff}
+            expandedFile={diff?.file ?? undefined}
           />
           <GitGroup
             title={`未跟踪 (${status.untracked.length})`}
             files={status.untracked}
             action={{ label: '+', title: '暂存', run: (file) => act('git-stage', { files: [file] }) }}
           />
+          {diff !== null && <GitDiffView diff={diff} onClose={() => setDiff(null)} />}
           <div className="git-commit">
             <textarea
               rows={2}
@@ -917,6 +956,10 @@ function GitGroup(props: {
   title: string
   files: string[]
   action: { label: string; title: string; run(file: string): void }
+  /** 点文件名展开该文件的 diff（底部 diff 视图）；不传（untracked）就不可点。 */
+  onShowDiff?: (file: string) => void
+  /** 当前 diff 视图正显示的文件（行高亮用）。 */
+  expandedFile?: string
 }): JSX.Element {
   const [open, setOpen] = useState(true)
   if (props.files.length === 0) return <></>
@@ -927,15 +970,90 @@ function GitGroup(props: {
       </button>
       {open &&
         props.files.map((file) => (
-          <div key={file} className="git-file">
-            <span className="git-file-name" data-tip={file}>
+          <div key={file} className="git-file" data-expanded={props.expandedFile === fileOf(file) || undefined}>
+            <button
+              className="git-file-name"
+              data-tip={file}
+              disabled={props.onShowDiff === undefined}
+              onClick={() => props.onShowDiff?.(fileOf(file))}
+            >
               {file}
-            </span>
+            </button>
             <button className="icon-btn" data-tip={props.action.title} onClick={() => props.action.run(file)}>
               {props.action.label}
             </button>
           </div>
         ))}
+    </div>
+  )
+}
+
+/** git status 行里的状态码前缀（`M ` / ` M` / `??`）剥掉，剩下的才是文件路径。
+    unstaged 行以空格开头（porcelain 的 X 位是空格），字符类里必须带空格，否则剥不掉——
+    0.6.26 探针抓到：带着 ` M ` 前缀去查 diff 与 stage，git 只会回空 diff / pathspec 错。 */
+function fileOf(entry: string): string {
+  return entry.replace(/^[ AMDRCU?]+\s+/, '')
+}
+
+/**
+ * 底部 diff 视图：单文件一段、全量按 `diff --git` 切成多段。diff 文本经
+ * parseUnifiedDiff 变成结构化 hunk，交给审查面板同一套 DiffRows 渲染。
+ */
+function GitDiffView({
+  diff,
+  onClose,
+}: {
+  diff: { file: string | null; loading: boolean; text: string }
+  onClose: () => void
+}): JSX.Element {
+  const countOf = (hunks: DiffHunkView[]): { added: number; removed: number } => {
+    let added = 0
+    let removed = 0
+    for (const hunk of hunks) {
+      for (const row of hunk.lines) {
+        if (row.kind === 'add') added += 1
+        else if (row.kind === 'remove') removed += 1
+      }
+    }
+    return { added, removed }
+  }
+  const sections: UnifiedFileDiff[] = diff.loading
+    ? []
+    : diff.file === null
+      ? splitUnifiedDiffByFile(diff.text)
+      : (() => {
+          // 单文件：全部 hunk 归一段
+          const hunks = parseUnifiedDiff(diff.text)
+          return hunks.length === 0 ? [] : [{ path: diff.file as string, ...countOf(hunks), hunks }]
+        })()
+  return (
+    <div className="git-diff-view">
+      <div className="git-diff-head">
+        <span className="git-diff-title">{diff.file === null ? '全部未提交改动' : diff.file}</span>
+        <button className="icon-btn" data-tip="关闭" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      {diff.loading ? (
+        <div className="trace-empty">读取中…</div>
+      ) : sections.length === 0 ? (
+        <div className="trace-empty">没有可显示的改动（未跟踪文件不会出现在 diff 里）。</div>
+      ) : (
+        <div className="git-diff-body">
+          {sections.map((section) => (
+            <div key={section.path} className="git-diff-file">
+              <div className="git-diff-file-head">
+                <span className="git-diff-path">{section.path}</span>
+                <span className="changes-counts">
+                  <span className="changes-added">{`+${String(section.added)}`}</span>
+                  <span className="changes-removed">{`-${String(section.removed)}`}</span>
+                </span>
+              </div>
+              <DiffRows hunks={section.hunks} path={section.path} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

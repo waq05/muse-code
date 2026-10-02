@@ -25,14 +25,17 @@
  * @module dsc/plugins/approval
  */
 import { randomUUID } from 'node:crypto'
+import { promises as fsp } from 'node:fs'
+import { isAbsolute, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { ApprovalDecision, ApprovalRequest } from '../core/approval.js'
-import { argsSummary, callFacts } from '../core/tools.js'
+import { argsSummary, callFacts, stripBaseline } from '../core/tools.js'
+import { summarizeChange } from '../core/tools/fs-tools.js'
 import { REJECTED_TOOL_TEXT } from '../core/session.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import { toolApprovalGuard, type ToolObserver } from '../core/tool-guards.js'
 import type { ApprovalPolicy, ApprovalRequestView, ApprovalService } from '../services/types.js'
-import type { ApprovalAnswer, CollaborationMode, PolicySurface, TierOption } from '../contract.js'
+import type { ApprovalAnswer, ApprovalDiffView, CollaborationMode, PolicySurface, TierOption } from '../contract.js'
 import { activeRules, appendRule, classifyCommand, reloadActiveRules } from '../core/command-policy.js'
 import { clearReadLedger, isInsideCwd, isProtectedInstruction, writeHardBlockReason } from '../core/path-policy.js'
 import { audit } from '../core/audit.js'
@@ -65,6 +68,71 @@ const POLICY_OPTIONS: ReadonlyArray<TierOption<ApprovalPolicy>> = [
 
 /** 写类工具里「目标在工作区内就能自动放行」的那几个。 */
 const PATH_WRITE_TOOLS = new Set(['write', 'edit'])
+
+/**
+ * write / edit 审批卡的「将做的改动」（codex 审批弹窗内嵌 diff 的同位能力）：
+ * 读盘上现值、按工具语义推演写后的全文、走 summarizeChange 同一套算法截断。
+ * 与渲染层工具卡的推演（intended-diff.ts）同一套语义，两处分头实现——宿主这份
+ * 在弹卡前算好随视图下发，渲染层那份等服务期里自己读盘，环境不同没有共享面。
+ *
+ * 三种降级：盘上读不到（工作区外 / 文件还不存在）→ write 从空串、edit 用 old→new
+ * 的参数差异，标 `fellBack`；edit 的 old 对不上盘（missing / 多处）→ 执行必然失败，
+ * 给参数差异并标 `mismatch`，卡片上要提示；完全算不出（非这两类工具、参数不齐、
+ * 内容一致）→ null，卡片回到只有参数摘要的常态。
+ */
+export async function approvalDiffOf(request: ApprovalRequest): Promise<ApprovalDiffView | null> {
+  if (request.toolName !== 'write' && request.toolName !== 'edit') return null
+  const args = request.args ?? {}
+  const rawPath = typeof args.path === 'string' ? args.path : ''
+  if (rawPath === '') return null
+  const cwd = request.cwd ?? process.cwd()
+  const abs = isAbsolute(rawPath) ? rawPath : resolve(cwd, rawPath)
+  const content = typeof args.content === 'string' ? args.content : null
+  const oldText = typeof args.old === 'string' ? args.old : null
+  const newText = typeof args.new === 'string' ? args.new : null
+  if (request.toolName === 'write' ? content === null : oldText === null || newText === null) return null
+  const read = await fsp.readFile(abs, 'utf8').catch(() => null)
+  let effectiveBefore: string
+  let after: string
+  let mismatch: ApprovalDiffView['mismatch']
+  if (request.toolName === 'write') {
+    effectiveBefore = read ?? ''
+    after = content!
+  } else if (read === null) {
+    effectiveBefore = oldText!
+    after = newText!
+  } else {
+    const at = read.indexOf(oldText!)
+    if (at < 0) {
+      mismatch = 'missing'
+      effectiveBefore = oldText!
+      after = newText!
+    } else if (read.indexOf(oldText!, at + 1) >= 0) {
+      mismatch = 'ambiguous'
+      effectiveBefore = oldText!
+      after = newText!
+    } else {
+      effectiveBefore = read
+      after = read.slice(0, at) + newText! + read.slice(at + oldText!.length)
+    }
+  }
+  const changes = summarizeChange(abs, effectiveBefore, after)
+  // 内容一致（覆盖写了个寂寞）也给一份空 diff：卡片上「不会有实际改动」比「没有信息」好。
+  const clean =
+    changes === undefined
+      ? { path: abs, added: 0, removed: 0, hunks: [], status: 'modified' as const }
+      : stripBaseline(changes)
+  return {
+    ...clean,
+    // hunks 的行文本会摊到卡上：密钥形状的字符串过一遍遮红，别让审批动作本身泄密
+    hunks: clean.hunks.map((hunk) => ({
+      ...hunk,
+      lines: hunk.lines.map((line) => ({ ...line, text: redact(line.text) })),
+    })),
+    ...(read === null ? { fellBack: true } : {}),
+    ...(mismatch !== undefined ? { mismatch } : {}),
+  }
+}
 
 /** 一张卡允许出现的授权档位。 */
 type GrantScope = 'once' | 'session' | 'always'
@@ -137,6 +205,8 @@ export const approvalPlugin: Plugin.Object = {
         scopes: GrantScope[]
         grantKey: string
         hardline: boolean
+        /** write/edit 的「将做的改动」；算不出来时 null，卡上就不画。 */
+        diff: ApprovalDiffView | null
       },
     ): Promise<ApprovalDecision> =>
       new Promise<ApprovalDecision>((resolveDone) => {
@@ -158,6 +228,7 @@ export const approvalPlugin: Plugin.Object = {
           scopes: input.scopes,
           policy,
           mode: modeForCard,
+          ...(input.diff === null ? {} : { diff: input.diff }),
         }
         audit({
           ts: Date.now(),
@@ -413,6 +484,9 @@ export const approvalPlugin: Plugin.Object = {
         const scopes: GrantScope[] = ['once']
         if (protectedWhy === null) scopes.push('session')
         if (suggested !== null && protectedWhy === null) scopes.push('always')
+        // 弹卡前把「将做的改动」算好随视图下发（write/edit 才有；一次读盘 + LCS，
+        // 只有真要等人点卡的时刻才付这个成本）。
+        const diff = await approvalDiffOf(request)
         return askHuman(request, signal, {
           reason,
           risk,
@@ -420,6 +494,7 @@ export const approvalPlugin: Plugin.Object = {
           scopes,
           grantKey: key,
           hardline: false,
+          diff,
         })
       },
 

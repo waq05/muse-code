@@ -15,7 +15,9 @@ import type {
   PresetSurface,
   ThinkingLevel,
 } from '@dsc/runtime/contract.js'
-import { completionsFor, expandCommand } from '@dsc/runtime/plugins/commands.js'
+// 补全函数从纯模块拿：plugins/commands.js 的依赖链里有 git 收集（node:child_process），
+// vite 对 node 内置模块 externalize 即炸（0.6.26 白屏教训），渲染层只走 core 这份。
+import { completionsFor, expandCommand } from '@dsc/runtime/core/commands-completion.js'
 import type { CompletionItem } from '@dsc/runtime/services/types.js'
 import { toastErr } from './components/toast.js'
 import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconLayers, IconPlus, IconShield, IconStop } from './icons.js'

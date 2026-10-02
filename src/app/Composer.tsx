@@ -12,7 +12,7 @@ import { useMemo, useState } from 'react'
 import { Box, Text, useInput } from 'ink'
 import type { JSX } from 'react'
 import type { ModelChoiceView } from '../contract.js'
-import { completionsFor, expandCommand } from '../plugins/commands.js'
+import { completionsFor, expandCommand } from '../core/commands-completion.js'
 import { ACCENT, BORDER, GAP, MARK, PAD, SEP, TEXT } from './theme.js'
 
 export interface ComposerProps {

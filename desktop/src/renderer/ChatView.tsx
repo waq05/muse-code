@@ -76,7 +76,8 @@ import { ThinkingBlock } from './ThinkingBlock.js'
 import { ToolCard } from './ToolCard.js'
 import { TurnFooter } from './TurnFooter.js'
 import { TurnStatusLine } from './TurnStatusLine.js'
-import { ChangedFilesCard, mergeChangesByPath } from './ChangedFiles.js'
+import { ChangedFilesCard, DiffHoverCard, mergeChangesByPath } from './ChangedFiles.js'
+import { useHoverDelay } from './hover-delay.js'
 import { isSessionMarker } from './session-marker.js'
 import { TURN_PROCESS_INDEPENDENT, groupSteps, type StepGroup, type StepGrouping } from './process-groups.js'
 import { readFold, stepGroupFoldKey, turnFoldKey, writeFold } from './fold-state.js'
@@ -170,11 +171,11 @@ type ChatPlanItem = { kind: 'loose'; index: number } | { kind: 'seat'; seat: Rou
  * 精确相等，或命中路径以分隔符结尾的后缀（`fs-tools.ts` 命中 `…/core/fs-tools.ts`）。
  * 带 `\n` 的不是 inline（fenced 块），短得像扩展名的（`md`）不会越过分隔符边界误命中。
  */
-function matchMentionPath(text: string, paths: ReadonlySet<string>): string | undefined {
+function matchMentionPath(text: string, paths: ReadonlyMap<string, ChangedFileView>): string | undefined {
   const trimmed = text.trim()
   if (trimmed === '' || trimmed.includes('\n')) return undefined
   if (paths.has(trimmed)) return trimmed
-  for (const path of paths) {
+  for (const path of paths.keys()) {
     if (path.endsWith(`/${trimmed}`) || path.endsWith(`\\${trimmed}`)) return path
   }
   return undefined
@@ -182,51 +183,82 @@ function matchMentionPath(text: string, paths: ReadonlySet<string>): string | un
 
 /**
  * 一条助手正文的 markdown 渲染（会话流同款 remark-gfm），外加文件提及 chip：
- * inline code 命中本轮改动文件时变成可点的文件徽章，点击进预览页签。
- * 块级 code 用 `pre` 覆盖给子元素打 `data-block` 标记来区分——fenced 块没有
- * language- 类名时不能靠 className 判定，误判会把整块代码变成一颗 chip。
+ * inline code 命中本轮改动文件时变成可点的文件徽章——点击进预览页签，悬停停够
+ * 半秒出该文件的 diff（与轮尾卡文件行同一份悬停预览，dsh 的 producedFileMentions
+ * 也带 hover 预览）。块级 code 用 `pre` 覆盖给子元素打 `data-block` 标记来区分——
+ * fenced 块没有 language- 类名时不能靠 className 判定，误判会把整块代码变成一颗 chip。
  */
 function MarkdownText({
   text,
   mentionPaths,
   onOpenFile,
+  cwd = '',
 }: {
   text: string
-  mentionPaths: ReadonlySet<string>
+  mentionPaths: ReadonlyMap<string, ChangedFileView>
   onOpenFile?: (path: string) => void
+  /** 工作目录：悬停预览头行显示相对路径。 */
+  cwd?: string
 }): JSX.Element {
+  const hoverDelay = useHoverDelay<ChangedFileView>()
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        pre(props) {
-          const { children, ...rest } = props
-          const child = Array.isArray(children) ? children[0] : children
-          return (
-            <pre {...rest}>
-              {isValidElement(child)
-                ? cloneElement(child as ReactElement<Record<string, unknown>>, { 'data-block': true })
-                : child}
-            </pre>
-          )
-        },
-        code(props) {
-          const { className, children, node: _node, ...rest } = props
-          const block = (rest as Record<string, unknown>)['data-block'] === true
-          if (block || className !== undefined) return <code className={className} {...rest}>{children}</code>
-          const hit = matchMentionPath(String(children ?? ''), mentionPaths)
-          if (hit === undefined || onOpenFile === undefined) return <code {...rest}>{children}</code>
-          return (
-            <button type="button" className="mention-chip" title={hit} onClick={() => onOpenFile(hit)}>
-              <FileIcon name={hit} size={13} />
-              {hit.split(/[\\/]/).pop() ?? hit}
-            </button>
-          )
-        },
-      }}
-    >
-      {text}
-    </ReactMarkdown>
+    <>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          pre(props) {
+            const { children, ...rest } = props
+            const child = Array.isArray(children) ? children[0] : children
+            return (
+              <pre {...rest}>
+                {isValidElement(child)
+                  ? cloneElement(child as ReactElement<Record<string, unknown>>, { 'data-block': true })
+                  : child}
+              </pre>
+            )
+          },
+          code(props) {
+            const { className, children, node: _node, ...rest } = props
+            const block = (rest as Record<string, unknown>)['data-block'] === true
+            if (block || className !== undefined) return <code className={className} {...rest}>{children}</code>
+            const hit = matchMentionPath(String(children ?? ''), mentionPaths)
+            if (hit === undefined || onOpenFile === undefined) return <code {...rest}>{children}</code>
+            return (
+              <button
+                type="button"
+                className="mention-chip"
+                title={hit}
+                onClick={() => onOpenFile(hit)}
+                onMouseEnter={(event) => {
+                  const file = mentionPaths.get(hit)
+                  if (file === undefined) return
+                  // 卡宽取所在消息气泡的宽（dsh 的 preview 宽 = 触发卡宽 − 48）；
+                  // 拿不到就用 520 的兜底。
+                  const host = (event.currentTarget as HTMLElement).closest('.entry-text')
+                  hoverDelay.arm(file, event.currentTarget.getBoundingClientRect(), (host?.clientWidth ?? 568) - 48)
+                }}
+                onMouseLeave={hoverDelay.disarm}
+              >
+                <FileIcon name={hit} size={13} />
+                {hit.split(/[\\/]/).pop() ?? hit}
+              </button>
+            )
+          },
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+      {hoverDelay.hover !== null && (
+        <DiffHoverCard
+          file={hoverDelay.hover.item}
+          anchor={hoverDelay.hover.anchor}
+          cardWidth={hoverDelay.hover.cardWidth}
+          cwd={cwd}
+          onKeep={hoverDelay.keep}
+          onClose={hoverDelay.close}
+        />
+      )}
+    </>
   )
 }
 
@@ -387,6 +419,8 @@ export function ChatView(props: {
    * 不传 = 只读视图，审查入口整颗不画。
    */
   onReviewChanges?: (files: ChangedFileView[], index: number) => void
+  /** 当前工作目录：write/edit 卡的「将做的改动」与轮尾卡把绝对路径显示成相对路径。 */
+  cwd?: string
 }): JSX.Element {
   const scroller = useRef<HTMLDivElement | null>(null)
   const [feedback, setFeedback] = useState<Record<string, Feedback>>(loadFeedback)
@@ -627,16 +661,17 @@ export function ChatView(props: {
   // 每一轮的起止与时间（见 turn-timing.ts）；entries 变了才重算
   const rounds = useMemo(() => roundInfos(props.entries), [props.entries])
   /**
-   * 会话里出现过的改动文件路径（逐刀 + 回合聚合）：markdown 正文里的 inline code
-   * 命中其中之一就渲染成可点 chip（dsh producedFileMentions 的同位能力）。
+   * 会话里出现过的改动文件（逐刀 + 回合聚合，同文件多刀先合并）：markdown 正文里的
+   * inline code 命中其中之一就渲染成可点 chip，悬停出该文件的 diff——值是合并后的
+   * 改动视图（回合聚合条目优先，与轮尾卡同款）。
    */
   const mentionPaths = useMemo(() => {
-    const paths = new Set<string>()
+    const flat: ChangedFileView[] = []
     for (const entry of props.entries) {
-      if (entry.kind === 'changes') paths.add(entry.file.path)
-      else if (entry.kind === 'turnDiff') for (const file of entry.files) paths.add(file.path)
+      if (entry.kind === 'changes') flat.push(entry.file)
+      else if (entry.kind === 'turnDiff') flat.push(...entry.files)
     }
-    return paths
+    return new Map(mergeChangesByPath(flat).map((file) => [file.path, file]))
   }, [props.entries])
   /**
    * 从第几轮开始画（更早的轮先不进 DOM）。
@@ -1263,7 +1298,7 @@ export function ChatView(props: {
           return (
             <div className="entry-text live">
               <div className="markdown">
-                <MarkdownText text={entry.text} mentionPaths={mentionPaths} onOpenFile={props.onOpenFile} />
+                <MarkdownText text={entry.text} mentionPaths={mentionPaths} onOpenFile={props.onOpenFile} cwd={props.cwd ?? ''} />
               </div>
             </div>
           )
@@ -1271,7 +1306,7 @@ export function ChatView(props: {
         return (
           <div className="entry-text">
             <div className="markdown">
-              <MarkdownText text={entry.text} mentionPaths={mentionPaths} onOpenFile={props.onOpenFile} />
+              <MarkdownText text={entry.text} mentionPaths={mentionPaths} onOpenFile={props.onOpenFile} cwd={props.cwd ?? ''} />
             </div>
           </div>
         )
@@ -1301,6 +1336,9 @@ export function ChatView(props: {
             storeKey={foldKey(entry.id, contentOrdinalAt.get(index))}
             // 工具卡的默认态（设置 → 通用 → 工具卡）
             defaultOpen={props.toolDefaultOpen === true}
+            // write/edit 进行中推演「将做的改动」：折叠行的相对路径 + 展开体的 diff
+            cwd={props.cwd ?? ''}
+            proxy={props.proxy}
           />
         )
       case 'plan':
@@ -1449,13 +1487,13 @@ export function ChatView(props: {
           return (
             <ChangedFilesCard
               files={changed}
+              cwd={props.cwd ?? ''}
               onReview={
                 props.onReviewChanges === undefined
                   ? undefined
                   : (index) => props.onReviewChanges?.(changed, index)
               }
               onOpen={props.onOpenFile}
-              proxy={props.proxy}
             />
           )
         })()}

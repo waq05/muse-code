@@ -64,8 +64,7 @@ export const SHIKI_LANG_BY_EXT: Record<string, string> = {
 }
 
 /** 「这是哪种预览」：宿主回包 kind + 文件扩展名共同决定（md/csv 走 text 回包再细分）。 */
-export function previewKindFor(read: ReadResult): PreviewKind {
-  if (read.kind === 'image') return 'image'
+export function previewKindFor(read: ReadResult): PreviewKind {  if (read.kind === 'image') return 'image'
   if (read.kind === 'binary') return 'binary'
   if (read.kind === 'bytes') {
     if (read.mime === 'application/pdf') return 'pdf'
@@ -77,4 +76,32 @@ export function previewKindFor(read: ReadResult): PreviewKind {
   if (ext === 'csv' || ext === 'tsv') return 'csv'
   if (read.mime === 'application/pdf') return 'pdf'
   return 'code'
+}
+
+/**
+ * 路径的展示形态（dsh `displayPathOf` 的同位函数）：工作目录内 → 相对路径；
+ * home 内 → `~/…`；其余原样。两段比较都按小写比——Windows 路径大小写不敏感，
+ * 模型写的 `D:\dsc` 和宿主给回的 `d:\dsc` 是同一个目录。
+ *
+ * 为什么只把分隔符统一成正斜杠、不整条重写：展示层的职责是「短一点、认得出」，
+ * 盘符与目录名保持模型/宿主写的原样，免得用户在资源管理器里对不上。
+ */
+export function displayPathOf(path: string, cwd: string, home = ''): string {
+  if (path === '') return ''
+  const posix = path.replace(/\\/g, '/')
+  if (cwd !== '') {
+    const base = `${cwd.replace(/\\/g, '/').replace(/\/+$/, '')}/`
+    const low = posix.toLowerCase()
+    const baseLow = base.toLowerCase()
+    if (low === baseLow.slice(0, -1)) return '.'
+    if (low.startsWith(baseLow)) return posix.slice(base.length)
+  }
+  if (home !== '') {
+    const base = `${home.replace(/\\/g, '/').replace(/\/+$/, '')}/`
+    const low = posix.toLowerCase()
+    const baseLow = base.toLowerCase()
+    if (low === baseLow.slice(0, -1)) return '~'
+    if (low.startsWith(baseLow)) return `~/${posix.slice(base.length)}`
+  }
+  return posix
 }

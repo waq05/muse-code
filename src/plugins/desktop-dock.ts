@@ -225,8 +225,13 @@ export const desktopDockPlugin: Plugin.Object = {
           }
         }
         case 'git-diff': {
-          const file = safeArg(payload.file)
-          return { diff: (await git(cwd, ['diff', 'HEAD', '--', file])).slice(0, 20000) }
+          // file 为空 = 全量未提交改动（含已暂存）；指定文件 = 单文件。
+          // --no-textconv --no-ext-diff 是 codex /diff 的 git 安全姿势：文本转换与
+          // 外部 diff driver 都可能配置成执行任意程序，看个 diff 不该替用户跑它们。
+          const guard = ['--no-textconv', '--no-ext-diff']
+          const file = typeof payload.file === 'string' ? safeArg(payload.file) : ''
+          const args = file === '' ? ['diff', 'HEAD', ...guard] : ['diff', 'HEAD', ...guard, '--', file]
+          return { diff: (await git(cwd, args)).slice(0, 20000) }
         }
         default:
           throw new Error(`dock 未知操作：${op}`)

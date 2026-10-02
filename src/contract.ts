@@ -497,6 +497,28 @@ export interface RuntimeSurfaces {
   pendingQuestion: AskUserView | null
 }
 
+/**
+ * 审批卡内嵌的「将做的改动」（codex 审批弹窗内嵌 diff 的同位能力）：宿主在弹卡前
+ * 读盘上现值、按工具语义推演出这次 write / edit 将产生的差异。
+ * 算不出来（非 write/edit、参数不齐）时整个字段缺省。
+ */
+export interface ApprovalDiffView {
+  /** 目标绝对路径。 */
+  path: string
+  added: number
+  removed: number
+  /** 推演出的差异段（与 ChangedFileView.hunks 同一形状，审批卡直接渲染）。 */
+  hunks: DiffHunkView[]
+  /** true = hunks 超行数预算被砍过尾。 */
+  truncated?: boolean
+  /** `added` = 新建文件（改前不存在 / 从空串起算）；`modified` = 改已有文件。 */
+  status: 'added' | 'modified'
+  /** true = 盘上现值没读到（工作区外 / 文件还不存在），差异是从参数推算的。 */
+  fellBack?: boolean
+  /** 仅 edit：old 在盘上匹配不到 / 匹配多处——照参数执行会失败，卡片要提示。 */
+  mismatch?: 'missing' | 'ambiguous'
+}
+
 /** 待用户决定的工具审批请求（视图投影）。 */
 export interface ApprovalRequestView {
   /** adapter 内部关联 id；answerApproval 不需要它（同一时刻至多一个挂起审批）。 */
@@ -517,6 +539,8 @@ export interface ApprovalRequestView {
   /** 当前权限模式与协作模式（卡片上说明现在是哪一档）。 */
   policy: ApprovalPolicy
   mode: CollaborationMode
+  /** write / edit 的「将做的改动」；其他工具或推演不出时缺省。 */
+  diff?: ApprovalDiffView
 }
 
 /**

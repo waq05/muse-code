@@ -1,8 +1,10 @@
 /**
  * commands 插件：provide `commands` 服务（斜杠命令注册表 + 派发）。
- * 逻辑迁自 v2 src/commands.ts：内置命令改为注册表条目，外部插件经
- * ctx.commands.register 注入新命令后自动进入 /help、补全与派发。
- * 模块级补全函数（completionsFor 等）保持原签名，Composer 零改动复用。
+ * 内置命令改为注册表条目，外部插件经 ctx.commands.register 注入新命令后
+ * 自动进入 /help、补全与派发。
+ *
+ * spec 表与补全函数都在 core/commands-completion.ts（渲染层直接 import 那份；
+ * 本模块顶层的 node 内置模块会把渲染进程炸成白屏——取数走 core/git-info）。
  *
  * @module dsc/plugins/commands
  */
@@ -11,97 +13,21 @@ import type {
   CommandHandler,
   CommandService,
   CommandSpec,
-  CompletionItem,
 } from '../services/types.js'
-import type { DscRuntime, ModelChoiceView } from '../contract.js'
-
-/** 内置命令表（spec 单一真源；handler 在插件 apply 时注册）。 */
-export const BUILT_IN_COMMANDS: CommandSpec[] = [
-  { name: 'new', args: '', description: '新建会话' },
-  { name: 'resume', args: '', description: '恢复历史会话' },
-  { name: 'compact', args: '', description: '压缩上下文' },
-  { name: 'model', args: '<[端点/]模型名>', description: '切换模型，下一次请求生效' },
-  { name: 'help', args: '', description: '查看帮助' },
-  { name: 'exit', args: '', description: '退出' },
-]
-
-/** 外部插件注册的命令（补全与唯一前缀展开用；模块级单例，进程内唯一注册表）。 */
-const extraSpecs: CommandSpec[] = []
-
-const allSpecs = (): CommandSpec[] => [...BUILT_IN_COMMANDS, ...extraSpecs]
-
-/** /help 文本（命令表驱动）。 */
-export function helpText(specs: readonly CommandSpec[]): string {
-  return specs
-    .map((command) => `/${command.name}${command.args === '' ? '' : ` ${command.args}`}\t${command.description}`)
-    .join('\n')
-}
-
-/** 兼容导出：v2 的 HELP_TEXT（内置表静态快照）。 */
-export const HELP_TEXT = helpText(BUILT_IN_COMMANDS)
-
-/**
- * 命令候选（输入 `/` 或 `/mo` 阶段）。
- * 已进入参数阶段（含空格）或非命令输入返回空。
- */
-export function commandCompletions(input: string): CompletionItem[] {
-  if (!input.startsWith('/')) return []
-  const body = input.slice(1)
-  if (body.includes(' ')) return []
-  const lower = body.toLowerCase()
-  return allSpecs()
-    .filter((command) => command.name.startsWith(lower))
-    .map((command) => ({
-      insert: `/${command.name}${command.args === '' ? '' : ' '}`,
-      label: `/${command.name}${command.args === '' ? '' : ` ${command.args}`}`,
-      description: command.description,
-    }))
-}
-
-/**
- * 模型候选（`/model ` 参数阶段）：展示全部可切换模型的 `端点/模型名`。
- * 补全到精确匹配后面板自动关闭；`model 名`本身也可前缀匹配（`/model deep`）。
- */
-export function modelCompletions(input: string, models: readonly ModelChoiceView[]): CompletionItem[] {
-  if (!input.startsWith('/model')) return []
-  const body = input.slice('/model'.length)
-  if (!body.startsWith(' ')) return [] // 还没打空格：交给命令候选
-  const arg = body.slice(1)
-  if (arg.includes(' ')) return [] // 参数已完整（带后续参数不适用于 /model）
-  const lower = arg.toLowerCase()
-  const matched = models.filter(
-    (choice) =>
-      choice.value.toLowerCase().startsWith(lower) || choice.model.toLowerCase().startsWith(lower),
-  )
-  if (matched.length === 1 && matched[0].value.toLowerCase() === lower) return []
-  return matched.map((choice) => ({
-    insert: `/model ${choice.value}`,
-    label: choice.value,
-    description: choice.description,
-  }))
-}
-
-/** 统一补全入口：model 参数阶段优先，否则按命令前缀。 */
-export function completionsFor(input: string, models: readonly ModelChoiceView[]): CompletionItem[] {
-  const byModel = modelCompletions(input, models)
-  return byModel.length > 0 ? byModel : commandCompletions(input)
-}
-
-/**
- * 命令名唯一前缀自动展开（`/ne` → `/new`）；多候选或已精确匹配时原样返回。
- * 供 Enter 提交前调用，避免"输了一半按回车报未知命令"。
- */
-export function expandCommand(input: string): string {
-  if (!input.startsWith('/')) return input
-  const body = input.slice(1)
-  if (body.includes(' ')) return input
-  if (allSpecs().some((command) => command.name === body)) return input
-  const matches = allSpecs().filter((command) => command.name.startsWith(body.toLowerCase()))
-  return matches.length === 1 ? `/${matches[0].name}` : input
-}
+import type { DscRuntime } from '../contract.js'
+import { collectWorkingTree } from '../core/git-info.js'
+import {
+  addExtraSpec,
+  allSpecs,
+  BUILT_IN_COMMANDS,
+  expandCommand,
+  helpText,
+  removeExtraSpec,
+} from '../core/commands-completion.js'
 
 export const commandsPlugin: Plugin.Object = {
   name: 'commands',
+  inject: ['session'],
   provide: 'commands',
   apply(ctx) {
     const registry = new Map<string, { spec: CommandSpec; handler: CommandHandler }>()
@@ -109,14 +35,11 @@ export const commandsPlugin: Plugin.Object = {
     const service: CommandService = {
       register(spec, handler) {
         registry.set(spec.name, { spec, handler })
-        if (!BUILT_IN_COMMANDS.some((entry) => entry.name === spec.name)) {
-          extraSpecs.push(spec)
-        }
+        if (!BUILT_IN_COMMANDS.some((entry) => entry.name === spec.name)) addExtraSpec(spec)
         return () => {
           if (registry.get(spec.name)?.handler === handler) {
             registry.delete(spec.name)
-            const extraIndex = extraSpecs.findIndex((entry) => entry.name === spec.name)
-            if (extraIndex >= 0) extraSpecs.splice(extraIndex, 1)
+            removeExtraSpec(spec)
           }
         }
       },
@@ -168,6 +91,30 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
+      { name: 'review', args: '[关注点]', description: '审查工作区未提交改动' },
+      ({ args, runtime, ui }) => {
+        const cwd = ctx.session.current().meta.cwd
+        const focus = args.join(' ').trim()
+        void collectWorkingTree(cwd)
+          .then((collected) => {
+            if (collected === null) {
+              ui.notice('这里不是 git 仓库，/review 没有可审查的改动。')
+              return
+            }
+            if (collected.diff === '' && collected.untracked.length === 0) {
+              ui.notice('工作区没有未提交的改动。')
+              return
+            }
+            // 组装一条审查请求走正常对话轮（runtime.submit → agent.followup）：
+            // 回复就是审查意见，与用户自己贴着 diff 问「帮我看看」同一条链路。
+            runtime.submit(reviewMessage(collected, focus))
+          })
+          .catch((cause: unknown) => {
+            ui.notice(`/review 失败：${cause instanceof Error ? cause.message : String(cause)}`)
+          })
+      },
+    )
+    service.register(
       { name: 'effort', args: '', description: '推理强度，已移除' },
       ({ ui }) => ui.notice('已移除 /effort，思考强度改在设置页调整'),
     )
@@ -191,4 +138,25 @@ export function runCommand(
   ui: import('../services/types.js').CommandContext,
 ): boolean {
   return serviceRef !== null ? serviceRef.run(input, runtime, ui) : false
+}
+
+/**
+ * /review 的审查消息组装（独立成函数便于脱离命令体系直测：给一份收集结果与关注点，
+ * 回一条可直接 submit 的消息；回复即审查意见，与用户自己贴 diff 问「帮我看看」同链路）。
+ */
+export function reviewMessage(collected: { diff: string; untracked: string[] }, focus: string): string {
+  const lines = [
+    '请审查当前工作区的未提交改动。逐个文件过 diff：正确性问题、边界条件、安全问题、'
+      + '与项目既有约定（如 AGENTS.md）冲突的地方；给出具体文件与行级的意见。没有问题就明说没有。',
+  ]
+  if (focus !== '') lines.push(`关注点：${focus}`)
+  if (collected.diff !== '') {
+    lines.push('', '## 未提交改动（git diff HEAD --no-textconv --no-ext-diff）', '', collected.diff)
+  } else {
+    lines.push('', '## 未提交改动', '', '（没有已跟踪文件的改动，只有未跟踪的新文件）')
+  }
+  if (collected.untracked.length > 0) {
+    lines.push('', '## 未跟踪文件（diff 里没有，逐个 read 后再评）', ...collected.untracked.map((file) => `- ${file}`))
+  }
+  return lines.join('\n')
 }

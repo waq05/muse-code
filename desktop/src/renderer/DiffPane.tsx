@@ -14,6 +14,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import type { ChangedFileView, DiffHunkView, DiffLineView } from '@dsc/runtime/contract.js'
 import { FileIcon } from './file-icons.js'
+import { displayPathOf } from './file-util.js'
 import { highlightLines, type HighlightedLine } from './diff-highlight.js'
 import { readRootPx, readStoredPx, setRootVar, useWidthDrag, writeStoredPx } from './panels.js'
 
@@ -118,35 +119,60 @@ function HalfCell({
 }
 
 /**
- * 单个文件的差异渲染：hunk 头 + 行。高亮是异步的——先出纯文本，tokens 回来后重绘。
- * 所有 hunk 的行按顺序拼成一段代码整块喂 shiki（保解析器跨行状态），按行映射回各处。
+ * 一份差异的行渲染（hunk 头 + unified/split 正文）。审查面板、工具卡的「将做的改动」、
+ * 审批卡内嵌、悬停预览四处共用这一份（dsh 的 CHAT_DIFF 渲染口径：同一套行样式走天下）。
+ *
+ * 高亮是异步的——先出纯文本，tokens 回来后重绘；所有 hunk 的行按顺序拼成一段代码
+ * 整块喂 shiki（保解析器跨行状态），按行映射回各处。`wrap` 控制长行折行还是横向滚，
+ * 由各复用点自己决定（审查面板跟随头部开关；内嵌小窗一律横向滚，diff 折行反而难读）。
  */
-function FileDiff({ file, split }: { file: ChangedFileView; split: boolean }): JSX.Element {
+export function DiffRows({
+  hunks,
+  path,
+  split = false,
+  wrap = false,
+}: {
+  hunks: DiffHunkView[]
+  /** 文件路径：给 shiki 推断高亮语言；拿不到就传空串（不出高亮）。 */
+  path: string
+  split?: boolean
+  wrap?: boolean
+}): JSX.Element {
   const [highlights, setHighlights] = useState<HighlightedLine[] | null>(null)
+  // 拼接放渲染体里、effect 认字符串：hunks 数组每次渲染都是新引用时也不会反复触发高亮。
+  const code = hunks.map((hunk) => hunk.lines.map((line) => line.text).join('\n')).join('\n')
   useEffect(() => {
     let on = true
     setHighlights(null)
-    const code = file.hunks.map((hunk) => hunk.lines.map((line) => line.text).join('\n')).join('\n')
-    void highlightLines(code, file.path).then((result) => {
+    void highlightLines(code, path).then((result) => {
       if (on) setHighlights(result)
     })
     return () => {
       on = false
     }
-  }, [file])
+  }, [code, path])
   /** 当前 hunk 起始行在整块高亮结果里的下标。 */
   let cursor = 0
   return (
-    <div className="diff-body" data-split={split || undefined}>
-      {file.truncated === true && (
-        <p className="diff-note">改动较大，这里只显示了前一部分（完整改动以文件当前内容为准）。</p>
-      )}
-      {file.hunks.map((hunk, index) => {
+    <div className="diff-body" data-split={split || undefined} data-wrap={wrap || undefined}>
+      {hunks.map((hunk, index) => {
         const head = cursor
         cursor += hunk.lines.length
         return <HunkBlock hunk={hunk} key={String(index)} split={split} highlights={highlights} head={head} />
       })}
     </div>
+  )
+}
+
+/** 审查面板里单个文件：截断提示 + 差异正文。 */
+function FileDiff({ file, split, wrap }: { file: ChangedFileView; split: boolean; wrap: boolean }): JSX.Element {
+  return (
+    <>
+      {file.truncated === true && (
+        <p className="diff-note">改动较大，这里只显示了前一部分（完整改动以文件当前内容为准）。</p>
+      )}
+      <DiffRows hunks={file.hunks} path={file.path} split={split} wrap={wrap} />
+    </>
   )
 }
 
@@ -185,6 +211,7 @@ function HunkBlock({
  * 右侧审查栏。
  * @param props.files        这一轮的全部改动（合并去重后，顺序与轮尾卡一致）。
  * @param props.index        当前查看的文件下标。
+ * @param props.cwd          工作目录：头部文件名显示相对路径（title 全路径）。
  * @param props.onSelect     切换文件。
  * @param props.onOpen       打开文件进预览页签（看当前内容）。
  * @param props.onOpenSystem 用系统默认程序打开文件；不传时按钮不画。
@@ -193,6 +220,7 @@ function HunkBlock({
 export function DiffPane(props: {
   files: ChangedFileView[]
   index: number
+  cwd?: string
   onSelect: (index: number) => void
   onOpen: (path: string) => void
   onOpenSystem?: (path: string) => void
@@ -231,7 +259,7 @@ export function DiffPane(props: {
   }
   const file = props.files[props.index] ?? props.files[0]
   return (
-    <aside className="diff-pane" data-diff-pane data-wrap={wrap || undefined}>
+    <aside className="diff-pane" data-diff-pane>
       <div
         className="diff-resizer"
         {...drag}
@@ -248,15 +276,15 @@ export function DiffPane(props: {
             aria-label="选择要审查的文件"
           >
             {props.files.map((entry, at) => (
-              <option key={entry.path} value={String(at)}>
-                {entry.path}
+              <option key={entry.path} value={String(at)} title={entry.path}>
+                {displayPathOf(entry.path, props.cwd ?? '')}
               </option>
             ))}
           </select>
         ) : (
           file !== undefined && (
             <span className="diff-file-name" title={file.path}>
-              {file.path}
+              {displayPathOf(file.path, props.cwd ?? '')}
             </span>
           )
         )}
@@ -305,7 +333,7 @@ export function DiffPane(props: {
       {file === undefined ? (
         <p className="diff-note">这一轮没有可审查的改动。</p>
       ) : (
-        <FileDiff file={file} split={split} />
+        <FileDiff file={file} split={split} wrap={wrap} />
       )}
     </aside>
   )
