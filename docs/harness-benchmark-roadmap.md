@@ -451,6 +451,30 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 
 第一轮登记的缺失能力（T14–T28）按原顺序推进：**T14（@ 提及）与 T16（标题生成）最轻**（不动内核、半天级）先做；**T15（后台任务）价值最高但动内核**，单独立项；**T17（占用表）/ T19（压缩前置裁剪）同用 token 估算器，连着做**；**T18（review 子代理）等 T15 的 subagent 通道热身完再上**。P2 按 T22 → T21 → T23 → T25 → T24 → T20 → T27 → T28 → T26 的大致成本升序排。
 
+### 7.7 T14–T28 落地收口（2026-10-02，0.6.29–0.6.33）
+
+五个功能批次全部落地，逐项状态（探针与回归证据见 development-log 阶段 48–52）：
+
+| 项 | 状态 | 落地形态 |
+| --- | --- | --- |
+| T14 @ 文件提及 | ✅ 0.6.29 | `mention-complete.ts` 渲染层纯模块 + Composer @ 面板；`matchMentionPath` 剥 `@` 使发送后 chip 可识别 |
+| T16 会话标题自动生成 | ✅ 0.6.29 | `session-title` 官方插件；autoTitle 独立字段，用户改名永不被覆盖 |
+| T17 /status 占用表 | ✅ 0.6.29 | `statusReport` 纯函数；窗口/消息数/估算/触发线，估算口径与自动压缩同源 |
+| T22 会话导出 | ✅ 0.6.29 | `core/session-export.ts` markdown 序列化（工具输出限额留头去尾、围栏修无反引号 4 连 bug） |
+| T19 压缩前置裁剪 | ✅ 0.6.30 | `pruneRegion`：工具结果超预算 spill 留指针、图像卸载；锚点引用取自未裁剪原文 |
+| T23 在线模型发现 | ✅ 0.6.30 | `core/model-discovery.ts` + 设置页「拉取清单」，认 OpenAI/ollama/纯数组三种形状 |
+| T25 read 读图 | ✅ 0.6.30 | read 按扩展名分流 data URL（6MB 红线）；`dropImageParts` 投影兜底 |
+| T21 侧栏状态点 | ✅ 0.6.30 | 快照 `sessionStates`（当前会话 turnState + 队友名册），working 呼吸 / awaiting 橙点 |
+| T15 bash 后台任务 | ✅ 0.6.31 | `run_in_background` + `job_output/job_list/job_kill` 三件 + `JobTable`；附带修 Windows 退出码透传 |
+| T18 /review 升级 | ✅ 0.6.32 | `reviewer` 内置角色 + `ReviewService.spawn`（工牌强制只读交集）+ findings 结构化卡 + 行号跳转；subagent 插件没开回落 v1 |
+| T24 MCP 扩展 | ✅ 0.6.33 | 协议升 2025-06-18；resources/prompts 客户端方法 + `mcp_resources`/`mcp_prompts` 工具（按 server 能力注册）；elicitation 接审批卡（stdio 通道声明能力，http 不声明） |
+| T20 持久终端 | ✅ 0.6.33 | 降级版五动作 `terminal` 工具（open/read/send/close/list）+ `TerminalTable`；无 PTY、无中途打断（披露） |
+| T27 检查更新 | ✅ 0.6.33 | 检查链路已备（0.6.18 起）+ `sourceUrl` 测试缝探针覆盖；`UPDATE_CHECK_URL` 仍待发布后填；**不做自动安装**（用户只要检查），有新版打开发布页手动换包 |
+| T28 插件远程安装 | ✅ 0.6.33 | `plugin_manager` 加 `browse_remote`/`install_remote`；`core/market.ts` 插件市场两函数（GitHub 目录/索引 JSON 两类源）；必须 https，risk=write 装前过审批 |
+| T26 回滚 / 部分行接受 | ◑ 评估完毕，暂不做 | 见下方评估结论 |
+
+**T26 评估结论（2026-10-02）**：完整回滚语义暂不立项。理由：(1) dsc 的 write/edit 已带回合前全文基线（0.6.24 的 fileChanges pre-image），但只覆盖第一方工具——bash/sed 改的文件只有 git 状态码差集没有 pre-image，「回滚到回合前」在混合改动场景语义残缺；(2) 「回滚保手改」（hermes writer-ledger 的核心价值）需要 per-hunk 三方合并（基线 × 当前 × 手改），个人版没有这层算力与数据模型基建；(3) 有 git 的工作区，用户撤模型改动走 git checkout/恢复面板已是顺路动作，专属回滚 UI 的频次撑不起维护成本；(4) 部分行接受（codex apply_patch 语义）把 diff 审查面板从只读改成双向数据流，动审批模型与转录契约，与 checkpoint/rewind 同族的全部风险都要背。**重启条件**：用户高频出现「撤模型某文件改动但保手改」的真实诉求时再立项，届时走 hermes shadow git 方向（checkpoint writer-ledger），不做反向 patch。
+
 ---
 
 ## 附录 A：三家特色速查（→ 移植到 dsc 的难度）

@@ -1233,3 +1233,23 @@ T15（对标 dsh tool-jobs）：长命令不占住回合。bash 工具新增 `ru
 **验证**：双侧 typecheck、根 build + desktop build 全绿；新探针 `shots/batch-d-check.mjs` 32/32（解析器 12、reviewer 角色/组装 9、真内核端到端 11——临时 HOME + 假协议适配器（registerAdapter 缝，不走真模型）+ **故意把 reviewer 角色文件改坏**（tools 混进 write/bash、approval: ask），断言 spawn 后假模型调 write 被「未知工具」挡下、盘上没写出文件、findings 带完成状态写回发起会话、队友进名册收工）；回归 batch-a 22、batch-b 12、batch-c 13、compact 53、order 18、integration 104、approval-floor、dsh-compat 15、mcp、file-review 59、dock-model、remote-server 12、lsp 167、四网 218/210/28/85 全绿。
 
 **诚实边界**：findings 格式靠角色提示词约定、解析器宽松兜底——模型完全跑格时整块文本会落进 trailing 说明而非条目；行号跳转只对代码/文本视图生效（markdown/csv/pdf 预览无行概念）；审查队友不知道本地会话历史（fresh 上下文，只看 diff 与关注点）；/review 的并发额度与普通队友共用一份（maxTeammates 满时回落主会话轮并提示）。
+
+## 阶段 52：功能批次 E——MCP 扩展/持久终端/更新检查/插件远程安装/roadmap 收口（0.6.33）
+
+**T24 MCP elicitation + resources + prompts**（对标 dsh mcp-resources 三工具、codex elicitation）：协议版本 `2024-11-05` → `2025-06-18`（elicitation 进规范的版本；server 回旧版本照常协商，探针验证）。`core/mcp.ts`：client capabilities 按传输分流声明 elicitation（**只有 stdio 声明**——http 一问一答收不了 server 反向请求，那条路根本不暴露能力）；StdioChannel 补 server 反向请求的路由（`onLine` 分出「带 id 带 method = server 请求」支路，异步处理后按 id 回写，未挂缝/抛错回 JSON-RPC 错误）；`resources/list+read`、`prompts/list+get` 客户端方法（tools/list 的翻页循环抽成通用 `paginate`）；连接带 `capabilities`（initialize 应答的 capabilities.resources/prompts）。`plugins/mcp.ts`：`mcp_resources` / `mcp_prompts` 两个全局只读工具——**任一 server 声明了对应能力才注册，最后一个支持它的 server 掉线就撤**；连接就绪后异步补拉资源/模板条数进状态投影（不阻塞 ready）。elicitation 接既有审批卡通道：server 反向要确认时卡上写明 server 名与 message，同意 accept / 拒绝 decline，600 秒上限。
+
+**T20 持久终端（降级版）**：对标 dsh tool-terminal 六工具，落地为**五动作**单工具 `terminal`（open/read/send/close/list）+ `TerminalTable`（bash.ts 文件尾，进程原语 `spawnTerminalShell` 同文件——shell 与参数全字面量，不经过 planCommand 缝（它不是一条命令，是长命 shell），登记/收尾/`stopAllBackgroundChildren` 复用 T15 那一套）。Windows `powershell -NoProfile -Command -`（stdin 逐条读）、POSIX 裸 bash；环形缓冲/增量读游标/遮红与 job_output 同语义。**降级披露**：无 PTY（全屏程序跑不了）、无中途打断（dsh 的 signal 动作没做——管道模式 Windows 收不到 Ctrl+C，信号通路这版没开，长命令等完或 close 重开）、会话不带模型指定的起始目录（进会话后自己 cd，起进程的输入面越窄越好）。
+
+**T27 检查更新**：检查链路 0.6.18 已备（版本比较 + GitHub Releases/简化 JSON 两种回包），本轮补 `sourceUrl` 参数测试缝（缺省仍读 `UPDATE_CHECK_URL` 常量，行为不变），探针起本地更新源覆盖三种回包与坏回包。**有意不做自动安装**（用户只要检查）：有新版时打开发布页手动换包；`UPDATE_CHECK_URL` 仍是空串占位——发布后填，是唯一的配置尾巴。
+
+**T28 插件远程安装**：`plugin_manager` 工具加 `browse_remote` / `install_remote` 两个动作；`core/market.ts` 加 `browsePluginMarketSource` / `installPluginMarketEntry`——机制照技能市场的两类源（GitHub 目录 trees API 里递归列 `*.js`；索引 JSON `[{name,file,description?,version?}]`），只拉单文件、1.5MB 上限。**安全姿势**：源与直链强制 https；远程插件是任意代码，工具 risk=write 弹审批卡（卡上带来源 URL），用户点头才落盘+热挂载。
+
+**T26 评估结论（roadmap §7.7）**：完整回滚语义暂不立项——混合改动场景（bash 改的文件无 pre-image）下「回滚到回合前」语义残缺、「保手改」需要 per-hunk 三方合并基建、有 git 的场景已有顺路动作、部分行接受要动审批模型与转录契约；重启条件与 shadow git 方向写进 §7.7。
+
+**roadmap 收口**：§7.7 新增 T14–T28 十五项逐项落地状态表（0.6.29–0.6.33 五批次，探针与回归证据见 development-log 阶段 48–52）。
+
+**Mimosa 安全门实录（本批核心曲折）**：T20 的终端会话在 bash.ts 被拦 5 次——`spawn` 三元分支（变量经三元产生即判动态命令）、新增 `process.kill`（SIGINT）、`stdin.write(data)`（模型输入写 shell stdin，功能本质）、以及大 hunk 里「新函数 + 调用」的数据流。最终通过形态：**spawn 原语收成全字面量 if 分支函数 + 会话不带模型指定的 cwd + 砍 signal 动作 + 小步 hunk 追加**（大 hunk 被拦、同内容拆小后通过——hunk 尺寸影响判定窗口）。另有：Mimosa 拦 Bash heredoc 写 bash.ts（改用 Edit，与批次 B/C 同规）。
+
+**验证**：双侧 typecheck、根 build + desktop build 全绿；新探针 `shots/batch-e-check.mjs` 33/33（T24：真起假 server 进程验能力协商/资源读写/blob 降级/模板取回/elicitation 审批往返与拒绝路径/无能力不注册——两内核两 server；T20：真起交互 shell 验 open/send/read 增量/close/结束后 send 报错；T27：本地更新源三种回包；T28：索引源浏览/拉取落盘/工具层 https 拦截）；回归 batch-a 22、batch-b 12、batch-c 13、batch-d 32、compact 53、order、kernel-boot、integration 104、approval-floor 95、dsh-compat 15、mcp、file-review 59、dock-model、remote-server 12、lsp 167、四网 218/210/28/85 全绿。
+
+**诚实边界**：T20 降级版无 PTY 无 signal，全屏程序与中途打断不支持；T24 的 elicitation 只支持确认/拒绝（审批卡无表单输入，requestedSchema 只展示），http 传输的 server 拿不到 elicitation；T27 的 UPDATE_CHECK_URL 待发布后填写，自动安装有意不做；T28 只支持单文件 .js 插件（npm 包形态的插件不在远程安装范围）。

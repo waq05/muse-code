@@ -296,5 +296,96 @@ export function toMarketSkillView(entry: MarketEntry, installedNames: ReadonlySe
   }
 }
 
+// ── T28：插件市场（外部插件的远程安装，机制照技能市场的两类源）────────────────
+
+/**
+ * 浏览一个插件市场源，返回可安装的**单文件 .js 插件**条目：
+ *   - GitHub 目录链接（`https://github.com/…/tree/<ref>/<dir>`）：目录下（递归）的
+ *     `*.js` blob 各算一个插件；
+ *   - 索引 JSON（`.json` 结尾）：`[{ "name", "file", "description?", "version?" }]`，
+ *     file 缺省按 `<name>.js` 相对索引地址解析。
+ */
+export async function browsePluginMarketSource(source: MarketSource): Promise<MarketEntry[]> {
+  if (/\.json(\?|$)/i.test(source.url.trim())) {
+    const doc = JSON.parse(await fetchText(source.url)) as unknown
+    const list = Array.isArray(doc) ? doc : ((doc as { plugins?: unknown }).plugins ?? (doc as { items?: unknown }).items)
+    if (!Array.isArray(list)) throw new Error('索引里找不到 plugins 数组')
+    const dirUrl = source.url.replace(/[^/]*$/, '')
+    const entries: MarketEntry[] = []
+    for (const raw of list) {
+      if (raw === null || typeof raw !== 'object') continue
+      const item = raw as Record<string, unknown>
+      const name = typeof item.name === 'string' ? item.name.trim() : ''
+      if (name === '') continue
+      const path = typeof item.file === 'string' && item.file !== '' ? item.file : `${name}.js`
+      const absolute = new URL(path, dirUrl).toString()
+      if (!absolute.endsWith('.js')) continue
+      entries.push({
+        name,
+        description: typeof item.description === 'string' ? item.description : '',
+        version: typeof item.version === 'string' ? item.version : undefined,
+        source: source.name,
+        kind: 'flat',
+        root: absolute.replace(/\/[^/]*$/, ''),
+        mainFile: basename(absolute),
+        files: [],
+      })
+    }
+    return entries
+  }
+  const ref = parseGitHubTree(source.url)
+  if (ref === null) {
+    throw new Error('源地址既不是 GitHub 目录链接，也不是 .json 索引（形如 https://github.com/owner/repo/tree/main/plugins）')
+  }
+  const api = `https://api.github.com/repos/${ref.owner}/${ref.repo}/git/trees/${encodeURIComponent(ref.ref)}?recursive=1`
+  const response = await fetch(api, {
+    headers: { accept: 'application/vnd.github+json', 'user-agent': 'dsc-plugin-market', ...githubHeaders() },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  })
+  if (!response.ok) {
+    if (response.status === 403 || response.status === 422) {
+      throw new Error(`GitHub API 拒绝（${response.status}）：匿名限额较低，设置 GITHUB_TOKEN 后重试`)
+    }
+    throw new Error(`GitHub API ${response.status} ${response.statusText}（${api}）`)
+  }
+  const payload = (await response.json()) as { tree?: { path?: string; type?: string; size?: number }[] }
+  const prefix = ref.dir === '' ? '' : `${ref.dir}/`
+  const rawBase = `https://raw.githubusercontent.com/${ref.owner}/${ref.repo}/${ref.ref}`
+  const entries: MarketEntry[] = []
+  for (const node of payload.tree ?? []) {
+    const path = node.path ?? ''
+    if (node.type !== 'blob' || !path.endsWith('.js')) continue
+    if (prefix !== '' && !path.startsWith(prefix)) continue
+    if (node.size !== undefined && node.size > MAX_FILE_BYTES) continue
+    const relative = prefix === '' ? path : path.slice(prefix.length)
+    const name = basename(relative).replace(/\.js$/i, '')
+    entries.push({
+      name,
+      description: '远程插件（安装时整份拉取，装前会过审批）',
+      source: source.name,
+      kind: 'flat',
+      root: rawBase,
+      mainFile: relative,
+      files: [],
+    })
+  }
+  return entries.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * 安装一个远程插件条目：只拉 mainFile（单文件 .js）写进目标目录，
+ * 返回落盘路径。热挂载由调用方（plugin-manager 插件）自己做。
+ */
+export async function installPluginMarketEntry(entry: MarketEntry, pluginsDir: string): Promise<string> {
+  const bytes = await fetchBytes(fileUrl(entry, entry.mainFile))
+  if (bytes.byteLength > MAX_FILE_BYTES) {
+    throw new Error(`插件文件超过 ${Math.round(MAX_FILE_BYTES / 1_048_576)} MB 上限`)
+  }
+  const target = join(pluginsDir, basename(entry.mainFile))
+  mkdirSync(pluginsDir, { recursive: true })
+  writeFileSync(target, bytes)
+  return target
+}
+
 /** 供错误信息复用（避免上层再判一次类型）。 */
 export { errText as marketErrorText }

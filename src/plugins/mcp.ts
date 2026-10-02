@@ -19,6 +19,7 @@ import {
   openConnection,
   parseServerList,
   riskOf,
+  type McpCapabilities,
   type McpConnection,
   type McpRisk,
   type McpServerConfig,
@@ -26,7 +27,7 @@ import {
 } from '../core/mcp.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import { wrapUntrusted } from '../core/untrusted.js'
-import type { ToolEntry } from '../core/tools.js'
+import { argsSummary, type ToolEntry } from '../core/tools.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { McpServerInfo, McpService, McpToolInfo, SettingsSectionSpec } from '../services/types.js'
 
@@ -79,6 +80,8 @@ interface ServerState {
   connection: McpConnection | undefined
   /** 这个 server 现在有哪些工具（与有没有注册进 ctx.tools 无关）。 */
   tools: McpToolInfo[]
+  /** T24：这个 server 声明的能力（连接握手时读到；没连上全是 false）。 */
+  capabilities: McpCapabilities
   /** 已注册进 ctx.tools 的工具的清理函数，按完整工具名索引。 */
   disposers: Map<string, () => void>
   /** 连续失败次数，成功一次清零。 */
@@ -138,7 +141,8 @@ function connectionKey(server: McpServerConfig): string {
 
 export const mcpPlugin: Plugin.Object = {
   name: 'mcp',
-  inject: ['tools', 'transcript', 'settings', 'prompt'],
+  // approval：T24 elicitation——server 反向要确认时走审批卡
+  inject: ['tools', 'transcript', 'settings', 'prompt', 'approval'],
   apply(ctx, passed: unknown) {
     let deferred = false
     const states = new Map<string, ServerState>()
@@ -146,6 +150,8 @@ export const mcpPlugin: Plugin.Object = {
     const catalog = new Map<string, McpToolInfo>()
     /** T37：每个 server 挂在系统提示里的 instructions 段的退订函数。 */
     const instructionDisposers = new Map<string, () => void>()
+    /** T24：mcp_resources / mcp_prompts 两个全局工具的退订函数（按能力在场）。 */
+    const capabilityDisposers = new Map<string, () => void>()
     /** instructions 的字符上限（dsh 的 server-context 同一量级：交代用法，不塞整本手册）。 */
     const INSTRUCTIONS_CAP = 4_000
 
@@ -168,6 +174,8 @@ export const mcpPlugin: Plugin.Object = {
     return () => {
       offExit()
       offSection()
+      for (const dispose of capabilityDisposers.values()) dispose()
+      capabilityDisposers.clear()
       for (const name of [...states.keys()]) stopServer(name)
       offService()
     }
@@ -242,6 +250,144 @@ export const mcpPlugin: Plugin.Object = {
       )
     }
 
+    // ── T24：resources / prompts 两个全局工具 ───────────────────────────────
+
+    /** 挑出目标 server：带名字就只那一个（报错给模型看），不带就是全部还连着的。 */
+    function pickStates(serverName: string): ServerState[] {
+      if (serverName === '') {
+        return [...states.values()].filter((state) => state.connection?.alive === true)
+      }
+      const state = states.get(serverName)
+      if (state === undefined || state.connection?.alive !== true) {
+        throw new Error(`没有叫 ${serverName} 且已连上的 MCP server（能用的：${[...states.keys()].join('、') || '无'}）`)
+      }
+      return [state]
+    }
+
+    /** 任一 server 声明了对应能力才注册对应工具；最后一个支持它的 server 掉线就撤。 */
+    function syncCapabilityTools(): void {
+      const anyResources = [...states.values()].some((state) => state.capabilities.resources && !state.closed)
+      const anyPrompts = [...states.values()].some((state) => state.capabilities.prompts && !state.closed)
+      const want = new Set<string>([
+        ...(anyResources ? ['mcp_resources'] : []),
+        ...(anyPrompts ? ['mcp_prompts'] : []),
+      ])
+      for (const [name, dispose] of [...capabilityDisposers]) {
+        if (!want.has(name)) {
+          dispose()
+          capabilityDisposers.delete(name)
+        }
+      }
+      if (want.has('mcp_resources') && !capabilityDisposers.has('mcp_resources')) {
+        capabilityDisposers.set('mcp_resources', ctx.tools.register(resourcesTool()))
+      }
+      if (want.has('mcp_prompts') && !capabilityDisposers.has('mcp_prompts')) {
+        capabilityDisposers.set('mcp_prompts', ctx.tools.register(promptsTool()))
+      }
+    }
+
+    /** 列资源 / 读资源。list 不带 server 列全部；read 必须指明 server 与 uri。 */
+    async function runResources(args: Record<string, unknown>, signal: AbortSignal): Promise<string> {
+      const action = String(args.action ?? 'list')
+      if (action === 'list') {
+        const targets = pickStates(String(args.server ?? '')).filter((state) => state.capabilities.resources)
+        if (targets.length === 0) return '（现在没有任何已连上的 server 声明 resources 能力）'
+        const lines: string[] = []
+        for (const state of targets) {
+          const listed = await state.connection!.listResources(signal)
+          lines.push(`「${state.config.name}」${listed.length} 个资源：`)
+          for (const resource of listed) {
+            lines.push(
+              `- ${resource.name}（uri: ${resource.uri}${resource.mimeType === '' ? '' : `，${resource.mimeType}`}）${resource.description}`,
+            )
+          }
+          state.info = { ...state.info, resources: listed.length }
+        }
+        return wrapUntrusted('mcp-resources', lines.join('\n'))
+      }
+      if (action === 'read') {
+        const uri = String(args.uri ?? '')
+        if (uri === '') return 'read 要带上 uri（list 里看到的那个）'
+        const [state] = pickStates(String(args.server ?? ''))
+        const read = await state.connection!.readResource(uri, signal)
+        return wrapUntrusted(`mcp-resource:${state.config.name}`, read.text)
+      }
+      return `不认识的 action「${action}」。要用的值：list / read`
+    }
+
+    /** 列提示模板 / 取一份模板。get 要 server + name；模板参数按 list 给的名单填。 */
+    async function runPrompts(args: Record<string, unknown>, signal: AbortSignal): Promise<string> {
+      const action = String(args.action ?? 'list')
+      if (action === 'list') {
+        const targets = pickStates(String(args.server ?? '')).filter((state) => state.capabilities.prompts)
+        if (targets.length === 0) return '（现在没有任何已连上的 server 声明 prompts 能力）'
+        const lines: string[] = []
+        for (const state of targets) {
+          const listed = await state.connection!.listPrompts(signal)
+          lines.push(`「${state.config.name}」${listed.length} 个提示模板：`)
+          for (const prompt of listed) {
+            lines.push(
+              `- ${prompt.name}${prompt.arguments.length === 0 ? '' : `（参数：${prompt.arguments.join('、')}）`} ${prompt.description}`,
+            )
+          }
+          state.info = { ...state.info, prompts: listed.length }
+        }
+        return wrapUntrusted('mcp-prompts', lines.join('\n'))
+      }
+      if (action === 'get') {
+        const name = String(args.name ?? '')
+        if (name === '') return 'get 要带上模板名（list 里看到的那个）'
+        const [state] = pickStates(String(args.server ?? ''))
+        const rawArguments = asRecord(args.arguments) ?? {}
+        const templateArguments: Record<string, string> = {}
+        for (const [key, value] of Object.entries(rawArguments)) templateArguments[key] = String(value)
+        const got = await state.connection!.getPrompt(name, templateArguments, signal)
+        return wrapUntrusted(`mcp-prompt:${state.config.name}`, got.text)
+      }
+      return `不认识的 action「${action}」。要用的值：list / get`
+    }
+
+    function resourcesTool(): ToolEntry {
+      return {
+        name: 'mcp_resources',
+        description:
+          '列出已连上 MCP server 暴露的资源（resources/list），或读一份资源的内容（resources/read）。' +
+          '资源是 server 侧的文件/数据（文档、配置、日志…）；先 list 看到 uri，再 read 按 uri 取内容。',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['list', 'read'], description: '要做什么' },
+            server: { type: 'string', description: 'MCP server 名；list 不填 = 全部，read 必填' },
+            uri: { type: 'string', description: 'read 必填：资源的 uri' },
+          },
+          required: ['action'],
+        },
+        risk: 'read',
+        run: (args, runCtx) => runResources(args, runCtx.signal),
+      }
+    }
+
+    function promptsTool(): ToolEntry {
+      return {
+        name: 'mcp_prompts',
+        description:
+          '列出已连上 MCP server 提供的提示模板（prompts/list），或取一份模板的完整内容（prompts/get）。' +
+          '模板是 server 预制的高质量提问/任务书；get 时按 list 给的参数名单填 arguments。',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['list', 'get'], description: '要做什么' },
+            server: { type: 'string', description: 'MCP server 名；list 不填 = 全部，get 必填' },
+            name: { type: 'string', description: 'get 必填：模板名' },
+            arguments: { type: 'object', description: 'get 可选：模板参数，形如 {"语言":"中文"}' },
+          },
+          required: ['action'],
+        },
+        risk: 'read',
+        run: (args, runCtx) => runPrompts(args, runCtx.signal),
+      }
+    }
+
     /**
      * 把这个 server 的工具挂进 ctx.tools；已经撤下 schema 时只挂只读那几条。
      *
@@ -271,6 +417,7 @@ export const mcpPlugin: Plugin.Object = {
         info: { name: server.name, transport: server.transport, tools: 0, state: 'connecting' },
         connection: undefined,
         tools: [],
+        capabilities: { resources: false, prompts: false },
         disposers: new Map(),
         failures: 0,
         timer: undefined,
@@ -291,6 +438,7 @@ export const mcpPlugin: Plugin.Object = {
       state.connection = undefined
       state.tools = []
       rebuildCatalog()
+      syncCapabilityTools()
     }
 
     async function connect(state: ServerState): Promise<void> {
@@ -308,6 +456,22 @@ export const mcpPlugin: Plugin.Object = {
           onClose: () => {
             onConnectionClosed(state, box.value)
           },
+          // T24：server 反向发起 elicitation 时走审批卡——卡上写明是哪个 server 在要确认、
+          // 它说明了什么；同意回 accept，拒绝回 decline。等卡期间连接断了就走 abort。
+          onElicitation: async (request) => {
+            const schemaText =
+              Object.keys(request.requestedSchema).length === 0 ? '' : ` 参数结构：${JSON.stringify(request.requestedSchema)}`
+            const decision = await ctx.approval.decide(
+              {
+                toolName: `MCP elicitation · ${state.config.name}`,
+                argsSummary: `${state.config.name} 请求确认：${request.message}${schemaText}`,
+                args: { message: request.message, requestedSchema: request.requestedSchema },
+                cwd: '',
+              },
+              AbortSignal.timeout(ELICITATION_TIMEOUT_MS),
+            )
+            return decision === 'reject' ? { action: 'decline' } : { action: 'accept' }
+          },
         })
         box.value = connection
         const specs = await connection.listTools(new AbortController().signal)
@@ -316,6 +480,7 @@ export const mcpPlugin: Plugin.Object = {
           return
         }
         state.connection = connection
+        state.capabilities = connection.capabilities
         state.tools = specs.map((spec) => toToolInfo(state.config, spec))
         state.info.tools = state.tools.length
         state.info.state = 'ready'
@@ -323,6 +488,11 @@ export const mcpPlugin: Plugin.Object = {
         rebuildCatalog()
         applyTools(state)
         syncInstructions(state)
+        syncCapabilityTools()
+        // T24：资源与提示的条数是「连上后再补一轮列表」才知道的——异步补，
+        // 不阻塞 ready 状态；server 没声明对应能力就不白跑这一趟。
+        if (state.capabilities.resources) void countResources(state)
+        if (state.capabilities.prompts) void countPrompts(state)
         if (hadFailed) {
           ctx.transcript.system(`MCP server ${state.config.name} 重新连上了，带了 ${state.tools.length} 个工具`)
         }
@@ -332,28 +502,54 @@ export const mcpPlugin: Plugin.Object = {
       }
     }
 
-    /** 连接自己断了：只有「还在用的那条」配得上把状态打成失败。 */
-    function onConnectionClosed(state: ServerState, connection: McpConnection | undefined): void {
-      if (state.closed) return
-      if (connection === undefined || state.connection !== connection) return
-      state.connection = undefined
-      markFailed(state, '连接断了')
-    }
+  /** 连接自己断了：只有「还在用的那条」配得上把状态打成失败。 */
+  function onConnectionClosed(state: ServerState, connection: McpConnection | undefined): void {
+    if (state.closed) return
+    if (connection === undefined || state.connection !== connection) return
+    state.connection = undefined
+    markFailed(state, '连接断了')
+  }
 
-    function markFailed(state: ServerState, message: string): void {
-      if (state.closed) return
-      const first = state.info.state !== 'failed'
-      state.info.state = 'failed'
-      state.info.problem = message
-      state.info.tools = 0
-      state.connection = undefined
-      state.tools = []
-      rebuildCatalog()
-      dropTools(state)
-      // 同一次掉线只报第一回；反复重试失败不再刷屏，放弃时另有一条
-      if (first) ctx.transcript.system(`MCP server ${state.config.name} 没连上：${message}`)
-      scheduleReconnect(state)
+  /** T24：连上后补拉资源清单，条数写进状态投影（失败静默——状态行少个数而已）。 */
+  async function countResources(state: ServerState): Promise<void> {
+    try {
+      const connection = state.connection
+      if (connection === undefined || !connection.alive) return
+      const listed = await connection.listResources(new AbortController().signal)
+      if (!state.closed && state.connection === connection) state.info = { ...state.info, resources: listed.length }
+    } catch {
+      // 有些 server 声明了能力但列表为空/报错：不影响工具与连接本身
     }
+  }
+
+  /** T24：同 {@link countResources}，补的是提示模板条数。 */
+  async function countPrompts(state: ServerState): Promise<void> {
+    try {
+      const connection = state.connection
+      if (connection === undefined || !connection.alive) return
+      const listed = await connection.listPrompts(new AbortController().signal)
+      if (!state.closed && state.connection === connection) state.info = { ...state.info, prompts: listed.length }
+    } catch {
+      // 同上
+    }
+  }
+
+  function markFailed(state: ServerState, message: string): void {
+    if (state.closed) return
+    const first = state.info.state !== 'failed'
+    state.info.state = 'failed'
+    state.info.problem = message
+    state.info.tools = 0
+    state.connection = undefined
+    state.capabilities = { resources: false, prompts: false }
+    state.tools = []
+    rebuildCatalog()
+    dropTools(state)
+    syncCapabilityTools()
+    // 同一次掉线只报第一回；反复重试失败不再刷屏，放弃时另有一条
+    if (first) ctx.transcript.system(`MCP server ${state.config.name} 没连上：${message}`)
+    scheduleReconnect(state)
+  }
 
     function scheduleReconnect(state: ServerState): void {
       const current = readConfig(passed)
@@ -548,3 +744,11 @@ export const mcpPlugin: Plugin.Object = {
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
+
+/** 认得出是个对象就返回，否则 null（模板参数等宽松入参的兜底）。 */
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
+}
+
+/** T24：elicitation 等人点卡的上限（毫秒）——审批卡可以慢慢等，但不能永远挂着。 */
+const ELICITATION_TIMEOUT_MS = 600_000

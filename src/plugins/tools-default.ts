@@ -9,7 +9,7 @@
  * @module dsc/plugins/tools-default
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, JobTable, stopAllBackgroundChildren, type BashBudgets } from '../core/tools/bash.js'
+import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, createTerminalTool, JobTable, stopAllBackgroundChildren, TerminalTable, type BashBudgets } from '../core/tools/bash.js'
 import { createReadTool, editTool, READ_DEFAULT_LINE_LIMIT, writeTool } from '../core/tools/fs-tools.js'
 import { globTool, grepTool } from '../core/tools/search-tools.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
@@ -67,11 +67,16 @@ export const toolsDefaultPlugin: Plugin.Object = {
     let noticeTimer: NodeJS.Timeout | undefined
     const pendingNotices: string[] = []
 
+    // ---- T20 终端会话表 ----
+    // 与作业表共用同一张进程登记表（stopAllBackgroundChildren 收摊时一并收掉）
+    const terminals = new TerminalTable()
+
     const syncTools = (): void => {
       for (const off of disposers) off()
       disposers = [
         ctx.tools.register(createBashTool(budgets, table)),
         ...createJobTools(table).map((entry) => ctx.tools.register(entry)),
+        ctx.tools.register(createTerminalTool(terminals)),
         ctx.tools.register(createReadTool(budgets.readLineLimit)),
         ctx.tools.register(writeTool),
         ctx.tools.register(editTool),

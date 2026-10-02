@@ -775,6 +775,10 @@ export interface McpServerInfo {
   state: 'ready' | 'connecting' | 'failed'
   /** state 为 failed 时的原因原文。 */
   problem?: string
+  /** T24：server 声明了 resources 能力时，列出来的资源条数（没声明/没连上不填）。 */
+  resources?: number
+  /** T24：server 声明了 prompts 能力时，列出来的模板条数（没声明/没连上不填）。 */
+  prompts?: number
 }
 
 /** 一个 MCP 工具在目录里的样子（渐进披露的检索对象）。 */

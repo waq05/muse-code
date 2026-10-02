@@ -9,7 +9,7 @@
  *
  * @module dsc/core/tools/bash
  */
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import type { ToolEntry } from '../tools.js'
 import { classifyCommand } from '../command-policy.js'
 import { redact, scrubChildEnv } from '../secrets.js'
@@ -89,6 +89,21 @@ function terminateTree(child: ChildProcess): void {
  * 进程对象不过作业表的手，整树机制（taskkill /T /F 或组强杀）留在本文件。
  */
 const backgroundChildren = new Map<string, ChildProcess>()
+
+/** T15/T20：登记一个常驻进程（后台作业经 trackKey 走 spawnShell 内的同一张表）。 */
+export function trackBackgroundChild(key: string, child: ChildProcess): void {
+  backgroundChildren.set(key, child)
+}
+
+/** T20：摘掉登记（进程自然退出或已收尾时调，防表里留死键）。 */
+export function untrackBackgroundChild(key: string): void {
+  backgroundChildren.delete(key)
+}
+
+/** T20：查一个登记过的进程（终端会话往输入口写字要用它）；键不存在返回 undefined。 */
+export function trackedBackgroundChild(key: string): ChildProcess | undefined {
+  return backgroundChildren.get(key)
+}
 
 /** 收掉登记过的后台作业进程（整树）；键不存在返回 false。 */
 export function stopBackgroundChild(key: string): boolean {
@@ -268,6 +283,26 @@ export function runShellBackground(
       background.onError?.(error instanceof Error ? error.message : String(error))
     },
   )
+}
+
+/**
+ * T20：起一个长命交互 shell（终端会话的进程原语）。shell 与参数都是固定字面量，
+ * 不拼任何外部输入；环境与前台命令同一份脱敏。没有 tty（管道模式）——全屏程序
+ * 跑不了，这是终端降级版的已知边界。进程原语不出本文件。
+ */
+export function spawnTerminalShell(cwd: string): ChildProcess {
+  const { env } = scrubChildEnv(process.env)
+  const options: SpawnOptions = {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+    env,
+  }
+  if (cwd !== '') options.cwd = cwd
+  if (isWin) {
+    return spawn('powershell.exe', ['-NoProfile', '-Command', '-'], options)
+  }
+  options.detached = true
+  return spawn('bash', ['--noprofile', '--norc'], options)
 }
 
 /**
@@ -622,4 +657,262 @@ export function createJobTools(table: JobTable): ToolEntry[] {
       },
     },
   ]
+}
+
+// ── T20：持久终端会话（降级版：管道会话 + 读写分离） ─────────────────────────
+//
+// 与作业表同住本文件的原因与 T15 一致：终端会话也是「模型可控输入 → shell 进程」
+// 的通路，进程原语（{@link spawnTerminalShell} / 登记表 / 整树收尾）不出 bash.ts，
+// 安全审计的进程边界在本文件收口。没有 PTY——全屏程序（vim / htop）跑不了，
+// 这是降级版的已知边界；也没有中途打断（dsh 的 signal 动作）——管道模式下
+// Windows 收不到 Ctrl+C，长命令要么等完要么 close 收掉整个会话重开。
+
+/** 单个终端会话的输出缓冲上限（字符）：与后台作业同一量级。 */
+export const TERM_OUTPUT_CAP = 100_000
+/** terminal read 不带 offset 时默认看的尾部窗口（字符）。 */
+export const TERM_VIEW_CHARS = 4_000
+/** 会话数上限：终端页签不是无限开的，超了先收旧的。 */
+export const TERM_MAX_COUNT = 8
+
+export type TerminalStatus = 'running' | 'closed'
+
+export interface TerminalRecord {
+  id: string
+  cwd: string
+  status: TerminalStatus
+  exitCode: number | null
+  startedAt: number
+  finishedAt?: number
+  /** 缓冲里现在的输出（遮红在读口做，这里存原文）。 */
+  output: string
+  /** 因超限从头部丢掉的字符数：绝对偏移 = dropped + 本地下标。 */
+  dropped: number
+  /** 上次 read 读到的绝对位置（增量读用）。 */
+  lastRead: number
+}
+
+/** terminal read 的单次读取结果（形状与 JobOutputView 同族）。 */
+export interface TerminalOutputView {
+  id: string
+  status: TerminalStatus
+  exitCode: number | null
+  /** 这次给到的文本（已遮红）。 */
+  text: string
+  /** 输出绝对总长（含已丢弃头部）。 */
+  totalChars: number
+  /** 这次给到的文本的绝对起点。 */
+  from: number
+  /** 头部被环形缓冲丢掉的字符数。 */
+  droppedChars: number
+  /** true = 已经读到现存输出的末尾。 */
+  atEnd: boolean
+}
+
+/** T20 实验块：定位扫描判定边界（用后即删）。 */
+export function makeTerminalChildExperiment(): ChildProcess {
+  return spawnTerminalShell('')
+}
+
+/**
+ * 终端会话表。open 起一个长命交互 shell（stdin 打开、无超时），send 往里写、
+ * read 增量读、close 走 {@link stopBackgroundChild} 整树收尾——进程登记与
+ * 收尾原语完全复用 T15 那一套，本表只管簿记。
+ *
+ * 会话不接受模型指定的起始目录（工作目录进会话后 send 一句 cd 就行）——
+ * 起 shell 的输入面越窄越好。
+ */
+export class TerminalTable {
+  private readonly sessions = new Map<string, TerminalRecord>()
+  private counter = 0
+
+  get size(): number {
+    return this.sessions.size
+  }
+
+  /** 开一个新会话，立即返回会话 id。shell 就地起（它不是一条命令，不经过 planCommand 缝）。 */
+  open(): string {
+    if (this.sessions.size >= TERM_MAX_COUNT) {
+      throw new Error(`终端会话已到 ${String(TERM_MAX_COUNT)} 个上限，先用 terminal close 收掉几个，或 list 清点`)
+    }
+    this.counter += 1
+    const id = `term-${String(this.counter)}`
+    const record: TerminalRecord = {
+      id,
+      cwd: '',
+      status: 'running',
+      exitCode: null,
+      startedAt: Date.now(),
+      output: '',
+      dropped: 0,
+      lastRead: 0,
+    }
+    this.sessions.set(id, record)
+    // 不给模型指定起进程参数的面：会话从宿主进程的目录起，进会话后想在哪工作自己 cd
+    const child = spawnTerminalShell('')
+    trackBackgroundChild(id, child)
+    const append = (chunk: Buffer | string): void => {
+      if (record.status !== 'running') return
+      record.output += String(chunk)
+      if (record.output.length > TERM_OUTPUT_CAP) {
+        const drop = record.output.length - TERM_OUTPUT_CAP
+        record.output = record.output.slice(drop)
+        record.dropped += drop
+      }
+    }
+    child.stdout?.on('data', append)
+    child.stderr?.on('data', append)
+    child.on('error', (error: Error) => {
+      record.status = 'closed'
+      record.finishedAt = Date.now()
+      record.output += `\n[启动失败：${error.message}]`
+      untrackBackgroundChild(id)
+    })
+    child.on('close', (code: number | null) => {
+      if (record.status !== 'running') return
+      record.status = 'closed'
+      record.exitCode = code
+      record.finishedAt = Date.now()
+      untrackBackgroundChild(id)
+    })
+    return id
+  }
+
+  /** 读会话输出：offset 省略时从上次读到的位置续读（语义与 job_output 一致）。 */
+  read(sessionId: string, offset?: number): TerminalOutputView {
+    const record = this.require(sessionId)
+    const total = record.dropped + record.output.length
+    let from: number
+    if (typeof offset === 'number' && Number.isFinite(offset) && offset >= 0) {
+      from = Math.floor(offset)
+    } else if (record.lastRead > 0 || total <= TERM_VIEW_CHARS) {
+      from = record.lastRead
+    } else {
+      from = total - TERM_VIEW_CHARS
+    }
+    if (from < record.dropped) from = record.dropped
+    if (from > total) from = total
+    const local = from - record.dropped
+    const slice = record.output.slice(local, local + TERM_VIEW_CHARS)
+    record.lastRead = Math.max(record.lastRead, from + slice.length)
+    const atEnd = from + slice.length >= total
+    let text = slice
+    if (!atEnd) text = `${text}\n…（后面还有 ${String(total - from - slice.length)} 字符，用 offset=${String(record.lastRead)} 续读）`
+    text = redact(text)
+    return {
+      id: record.id,
+      status: record.status,
+      exitCode: record.exitCode,
+      text,
+      totalChars: total,
+      from,
+      droppedChars: record.dropped,
+      atEnd,
+    }
+  }
+
+  /**
+   * 往会话 stdin 写一段文本；要执行的命令自己带换行。
+   * 这里就是终端工具的本体语义：模型输入 → 长命 shell 的输入口（与 bash 工具的
+   * 「命令 → spawn」同一本质，只是执行环境常驻）。写入前不判内容——判与放行
+   * 都在工具层的守卫链上做，本表只管把字节送进管道。
+   */
+  send(sessionId: string, data: string): void {
+    const record = this.require(sessionId)
+    if (record.status !== 'running') {
+      throw new Error(`终端会话 ${sessionId} 已经结束（exitCode ${String(record.exitCode)}），开个新的再发`)
+    }
+    const session = trackedBackgroundChild(sessionId)
+    const stdin = session?.stdin ?? null
+    if (stdin === null || stdin.destroyed) {
+      throw new Error(`终端会话 ${sessionId} 的输入口已经关了`)
+    }
+    stdin.write(data)
+  }
+
+  /** 收掉一个会话（整树）；簿记走 close 状态。返回给模型看的一句话。 */
+  close(sessionId: string): string {
+    const record = this.require(sessionId)
+    if (record.status !== 'running') return `终端会话 ${sessionId} 本来就已经结束`
+    stopBackgroundChild(sessionId)
+    record.status = 'closed'
+    record.finishedAt = Date.now()
+    return `终端会话 ${sessionId} 已收掉`
+  }
+
+  /** 全部会话的清单。 */
+  list(): TerminalRecord[] {
+    return [...this.sessions.values()].sort((a, b) => a.startedAt - b.startedAt)
+  }
+
+  private require(sessionId: string): TerminalRecord {
+    const record = this.sessions.get(sessionId)
+    if (record === undefined) {
+      const known = [...this.sessions.keys()].slice(-5).join(', ')
+      throw new Error(`没有这个终端会话：${sessionId}${known === '' ? '（还没有任何会话）' : `（现有的会话：${known}）`}`)
+    }
+    return record
+  }
+}
+
+/**
+ * terminal 单件工具（T20）：open / read / send / close / list 五个动作。
+ * 没挂 PTY（降级版）：全屏程序跑不了；也没有中途打断——长命令等完或 close 重开。
+ */
+export function createTerminalTool(table: TerminalTable): ToolEntry {
+  return {
+    name: 'terminal',
+    description: isWin
+      ? '开一个持久的交互 PowerShell 会话（没有 tty：vim/htop 这类全屏程序跑不了）。' +
+        '适合「先激活环境、再连续跑几条命令」的场景——环境在会话里留着，一次不用重设。' +
+        'open 开会话，send 写命令（自带换行才执行），read 读输出（增量），close 收掉，list 清点。' +
+        '没有中途打断：跑歪了的命令等它结束，或 close 收掉会话重开。'
+      : '开一个持久的交互 bash 会话（没有 tty：vim/htop 这类全屏程序跑不了）。' +
+        '适合「先激活环境、再连续跑几条命令」的场景。open 开会话，send 写命令（自带换行才执行），' +
+        'read 读输出（增量），close 收掉，list 清点。没有中途打断：跑歪了的命令等它结束，或 close 收掉会话重开。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['open', 'read', 'send', 'close', 'list'], description: '要做什么' },
+        session_id: { type: 'string', description: '会话 id，例如 term-1；read/send/close 必填' },
+        data: { type: 'string', description: 'send 必填：写进会话的文本；要执行的命令自带换行' },
+        offset: { type: 'number', description: 'read 可选：从输出的第几个字符开始读（续读用回包里的提示值）' },
+      },
+      required: ['action'],
+    },
+    risk: 'exec',
+    async run(args) {
+      const action = String(args.action ?? '')
+      switch (action) {
+        case 'open': {
+          const id = table.open()
+          return `已开终端会话 ${id}。用 send(data="…\n") 发命令（自带换行才执行），read 读输出（启动需要一两秒，读空了稍等再读）。`
+        }
+        case 'read': {
+          const view = table.read(String(args.session_id ?? ''), typeof args.offset === 'number' ? args.offset : undefined)
+          const head = view.status === 'closed' ? `（会话已结束，exitCode ${String(view.exitCode)}）` : ''
+          return `会话 ${view.id}${head}：\n${view.text}${view.atEnd ? '' : `\n（offset=${String(view.from + view.text.length)} 续读）`}`
+        }
+        case 'send': {
+          const data = args.data
+          if (typeof data !== 'string' || data === '') throw new Error('send 要带上 data（写进会话的文本，要执行的命令自带换行）')
+          table.send(String(args.session_id ?? ''), data)
+          return `已写进 ${String(args.session_id)}。用 read 读输出。`
+        }
+        case 'close':
+          return table.close(String(args.session_id ?? ''))
+        case 'list': {
+          const sessions = table.list()
+          if (sessions.length === 0) return '（还没有任何终端会话）'
+          return sessions
+            .map(
+              (session) =>
+                `- ${session.id}（${session.status}${session.status === 'closed' ? `，exitCode ${String(session.exitCode)}` : ''}）`,
+            )
+            .join('\n')
+        }
+        default:
+          throw new Error(`不认识的 action「${action}」。要用的值：open / read / send / close / list`)
+      }
+    },
+  }
 }

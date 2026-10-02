@@ -16,7 +16,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 // ── 协议与命名常量（协议常量不随部署变，固定在这里） ──────────────────────────
 
 /** initialize 里报的协议版本（MCP 2024-11-05）。 */
-const MCP_PROTOCOL_VERSION = '2024-11-05'
+const MCP_PROTOCOL_VERSION = '2025-06-18'
 
 /** initialize 里自报的客户端身份。 */
 const CLIENT_INFO = { name: 'muse-code', version: '0.1.0' }
@@ -98,6 +98,56 @@ export interface McpCallResult {
   isError: boolean
 }
 
+// ── T24：resources / prompts / elicitation ───────────────────────────────────
+
+/** server 声明的一类能力（initialize 应答的 capabilities 里有没有这个键）。 */
+export interface McpCapabilities {
+  resources: boolean
+  prompts: boolean
+}
+
+/** resources/list 的一项。 */
+export interface McpResourceSpec {
+  uri: string
+  name: string
+  description: string
+  mimeType: string
+}
+
+/** resources/read 的结果（文本部分；blob 只给说明）。 */
+export interface McpResourceContent {
+  text: string
+  isError: boolean
+}
+
+/** prompts/list 的一项。 */
+export interface McpPromptSpec {
+  name: string
+  description: string
+  /** 参数名清单（必填的排前面，模型看这个填 arguments）。 */
+  arguments: string[]
+}
+
+/** prompts/get 的结果（文本消息拼一串）。 */
+export interface McpPromptResult {
+  text: string
+  isError: boolean
+}
+
+/**
+ * server 反向发起的 elicitation 请求（要用户确认或补信息）。
+ * 客户端能力表里声明了 elicitation 的 stdio server 才会发它过来。
+ */
+export interface McpElicitationRequest {
+  /** server 的一句话说明（要确认什么、为什么要）。 */
+  message: string
+  /** 期望的输入结构（JSON Schema）；dsc 只展示不填表单。 */
+  requestedSchema: Record<string, unknown>
+}
+
+/** elicitation 的回答。dsc 的审批卡只有同意/拒绝两档，`cancel` 不用。 */
+export type McpElicitationResponse = { action: 'accept' } | { action: 'decline' }
+
 /** 一条已经握过手的连接。 */
 export interface McpConnection {
   /** 底层进程还活着 / HTTP 通道还没关。 */
@@ -108,8 +158,18 @@ export interface McpConnection {
    * 系统提示，模型才能看到这份交代。
    */
   readonly instructions: string
+  /** T24：server 声明的能力（resources/prompts 有没有；elicitation 是 client 能力，不在这）。 */
+  readonly capabilities: McpCapabilities
   listTools(signal: AbortSignal): Promise<McpToolSpec[]>
   callTool(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<McpCallResult>
+  /** T24：列资源（resources/list 翻页到底）。server 没声明 resources 时抛错。 */
+  listResources(signal: AbortSignal): Promise<McpResourceSpec[]>
+  /** T24：读一个资源，文本内容拼出来（blob 只给一句说明）。 */
+  readResource(uri: string, signal: AbortSignal): Promise<McpResourceContent>
+  /** T24：列提示模板。server 没声明 prompts 时抛错。 */
+  listPrompts(signal: AbortSignal): Promise<McpPromptSpec[]>
+  /** T24：取一份提示模板，消息文本拼出来。 */
+  getPrompt(name: string, args: Record<string, string>, signal: AbortSignal): Promise<McpPromptResult>
   close(): void
 }
 
@@ -124,6 +184,12 @@ export interface McpOpenOptions {
    * http 没有常驻连接，一问一答，所以这条不会触发——那边断了就是某次 tools/call 直接抛错。
    */
   onClose: () => void
+  /**
+   * T24：server 反向发起 elicitation 时的处理（弹审批卡等人）。只在 stdio 通道上
+   * 会被调用——http 是一问一答，收不了 server 的反向请求，那条路根本不声明这个能力。
+   * 不传时 elicitation/create 一律按拒绝回（server 自己会处理）。
+   */
+  onElicitation?: (request: McpElicitationRequest) => Promise<McpElicitationResponse>
 }
 
 /** 解析一行服务器清单 JSON 的结果；problem 非空时 servers 一定是空的。 */
@@ -420,6 +486,8 @@ class StdioChannel implements Channel {
   private stderrTail = ''
   private nextId = 0
   private closed = false
+  /** T24：server 反向请求的处理缝（elicitation/create）；没挂就按 method-not-found 回。 */
+  private serverRequestHandler: ((method: string, params: Record<string, unknown>) => Promise<unknown>) | undefined
 
   constructor(
     private readonly child: ChildProcess,
@@ -443,6 +511,11 @@ class StdioChannel implements Channel {
         `MCP server 进程退出（${signal ?? code ?? '未知'}）${tail === '' ? '' : `：${tail}`}`,
       )
     })
+  }
+
+  /** T24：挂 server 反向请求的处理缝（连接握手完就挂）。 */
+  handleServerRequests(handler: (method: string, params: Record<string, unknown>) => Promise<unknown>): void {
+    this.serverRequestHandler = handler
   }
 
   get alive(): boolean {
@@ -534,8 +607,17 @@ class StdioChannel implements Channel {
     const message = asRecord(doc)
     if (message === null) return
     const id = message.id
-    // server 主动发的通知、以及它反向发起的请求，本客户端都不认，丢掉
-    if (typeof id !== 'number') return
+    const method = message.method
+    if (typeof id !== 'number') {
+      // 没有 id 的是 server 通知（notifications/...）：本客户端只听请求，通知丢掉
+      return
+    }
+    if (typeof method === 'string') {
+      // T24：带 id 带 method 是 server **反向发起的请求**（elicitation/create）。
+      // 处理缝异步出结果再按 id 回写；没挂缝或处理抛错都回 JSON-RPC 错误，server 自己兜。
+      this.onServerRequest(id, method, asRecord(message.params) ?? {})
+      return
+    }
     const entry = this.pending.get(id)
     if (entry === undefined) return
     if (message.error !== undefined && message.error !== null) {
@@ -543,6 +625,26 @@ class StdioChannel implements Channel {
       return
     }
     entry.settle(null, message.result)
+  }
+
+  /** T24：处理一条 server 反向请求并回写应答（异步；写不进去就算了，连接随后会断）。 */
+  private onServerRequest(id: number, method: string, params: Record<string, unknown>): void {
+    const respond = (result: unknown): void => {
+      const stdin = this.child.stdin
+      if (this.closed || stdin === null || stdin.destroyed) return
+      stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`, () => {})
+    }
+    const reject = (message: string, code = -32601): void => {
+      const stdin = this.child.stdin
+      if (this.closed || stdin === null || stdin.destroyed) return
+      stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } })}\n`, () => {})
+    }
+    const handler = this.serverRequestHandler
+    if (handler === undefined) {
+      reject(`客户端不支持 ${method}`)
+      return
+    }
+    void handler(method, params).then(respond, (error: unknown) => reject(errorText(error), -32603))
   }
 }
 
@@ -680,43 +782,77 @@ function matchSseChunk(payload: string, expectId: number): { matched: boolean; v
 
 // ── 连接 ─────────────────────────────────────────────────────────────────────
 
+/** elicitation 等人点卡的上限（毫秒）：审批卡可以慢慢等，但不能永远挂着。 */
+const ELICITATION_TIMEOUT_MS = 600_000
+
 /**
  * 建一条连接并握手（initialize → notifications/initialized）。
  * 只握手，不列工具——列工具是 {@link McpConnection.listTools} 的事，
  * 插件层要在拿到连接之后才能把它记成「当前这条」。
  *
  * @param server - 目标 server 的配置。
- * @param options - 超时与断线回调。
+ * @param options - 超时、断线回调与 elicitation 处理缝。
  */
 export async function openConnection(server: McpServerConfig, options: McpOpenOptions): Promise<McpConnection> {
+  const isStdio = server.transport !== 'http'
   const channel: Channel =
-    server.transport === 'http'
-      ? new HttpChannel(server.url, server.headers, options.callTimeoutMs)
-      : new StdioChannel(spawnStdio(server), options.callTimeoutMs, options.onClose)
+    isStdio
+      ? new StdioChannel(spawnStdio(server), options.callTimeoutMs, options.onClose)
+      : new HttpChannel(server.url, server.headers, options.callTimeoutMs)
   let instructions = ''
+  let capabilities: McpCapabilities = { resources: false, prompts: false }
   try {
     // T37：initialize 的应答不再整个丢掉——里面的 `instructions` 是 server 交代
     // 自家工具怎么用的说明书，摘出来随连接交还。
+    // T24：capabilities 里带上 elicitation（只有 stdio 通道声明——http 一问一答，
+    // server 的反向请求根本送不进来）；server 的应答里 capabilities.resources/prompts
+    // 决定资源与提示模板工具要不要注册。
     const initResult = await channel.request(
       'initialize',
-      { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: CLIENT_INFO },
+      {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        capabilities: isStdio ? { elicitation: {} } : {},
+        clientInfo: CLIENT_INFO,
+      },
       AbortSignal.timeout(options.connectTimeoutMs),
     )
     const initDoc = asRecord(initResult)
     const declared = initDoc?.instructions
     if (typeof declared === 'string') instructions = declared
+    const serverCaps = asRecord(initDoc?.capabilities)
+    capabilities = { resources: serverCaps?.resources !== undefined, prompts: serverCaps?.prompts !== undefined }
     channel.notify('notifications/initialized')
   } catch (error) {
     channel.close()
     throw error
+  }
+  // T24：elicitation 缝只挂在 stdio 通道上——server 发来 elicitation/create 就走
+  // 调用方给的审批回调；没给回调、方法不认识、或处理抛错，都按 JSON-RPC 错误回给 server。
+  if (channel instanceof StdioChannel) {
+    channel.handleServerRequests(async (method, params) => {
+      if (method !== 'elicitation/create' || options.onElicitation === undefined) {
+        throw new Error(`客户端不支持 ${method}`)
+      }
+      const message = typeof params.message === 'string' ? params.message : ''
+      const schema = asRecord(params.requestedSchema) ?? {}
+      const answer = await options.onElicitation({ message, requestedSchema: schema })
+      return { action: answer.action }
+    })
   }
   return {
     get alive(): boolean {
       return channel.alive
     },
     instructions,
+    capabilities,
     listTools: (signal) => listAllTools(channel, signal),
     callTool: (name, args, signal) => callTool(channel, name, args, signal),
+    listResources: (signal) =>
+      paginate(channel, 'resources/list', 'resources', signal, readResourceSpec, '这个 server 没有声明 resources 能力'),
+    readResource: (uri, signal) => readResource(channel, uri, signal),
+    listPrompts: (signal) =>
+      paginate(channel, 'prompts/list', 'prompts', signal, readPromptSpec, '这个 server 没有声明 prompts 能力'),
+    getPrompt: (name, args, signal) => getPrompt(channel, name, args, signal),
     close: () => {
       channel.close()
     },
@@ -738,25 +874,40 @@ function spawnStdio(server: McpServerConfig): ChildProcess {
 
 /** 列全部工具，跟着 nextCursor 翻页；游标兜圈子时立刻收手。 */
 async function listAllTools(channel: Channel, signal: AbortSignal): Promise<McpToolSpec[]> {
-  const tools: McpToolSpec[] = []
+  return paginate(channel, 'tools/list', 'tools', signal, readToolSpec, '这个 server 没有工具')
+}
+
+/**
+ * T24：把 tools/list 的翻页循环抽成通用形态——resources/list 与 prompts/list 是
+ * 同一套「请求 → 取数组 → 跟 nextCursor 翻页 → 游标兜圈子收手」的骨架。
+ */
+async function paginate<T>(
+  channel: Channel,
+  method: string,
+  itemKey: string,
+  signal: AbortSignal,
+  readItem: (item: unknown) => T | null,
+  emptyMessage: string,
+): Promise<T[]> {
+  const items: T[] = []
   const seen = new Set<string>()
   let cursor: string | undefined
   for (let page = 0; page < MAX_TOOL_PAGES; page += 1) {
-    const result = await channel.request('tools/list', cursor === undefined ? {} : { cursor }, signal)
+    const result = await channel.request(method, cursor === undefined ? {} : { cursor }, signal)
     const doc = asRecord(result)
-    const listed = doc?.tools
+    const listed = doc?.[itemKey]
     if (Array.isArray(listed)) {
       for (const item of listed) {
-        const tool = readToolSpec(item)
-        if (tool !== null) tools.push(tool)
+        const read = readItem(item)
+        if (read !== null) items.push(read)
       }
     }
     const next = doc?.nextCursor
-    if (typeof next !== 'string' || next === '' || seen.has(next)) return tools
+    if (typeof next !== 'string' || next === '' || seen.has(next)) return items
     seen.add(next)
     cursor = next
   }
-  return tools
+  return items
 }
 
 /** 读 server 返回的一个工具定义；没有名字的项丢掉（dsc 的工具名必须有名字）。 */
@@ -769,6 +920,75 @@ function readToolSpec(item: unknown): McpToolSpec | null {
     description: typeof doc.description === 'string' ? doc.description : '',
     parameters: schema ?? { type: 'object', properties: {} },
   }
+}
+
+/** 读 resources/list 的一项；没有 uri 的丢掉。 */
+function readResourceSpec(item: unknown): McpResourceSpec | null {
+  const doc = asRecord(item)
+  if (doc === null || typeof doc.uri !== 'string' || doc.uri === '') return null
+  return {
+    uri: doc.uri,
+    name: typeof doc.name === 'string' ? doc.name : doc.uri,
+    description: typeof doc.description === 'string' ? doc.description : '',
+    mimeType: typeof doc.mimeType === 'string' ? doc.mimeType : '',
+  }
+}
+
+/** 读 prompts/list 的一项；没有名字的丢掉。 */
+function readPromptSpec(item: unknown): McpPromptSpec | null {
+  const doc = asRecord(item)
+  if (doc === null || typeof doc.name !== 'string' || doc.name === '') return null
+  const listed = Array.isArray(doc.arguments) ? doc.arguments : []
+  const names = listed
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== null && typeof entry.name === 'string')
+    .map((entry) => entry.name as string)
+  return {
+    name: doc.name,
+    description: typeof doc.description === 'string' ? doc.description : '',
+    arguments: names,
+  }
+}
+
+/** 读一个资源：文本内容拼起来；blob（base64 二进制）只给一句说明。 */
+async function readResource(channel: Channel, uri: string, signal: AbortSignal): Promise<McpResourceContent> {
+  const result = await channel.request('resources/read', { uri }, signal)
+  const doc = asRecord(result) ?? {}
+  const contents = Array.isArray(doc.contents) ? doc.contents : []
+  const parts: string[] = []
+  for (const item of contents) {
+    const entry = asRecord(item)
+    if (entry === null) continue
+    if (typeof entry.text === 'string') {
+      parts.push(entry.text)
+      continue
+    }
+    parts.push(typeof entry.blob === 'string' ? `[二进制资源（${String(entry.mimeType ?? '未知类型')}），纯文本结果里显示不了]` : `[不支持的资源内容]`)
+  }
+  const text = parts.length === 0 ? '（这个资源没有内容）' : parts.join('\n---\n')
+  // 不在这里做防注入围栏——与 tools/call 一致，围栏是插件层注册工具时统一套的
+  return { text, isError: false }
+}
+
+/** 取一份提示模板：messages 里的文本拼一串。 */
+async function getPrompt(
+  channel: Channel,
+  name: string,
+  args: Record<string, string>,
+  signal: AbortSignal,
+): Promise<McpPromptResult> {
+  const result = await channel.request('prompts/get', { name, arguments: args }, signal)
+  const doc = asRecord(result) ?? {}
+  const messages = Array.isArray(doc.messages) ? doc.messages : []
+  const parts: string[] = []
+  for (const item of messages) {
+    const entry = asRecord(item)
+    const content = asRecord(entry?.content)
+    if (content !== null && typeof content.text === 'string') {
+      parts.push(`[${String(entry?.role ?? 'user')}]\n${content.text}`)
+    }
+  }
+  return { text: parts.length === 0 ? '（这份提示模板没有文本内容）' : parts.join('\n\n'), isError: false }
 }
 
 /** 调一次工具，把 content 里的文本部分拼起来。 */
