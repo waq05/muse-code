@@ -7771,23 +7771,22 @@ body.resizing iframe {
    与同目录的 TurnProcessNodeView.module.css（行为那一半在 ChatView.tsx 的 roundFold / TurnFoldRow——
    哪些条目归它管、跑动中的轮永不折叠、轮收尾时把展开态复位成默认收起）。
    dsh 长什么样：一行左对齐的整行按钮，label 是「用时 X」（算不出用时就报「已完成」），
-   右边跟一枚 chevron，收起时这一轮只剩「用户消息 → 这一行 → 最终回答」。
-   两处有意的差异：
-     1. dsh 那一行高 33px 且带一条下边框（.root:7-10），dsc 的过程条目各自是独立卡片
-        （.think-block / .tool-card 都有描边与圆角），再来一条横线会让这一行被读成「又一张卡」，
-        所以这里做成与 .think-head 同规格的行内按钮：同款行高、内距、圆角、hover 底色、
-        按下底色、焦点圈，不画边框；
-     2. dsh 的 label 还会报「已停止 / 失败」这类结束原因（TurnProcessNodeView.tsx:26-29），
-        dsc 的 transcript 里没有这个字段，只有时间，所以算不出用时退回「已完成」。 */
+   右边跟一枚 chevron，行高 33px、底 padding 8px、一条 0.5px 下边框（.root:7-10），
+   hover 只把文字提到最亮一档、不铺底色；收起时这一轮只剩「用户消息 → 这一行 → 最终回答」。
+   0.6.35 实机反馈后从「行内小按钮」改回 dsh 的原样：之前刻意不画边框（怕被读成又一张卡），
+   结果没有过程内容的轮（不可点、无 chevron）只剩一行悬着的灰字，实机截图里被当成 bug 圈出来——
+   那条下边框正是 dsh 给这行的结构感：横线不属于卡片，属于「一轮的分节线」。
+   label 的结束原因（已停止 / 过程失败）在 round-fold.tsx 里逐字对照 dsh 的 TurnProcessNodeView.tsx:26-29。 */
 
 /* ── 总开关行：整行可点（原生 button，role=button 自带），左对齐、行内小字 ──
    字号取 --dsc-fs-ui，与 .think-label 同一档（都是「过程」这一层的标题字）。
-   width: 100% 是为了 hover 底色铺满整行——「整行可点」得让整行看上去都可点。 */
+   width: 100% 让下边框横贯整行——分节线要通到底才算分节线。
+   label 贴左（dsh 的 .root 无左右内距），行高 33px 同 dsh：24px 字行 + 8px 底空 + 边线。 */
 .turn-fold {
   align-items: center;
   background: none;
   border: none;
-  border-radius: var(--dsc-r-control);
+  border-bottom: 0.5px solid var(--dsc-stroke-3);
   color: var(--dsc-text-quaternary);
   cursor: pointer;
   display: flex;
@@ -7795,34 +7794,27 @@ body.resizing iframe {
   font-size: var(--dsc-fs-ui);
   gap: 0;
   justify-content: flex-start;
-  min-height: var(--dsc-row-h);
-  padding: 0 8px;
+  min-height: calc(33px * var(--dsc-density));
+  padding: 0 0 8px;
   text-align: left;
   transition:
-    background var(--dsc-dur) var(--dsc-ease),
     color var(--dsc-dur) var(--dsc-ease);
   width: 100%;
 }
 
-/* 悬停给底色、按下给更深一档：与 .think-head / .tool-head 同一组令牌（那次改版定的），
-   三处过程条目共用一套「可以点的行」的观感。 */
-.turn-fold:hover {
-  background: var(--dsc-row-hover-bg);
+/* 悬停对齐 dsh（.root:not(:disabled):hover）：只提文字色、不铺底色——
+   这一行是「分节线 + 说明」，铺底色会让它重新读成一张可点的卡。
+   不可折的行连提色一起去掉（:not(:disabled) 挡住），手型指针也换成默认。 */
+.turn-fold:not(:disabled):hover {
+  color: var(--dsc-text-primary);
 }
 
-/* 不可折的那一行（中断 / 失败 / 压根没有过程内容）：它只报「这一轮收成什么样」，
-   不给开合的承诺。悬停底色与手型指针一起去掉——留着会让人以为点了有反应。
-   对照 dsh 的 TurnProcessNodeView.tsx:44 的 disabled={!canCollapse}。 */
+.turn-fold:not(:disabled):hover .turn-fold-label {
+  color: var(--dsc-text-primary);
+}
+
 .turn-fold:disabled {
   cursor: default;
-}
-
-.turn-fold:disabled:hover {
-  background: none;
-}
-
-.turn-fold:active {
-  background: var(--dsc-row-active-bg);
 }
 
 /* 键盘也能开合：焦点圈跟全站行内按钮口径走（inset 描边，不撑开布局）。 */
@@ -7832,8 +7824,9 @@ body.resizing iframe {
 }
 
 /* 截图钩子（?reveal=1）：真实 :hover 抓不进静态图，沿用仓库既有的 .shot-reveal 约定。 */
-.shot-reveal .turn-fold {
-  background: var(--dsc-row-hover-bg);
+.shot-reveal .turn-fold,
+.shot-reveal .turn-fold .turn-fold-label {
+  color: var(--dsc-text-primary);
 }
 
 .turn-fold-label {

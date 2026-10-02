@@ -1272,3 +1272,18 @@ T15（对标 dsh tool-jobs）：长命令不占住回合。bash 工具新增 `ru
 **验证**：根 build + desktop build + 双侧 typecheck 全绿；全量回归 19 个探针零失败——batch-a 22、batch-b 12、batch-c 13、batch-d 32、batch-e 33（batch-e 退出阶段有 libuv `UV_HANDLE_CLOSING` 断言噪声，33 项功能断言全过、复跑稳定，属探针进程清理时序非产品路径）、compact 53、order 18、dock-model、dsh-compat 15、integration 104、approval-floor 95、mcp 75、file-review 59、remote-server 12、lsp 167、browser 210、tool-search 94、session-search 70、win-net-setup 160；实机三用例九项判定全绿。
 
 **诚实边界**：批次 B 的侧栏运行状态点只实机验证了 idle 档不显示（working/waiting 需要真模型跑中的会话，deepseek 限流到 2026-10-06，状态切换逻辑已有单测覆盖）；会话标题自动生成（T16）与 /export 的落盘提示未实机走查（需真模型轮，核心逻辑已有探针）。
+
+## 阶段 54：实机 UI 反馈修复——turn-fold 分节线与滚动条几何对齐 dsh（0.6.35）
+
+用户实机截图两张：会话里「用时 2秒」孤零零悬成一行灰字（红框圈出）、开始页侧栏滚动条粗亮扎眼。对照 dsh 逐处定根因，两处都是几何/结构问题，不涉及逻辑改动：
+
+1. **turn-fold 行没画下边框**：0.6.2x 引入整轮折叠时刻意不画（当时判断「dsc 的过程条目各自是卡片，再来一条横线会读成又一张卡」），代价是没有过程内容的轮（不可点、无 chevron）只剩一行悬着的灰字，实机里被当成 bug。dsh 的 TurnProcessNodeView.module.css 这行是 33px 高 + 底 padding 8px + **0.5px 下边框**（`.root:7-10`），hover 只把文字提到最亮一档、不铺底色——结构感恰恰来自那条线。修：`.turn-fold` 补 `border-bottom: 0.5px solid var(--dsc-stroke-3)`（12% base，等值 dsh 暗色 alias-border-l2 的 rgba(255,255,255,0.12)）、`min-height: calc(33px * var(--dsc-density))`、label 贴左（去左右内距）、hover 从铺 `row-hover-bg` 改成 `:not(:disabled):hover` 提字色，`:active` 底色一并撤。实测折叠行高 33px 与 dsh 对齐，「用时 2秒」读作一轮的分节线。
+2. **滚动条 8px 太粗**：对用户截图做像素采样，thumb 色 RGB(60,60,60) 正是令牌值 #3c3c3d——恰好等于 dsh 暗色 scrollbar-bg-l1（neutral-700 = rgb(60,60,61)），颜色早已同源，粗是几何问题：dsh `--dsh-scrollbar-width: 5px`，dsc 写了 8px。修：base.css `::-webkit-scrollbar` 8→5px；`--dsc-scrollbar-w` 同步 5px（刻度条与「回到底部」的 right 由它计算，自动让位）；panels.ts 的 `readRootPx` 回退值同步 5。
+
+顺带排查确认不是问题的两处：侧栏底部的 `D:\dsc` 行是设计内的当前工作目录入口（点击浏览其他目录），与顶部「dsc」组不重复；顶栏的分段钮是「打开工作区 + 更多方式」分组钮（对照 dsh 的文件夹+下拉）。
+
+**探针同步**：fold-check 四条断言旧行内按钮契约（`--dsc-row-h` 行高、hover 底色、active 底色、disabled 悬停去底色）→ 改断 dsh 形态（33px 档、0.5px 下边框、hover 只提字色且无 background、`:not(:disabled)` 门），220/220。
+
+**验证**：desktop typecheck + build 全绿；新实机自检 `desktop/shots/ui-seed.mjs` + `ui-fix-shots.ps1` 两用例六判定全绿——种子会话第 0 轮无过程内容（精确复现「用时 2秒」形态：disabled、无 chevron）、第 1 轮带工具调用（可点、带 chevron），computed 边框 solid 非零、折叠行高 33、`::-webkit-scrollbar` 宽 5px；真实 ~/.dsc 跑前跑后 171 文件聚合 SHA256 逐文件一致（零污染）。
+
+**诚实边界**：自检种子的侧栏只有 1 个会话、对话只有 2 轮，两个区域都没溢出，5px 滚动条只有样式表断言（thumb 色与 dsh 本就同值）没有溢出态实机特写；hover 提字色同样只有断言（截图钩子 `.shot-reveal` 已同步改成提字色，可复验）。

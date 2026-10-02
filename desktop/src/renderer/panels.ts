@@ -33,7 +33,7 @@ export const THREAD_EDGE_BUDGET = 80
  * @returns 右缘轨道总宽（px）
  */
 export function readRightRailPx(): number {
-  return readRootPx('--dsc-jump-lane', 32) + readRootPx('--dsc-scrollbar-w', 8)
+  return readRootPx('--dsc-jump-lane', 32) + readRootPx('--dsc-scrollbar-w', 5)
 }
 /** 读档时的宽度天花板。真正的上限是当时的窗口宽，拖的时候现场算；这里只挡住存坏的脏值。 */
 export const STORED_MAX = 3200
