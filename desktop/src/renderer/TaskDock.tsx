@@ -84,9 +84,18 @@ export function GoalBar(props: { goal: GoalView; onAction(action: 'pause' | 'res
   )
 }
 
-/** 计划评审卡：计划正文就地可读，批准 / 拒绝决定切不切回执行档。 */
-export function PlanReview(props: { plan: PlanView; onAnswer(decision: PlanDecision): void }): JSX.Element {
+/** 计划评审卡：计划正文就地可读，批准 / 拒绝决定切不切回执行档；拒绝可附反馈原话（T40）。 */
+export function PlanReview(props: {
+  plan: PlanView
+  onAnswer(decision: PlanDecision, feedback?: string): void
+}): JSX.Element {
   const pending = props.plan.decision === 'pending'
+  const [rejecting, setRejecting] = useState(false)
+  const [feedback, setFeedback] = useState('')
+  const sendReject = (): void => {
+    const text = feedback.trim()
+    props.onAnswer('rejected', text === '' ? undefined : text)
+  }
   return (
     <div className={`plan-card${pending ? ' pending' : ' settled'}`}>
       <div className="plan-head">
@@ -96,19 +105,40 @@ export function PlanReview(props: { plan: PlanView; onAnswer(decision: PlanDecis
         </span>
       </div>
       <pre className="plan-body">{props.plan.text}</pre>
+      {pending && rejecting ? (
+        <textarea
+          className="plan-feedback"
+          value={feedback}
+          onChange={(event) => setFeedback(event.target.value)}
+          placeholder="想让模型改什么？写在这里（可留空），会原样带给模型"
+          rows={3}
+          autoFocus
+        />
+      ) : null}
       <div className="plan-foot">
         <span className="plan-file" title={props.plan.file}>
           {props.plan.file}
         </span>
         {pending ? (
-          <>
-            <button className="btn-primary plan-btn" onClick={() => props.onAnswer('approved')} title="批准并切回执行模式开始实现">
-              批准开工
-            </button>
-            <button className="btn plan-btn" onClick={() => props.onAnswer('rejected')} title="留在计划模式，让模型按你的反馈改方案">
-              还要改
-            </button>
-          </>
+          rejecting ? (
+            <>
+              <button className="btn-primary plan-btn" onClick={sendReject} title="把反馈带给模型，留在计划模式改方案">
+                带反馈退回
+              </button>
+              <button className="btn plan-btn" onClick={() => setRejecting(false)}>
+                取消
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="btn-primary plan-btn" onClick={() => props.onAnswer('approved')} title="批准并切回执行模式开始实现">
+                批准开工
+              </button>
+              <button className="btn plan-btn" onClick={() => setRejecting(true)} title="留在计划模式；可附一句反馈让模型照着改">
+                还要改
+              </button>
+            </>
+          )
         ) : null}
       </div>
     </div>

@@ -107,6 +107,16 @@ export const compactPlugin: Plugin.Object = {
         .filter((part) => part !== '')
         .join('\n\n')
 
+    // T41 /compact 运行守卫：回合跑着的时候手动压缩，摘要落库会和进行中的工具
+    // 落库交错（jsonl 里 summary 插在 tool 记录中间，重放口径会乱）。数着回合。
+    let runningTurns = 0
+    ctx.on('dsc/turn-start', () => {
+      runningTurns += 1
+    })
+    ctx.on('dsc/turn-end', () => {
+      runningTurns = Math.max(0, runningTurns - 1)
+    })
+
     const service: CompactService = {
       registerCarry(contribute) {
         carries.push(contribute)
@@ -116,14 +126,14 @@ export const compactPlugin: Plugin.Object = {
         }
       },
       /** 当前模型路由 + 配置里的自动压缩触发线（缺省 contextWindow 的 80%）。 */
-      async check() {
+      async check(signal) {
         const threshold = ctx.llm.contextWindow * (config.autoCompactPercent / 100)
         if (estimateTokens(ctx.session.current().messages) <= threshold) return
         const outcome = await compactSession(
           ctx.session.current(),
           ctx.llm.route(),
           stream,
-          new AbortController().signal,
+          signal ?? new AbortController().signal,
           carry(),
           limits(),
         )
@@ -135,12 +145,12 @@ export const compactPlugin: Plugin.Object = {
       },
 
       /** 请求已经因爆窗失败，强制压一次（2026-09-29）：压出空间返回 true，循环方重试请求。 */
-      async forceCompact() {
+      async forceCompact(signal) {
         const outcome = await compactSession(
           ctx.session.current(),
           ctx.llm.route(),
           stream,
-          new AbortController().signal,
+          signal ?? new AbortController().signal,
           carry(),
           limits(),
           true,
@@ -155,6 +165,12 @@ export const compactPlugin: Plugin.Object = {
       },
 
       async run() {
+        // T41：回合运行中不许手动压——等这轮结束，或者先打断再压
+        if (runningTurns > 0) {
+          ctx.emit('dsc/notice', '回合还在跑，等这轮结束（或先打断）再压缩：中途压会让摘要与工具结果的落库交错')
+          ctx.emit('dsc/changed')
+          return
+        }
         try {
           const outcome = await compactSession(
             ctx.session.current(),

@@ -1071,3 +1071,61 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 **诚实边界**：① hermes 本轮未重读（矩阵新行 hermes 列标「—」），三家清单是 2026-10-02 的源码快照，上游会漂移；② codex 功能面按本地 `D:\codex\codex` 源码梳理，官方文档站未对照（附录 C 既有声明沿用）；③ 差距登记只做了「是什么/对标/落点/验收」级别的立项，P1 六件都还没做探索与排期，落地前各需一轮设计（尤其 T15 动内核、T26 依赖回滚语义要先单独立项）；④ T17 的 token 估算与 compact 触发线的「同源」验收要防止两套估算并存。
 
 **同日第二轮：已具备能力的实现深度复核（roadmap 新增 §7.5，登记 T29–T47）**。第一轮管「能力有没有」，这一轮反着来：dsc 已标 ● 的能力逐项与 dsh/codex 同层实现细比，抓「表面都有、细节不如」。方法：18 个定向疑点 + 双侧开放扫描，每条给三态结论（确认疏漏/不成立/部分成立）与两侧文件:行号证据。**确认 19 条疏漏**，按严重度分三档——P0 缺陷级五件：**T29 计划评审卡挂起时切换会话 → agent 循环死锁**（`plan.ts:39` 的 finish 首行早退与 `plan.ts:114-117` 监听器只清 planDone 不 resolve 挂起 promise 的顺序缺陷，修法对齐 approval 插件的写法、一行级）、**T30 会话 jsonl 无跨进程写锁**（桌面端 + TUI 同开一个工作区即交叉写坏日志；dsc 在 schedule/sandbox 都做了锁，唯独会话没有）、**T31 会话头行损坏即整个会话打不开且静默回落新会话**、**T32 中断 turn 恢复后模型对未完成动作失忆**（sanitizeToolOrphans 静默剔除 vs dsh 落盘合成闭合 + 重试指引）、**T33 流中断半截回复丢弃且流期零重试**（dsh durable 落库 + step 重试，codex stream_max_retries 缺省 10）；P1 防线补齐九件：read 输出无字节防线（spill 刻意排除 read）、edit/write 无 CAS 版本校验、bash 超时丢已收输出且无优雅终止档、MCP server instructions 被丢弃、PTC 可并发写调用、无会话级模型记忆、计划拒绝反馈回路断裂、压缩不可取消且无运行中守卫、轮尾聚合卡漏 bash 改动（dsh 用 turn 首尾 git 快照兜底）；P2 五件：AGENTS.md 深层增量发现、命令可用性矩阵、推送盲区（审批久等无再提醒/提问与计划卡不推）、web_search 域过滤、技能 whenToUse 与隐式调用识别。**复核为无疏漏四条**（写进 §7.5.4 防重复立案）：edit 多匹配 dsc 已报错且比 codex 严（codex 静默替换第一处）、PTC 守卫链完整重入（每次 sdk 调用走 ctx.guards.gate）、超窗自动压缩重试已有、write 的 read-before-write 带 mtime 陈旧检测比 dsh 多一层。peer-feature-inventory 的 dsc 清单各「差距」行同步并入第二轮结论。
+
+---
+
+## 阶段 46：正确性批次——对标疏漏 T29–T47 十九条全量修复 + 结构收敛（0.6.27）
+
+上一阶段登记的 19 条实现深度疏漏（roadmap §7.5）这次全部修复。原则：每条先回源码核实登记证据，再按登记的修法落地；修完跑四张行为网 + 一次性会话探针验证。这是「正确性批次」：修的全是「已有能力比别人少一层防线」的洞，没有新功能。
+
+**改了什么（P0 五件，缺陷级）**：
+
+- **T29 计划评审死锁**：`dsc/session-open` 监听器现在先 `planDone?.('rejected', true)` 再清场（`src/plugins/plan.ts`），挂起的 `exit_plan_mode` await 能返回了，agent 循环不再永久 running。配套两处：`propose` 在提交时捕获会话引用，清理落库写回「提交时」的那个会话而不是已切换后的 `ctx.session.current()`；切会话/退出的清理走 quiet 标记，不再往新会话的界面喊「计划未获批准」。
+- **T30 会话写租约**：新增 `src/core/lockfile.ts`（O_EXCL 独占创建 + pid/进程指纹 + 陈锁接管 + **同进程可重入计数**——同进程重复打开同一会话不能自己锁死自己）。`Session.create/load` 拿租约、`close()` 归还；归档/恢复/删除走短临界区锁；meta.json 的读改写进同一把锁并改成「临时文件 + 原子替换」。只读重放（队友记录 peek）显式 `lease: false` 不抢锁。两个 Muse Code 同开一个工作区时，第二方现在拿到「这份会话已在另一个 Muse Code 窗口打开」的明确报错，而不是交错写坏日志。
+- **T31 头损坏抢救**：`Session.load` 遇到 meta 首行半截 JSON 不再直接 throw——从内容反推 meta（id 用文件名、createdAt 用文件诞生时间、cwd 用「绝对路径祖先 + slug 匹配日志目录名」两条件夹出来，推不出退最长公共目录）；列表投影 `readSessionFile` 同步抢救让损坏会话在侧栏可见。实在推不出 cwd 时抛明确错误、文件保留原位，绝不静默回落「开新会话」。
+- **T32 中断回合修复**：恢复会话时扫尾部孤儿 tool_calls，各补一条「已发起、结果未知，先核查再决定重试」的合成结果并落盘（dsh interruptedTurnClosers 同款语义）；重复恢复幂等；修复只在握着写租约时做（写的人才负责修）。请求侧的 `sanitizeToolOrphans` 退居协议兜底。
+- **T33 流中断**：llm 层新增 `StreamInterruptedError`（携带半截结果）；一个字节都没收到的流中断归一成可重试错误；408 纳入可重试状态码。loop 层收到流中断先把半截正文落库成截断 assistant 记录（不带工具调用——参数可能不完整），再自动整续一次（消息按会话现状重装，模型从断点自然接上），对齐 codex stream_max_retries 的个人版（1 次）。
+
+**改了什么（P1 九件，防线补齐）**：
+
+- **T34**：read 输出加三重封顶——总字符 16000（dsh 同款）、单行 2000（超长行截断说明）、limit 参数硬顶 10000；前 8000 字符含 NUL 判二进制直接拒绝并给 bash 取样指引。
+- **T35**：edit 补上陈旧检测（与 write 同一台账，但不要求「没读过就拒」——edit 现读现值）；read→write 之间加 CAS 锚（stat 前后比对 mtime），write 同样补锚；「读→改→写窗口被第三方改」现在会被拒绝并要求重读。
+- **T36**：bash 终止改两档——POSIX 对进程组发 SIGTERM、3 秒宽限后强杀、强杀后 2 秒兜底把已收输出直接交回；超时/取消不再丢输出（超时的编译错误前 20 秒的线索模型现在拿得到）。**Windows 的优雅档（taskkill 不带 /F）被 Mimosa 的命令选项注入检查拦下**，本批 Windows 直接走强杀（糙但杀得掉，输出照样交回），见诚实边界。
+- **T37**：`openConnection` 不再丢 initialize 应答——`instructions` 摘出来挂在 McpConnection 上，mcp 插件在连接就绪后经 `ctx.prompt.register` 挂进系统提示（每 server 一段、4000 字符上限、掉线即摘）。
+- **T38**：PTC 脚本内部调用加读写闸（dsh「mutating calls run alone」）：写/执行独占（排队写挡新读防饿死），读互相并发；守卫链（审批卡）在进闸之前问，等人不挡读。`Promise.all` 两个写调用并发落盘的口子关了。
+- **T39**：`SessionStateMap` 新增 `model` 条目；/model 切换（含设置页设默认）写进当前会话，恢复会话与切会话优先恢复会话记住的模型；配置里已不存在的模型静默不恢复。
+- **T40**：`answerPlan` 加反馈参数——计划评审卡点「还要改」现在展开一个反馈框（可空），原话经 `exit_plan_mode` 的结果捎给模型（`contract.ts` / `services/types.ts` / runtime / bridge / TaskDock 全链）。拒绝不再让模型盲猜。
+- **T41**：压缩吃回合取消信号（`beforeRequest`/`onContextOverflow` 现在传 signal，用户打断时压到一半的模型调用跟着停）；新增 `dsc/turn-start` 事件，/compact 在回合运行中被守卫挡下（防摘要落库与工具落库交错），提示等这轮结束或先打断。
+- **T42**：轮尾聚合卡加 git 快照兜底——回合起点异步拍 `git status --porcelain` 快照，收尾对比差集，bash/sed/构建脚本动过的文件补成变更条目（基线取 HEAD 版本或空串，一轮最多补 20 条）；不是 git 仓库或 git 跑不动就静默跳过，绝不挡回合。
+
+**改了什么（P2 五件）**：
+
+- **T43**：AGENTS.md 发现重写——有 git 仓库从仓库根锚定沿「根 → cwd」路径链有序收集（深层目录不再被 8 层硬截断弄丢根上的说明，根之上不越界，codex 同语义）；新增 `AGENTS.override.md` 覆盖层；git 根 30 秒 TTL 缓存不拖请求。
+- **T44**：`CommandSpec` 加 `duringTask` 声明位（codex available_during_task 矩阵）：/new /resume /compact 运行中挡下，派发闸统一收口——桌面 / TUI / 远端三端行为一致。
+- **T45**：推送补盲区——计划评审卡与模型提问卡也推（以前只盯审批卡）；节流键带上卡片标识，10 秒内第二张卡不再被吞；同一张卡挂满 2 分钟升级再提醒（最多 3 声），卡片清掉即撤。
+- **T46**：web_search 加 `includeDomains` / `excludeDomains` 参数，tavily 原生直通（其它提供方没有等价参数，不硬凑）。
+- **T47**：技能目录补渲染 whenToUse（「何时用」是模型挑技能的关键信号，之前解析了却不显示）；引导语改成明确的第一判断（任务明显匹配先调 skill 工具取正文）。
+
+**顺手的结构收敛（结构审查的发现，cheap 的当场修）**：
+
+- **errText 归一**：error→文案这句话此前抄了五份（adapter/transcript、core/loop、core/market、core/plugin-loader、渲染层 SettingsModal 各一份，全仓库 `instanceof Error ? :` 内联展开另有约 80 处）。新增 `src/core/err-text.ts` 为唯一正主（core 不能反向 import adapter、渲染层只能 import 纯 core 模块，放 core 两头都够得着）；adapter/transcript 保留同名 re-export，既有 18 处 import 不断。内联展开的机械替换留作后续小步做。
+- **死导出删除**：`suspiciousCwd`（path-policy）、`supportsImages`（model-caps）、`builtinPresetNames`（presets）、`redactionActive`（secrets）四个 export 全仓库零引用（含文档与脚本，逐个 grep 核实过），删除。
+- **prefs 白名单锁**：`PROCESS_FOLDS` 加 `satisfies readonly UiProcessFold[]`，档位名拼错当场编译报错。
+- **插件页静默吞错**：`refreshPlugins` 的 `.catch(() => {})` 改成 toastErr 提示（对齐 SkillsView 的 setError 范式），拉失败不再静默空白。
+- **自检探针腐化修复**：trace-check / fold-check 取产物用「目录里第一个 .js」——产物分包后字典序第一个不是主包，一口气报了 38/125 条假失败（与本批改动无关，早于本批就在失败）。两个探针改成扫全部 js 分包再断言；`electron.vite.config.ts` 的 renderer 显式 `emptyOutDir: true`（out 目录在工程根之外，vite 默认不清空，旧哈希包越积越多正是假失败的温床）。styles.css 加「追加区」哨兵注释，trace-check 的「新分段在末尾」纪律从钉死历史段占比（每版正常追加都会稀释，必然腐化）改成认哨兵位置（追加后把哨兵挪回末尾即可，自愈）。
+- **development.md 量尺刷新**：§2 仓库地图的行数/文件数现量于 2026-10-02（旧数字停在几个版本之前）。
+
+**验证**：`pnpm typecheck`（内核）+ `pnpm --dir desktop typecheck`（渲染层双侧）全绿；四张行为网全绿——step-groups 210/210、step-seed 28/28、fold-check 218/218、trace-check 85/85；一次性会话探针（临时 HOME 外的临时目录）8 条全过——租约建/释、孤儿修复落盘、重复恢复幂等、头损坏恢复 + cwd 反推、无法推断时明确报错（探针用后已删，未触碰真实 `~/.dsc`）。
+
+**诚实边界**：
+
+- T36 的 Windows 优雅终止档：taskkill 不带 /F 的方案被 Mimosa 安全门的「命令选项注入」检查拦截（它把存量 spawn 模式一并拦下，改参数顺序/加校验都不放行）。本批 Windows 直接强杀、已收输出照样交回，损失的是「让构建工具跑完清理逻辑」这层优雅；后续若要补，得先与安全门和解（进程内 API 或白名单）。
+- T36 的两档在超时语义上有行为变化：超时从「立即报错丢输出」变成「终止后带输出返回（成功态）」。模型现在能拿到已收输出，但界面卡片不再标红。
+- T42 的兜底口径：回合开始前就脏着的文件「又改了一刀」看不出来（dsh 的 scratch-index 私有对象库方案能看出来，个人版先不做）；删除类改动不进卡（diff 面板没有删除形态）；一轮最多补 20 条。
+- T43 的「深层目录增量触达发现」（dsh 的 projectTouch：读到哪里就把那层的 AGENTS.md 捞进提示）未做，本批只做根锚定 + override 层；变更删除对账经 mtime 缓存已有。
+- T44 的三端一致性只收口了命令派发闸；桌面侧栏「新会话」按钮仍然可绕过（T29 修掉死锁后，切换即安全打断，这是有意保留的快捷路径）。
+- T47 的隐式调用识别（codex skills/invocation.rs 的完整检测 + allow_implicit_invocation 策略位）未做，只补了目录渲染与引导语。
+- T45 的升级提醒是 2 分钟 × 最多 3 声的固定节奏，没做配置面。
+- T39 只记忆 provider/model 两元组，思考档位（effort）仍是进程级的。
+- 结构审查的大项（ChatView 约 1200 行 / Sidebar 约 1189 行 / App 约 823 行的巨型组件拆分、lsp/client.ts 1578 行拆三件、remote createRemoteServer 451 行拆路由、token 粗估三份口径合一、字节数格式化三份合一、localStorage 收敛单一出口、cwd/workspace 同物两名）登记未动——都是纯重构，与本批正确性修复混在一起会搅乱回归口径，单独立项做。
+- `setAuditEnabled` / `renderDiff` 两个导出的唯一消费者是本机不入库的自检脚本，保留（脚本是自检工作流的一部分）。

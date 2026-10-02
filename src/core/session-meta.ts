@@ -8,9 +8,10 @@
  *
  * @module dsc/core/session-meta
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { withExclusiveLock } from './lockfile.js'
 
 /** 单个会话的展示属性；全部字段可选，缺省即「没有该属性」。 */
 export interface SessionMetaRecord {
@@ -71,23 +72,31 @@ export function readSessionMeta(): Record<string, SessionMetaRecord> {
  * 改一个会话的展示属性：传 null 表示删掉该字段（例如取消置顶）。
  * 整表重写（文件很小），返回写完后的全表。
  *
+ * T30：读改写包在同一把跨进程锁里（两个窗口同时改名/归档会互相抹掉对方的字段），
+ * 写盘改成「临时文件 + 原子替换」——并发读者永远看到完整的旧表或新表，而不是半截 JSON。
+ *
  * @param id 会话 uuid（不是 jsonl 路径，归档移动文件后仍然认得）
  * @param patch 要改的字段；值为 null 的字段被删除
  */
 export function patchSessionMeta(id: string, patch: Partial<Record<keyof SessionMetaRecord, string | number | null>>): Record<string, SessionMetaRecord> {
-  const all = readSessionMeta()
-  const record: SessionMetaRecord = { ...(all[id] ?? {}) }
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === null || value === undefined) delete record[key as keyof SessionMetaRecord]
-    else if (key === 'title') record.title = String(value)
-    else if (key === 'pinnedAt' || key === 'archivedAt') record[key] = Number(value)
-    else if (key === 'forkedFrom') record.forkedFrom = String(value)
-  }
-  if (Object.keys(record).length === 0) delete all[id]
-  else all[id] = record
-  mkdirSync(join(homedir(), '.dsc', 'sessions'), { recursive: true })
-  writeFileSync(sessionMetaPath(), JSON.stringify({ version: META_VERSION, sessions: all } satisfies SessionMetaFile, null, 2), 'utf8')
-  return all
+  return withExclusiveLock(sessionMetaPath(), '会话属性正被另一个 Muse Code 进程修改，稍后再试', () => {
+    const all = readSessionMeta()
+    const record: SessionMetaRecord = { ...(all[id] ?? {}) }
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null || value === undefined) delete record[key as keyof SessionMetaRecord]
+      else if (key === 'title') record.title = String(value)
+      else if (key === 'pinnedAt' || key === 'archivedAt') record[key] = Number(value)
+      else if (key === 'forkedFrom') record.forkedFrom = String(value)
+    }
+    if (Object.keys(record).length === 0) delete all[id]
+    else all[id] = record
+    mkdirSync(join(homedir(), '.dsc', 'sessions'), { recursive: true })
+    const target = sessionMetaPath()
+    const temp = `${target}.tmp`
+    writeFileSync(temp, JSON.stringify({ version: META_VERSION, sessions: all } satisfies SessionMetaFile, null, 2), 'utf8')
+    renameSync(temp, target)
+    return all
+  })
 }
 
 /** 会话彻底删掉时清掉它的展示属性，避免 meta.json 无限膨胀。 */

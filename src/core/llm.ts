@@ -5,10 +5,11 @@
  * `stream_options.include_usage` 末块 usage；assistant 重放时回传
  * `reasoning_content`。
  *
- * 重试策略：连接/HTTP 失败在**尚未收到任何流数据**前指数退避重试 2 次；
- * 流已开始则不重试（半截回复交给上层当错误处理）。可重试的两类：fetch 抛出的
- * 连接失败（`LlmError.retryable`）、以及带 429 或 5xx 状态码的 HTTP 响应。
- * 用户取消（signal 已 abort）不重试。
+ * 重试策略（T33 修订）：连接/HTTP 失败在**尚未收到任何流数据**前指数退避重试 2 次，
+ * 可重试的：fetch 抛出的连接失败（`LlmError.retryable`）、429 / 408 / 5xx 的 HTTP 响应、
+ * 以及「流已开始但一个字节都没到」的中断（同样归一成 retryable）。已经收到内容的流中断
+ * 打包成 {@link StreamInterruptedError} 交上层落库，不在这一层自动重试（重发是另一条新流，
+ * 界面上会出现重复正文）。用户取消（signal 已 abort）不重试。
  *
  * @module dsc/core/llm
  */
@@ -265,6 +266,21 @@ export class LlmError extends Error {
   }
 }
 
+/**
+ * T33：流已经开始之后被打断（网络断、网关挂起、连接被切），且已经收到了内容。
+ * `partial` 是到断点为止攒下的半截结果——调用方（loop）负责把它落库成一条截断的
+ * assistant 记录，用户看到的半截回复与上下文才不会两张皮。本错误不重试（重发是
+ * 另一条新流），「保留已收内容再续一条」还是「就此报错」由循环层取舍。
+ */
+export class StreamInterruptedError extends LlmError {
+  readonly partial: StreamResult
+  constructor(message: string, partial: StreamResult) {
+    super(message, undefined, false)
+    this.name = 'StreamInterruptedError'
+    this.partial = partial
+  }
+}
+
 const MAX_ATTEMPTS = 3
 
 /** 发起一次流式对话（openai-completions 适配器的实现；经 LlmService.stream 派发）。 */
@@ -279,7 +295,8 @@ export async function streamChat(request: StreamRequest, handlers: StreamHandler
         attempt < MAX_ATTEMPTS &&
         request.signal?.aborted !== true &&
         error instanceof LlmError &&
-        (error.retryable || (error.status !== undefined && (error.status === 429 || error.status >= 500)))
+        // 408 = 请求超时（服务端排队没排上），与 429/5xx 一样值得再试（T33 纳入可重试清单）
+        (error.retryable || (error.status !== undefined && (error.status === 408 || error.status === 429 || error.status >= 500)))
       if (!retryable) throw error
       handlers.onRetry?.(attempt + 1, error instanceof Error ? error.message : String(error))
       // 服务端明确要求等多久（Retry-After）就至少等那么久；没有才用指数退避。
@@ -424,9 +441,22 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
       }
     }
   } catch (error: unknown) {
-    const partial =
-      result.text !== '' || result.reasoning !== '' || callsByIndex.size > 0
-    if (!(request.signal?.aborted === true && partial)) throw error
+    const partial = result.text !== '' || result.reasoning !== '' || callsByIndex.size > 0
+    if (request.signal?.aborted !== true) {
+      // T33：流中断分两半——一个字节都没收到的按「连接失败」在 streamChat 重试；
+      // 已经收到内容的打包成 StreamInterruptedError 交上层落库，半截回复不能凭空消失。
+      const message = error instanceof Error ? error.message : String(error)
+      if (partial) {
+        throw new StreamInterruptedError(`流中断：${message}`, {
+          ...result,
+          toolCalls: [...callsByIndex.entries()].sort(([a], [b]) => a - b).map(([, call]) => call),
+        })
+      }
+      throw error instanceof LlmError
+        ? new LlmError(error.message, error.status, true, error.retryAfterMs)
+        : new LlmError(`流中断：${message}`, undefined, true)
+    }
+    if (!partial) throw error
     result.finishReason = 'aborted'
   } finally {
     request.signal?.removeEventListener('abort', onOuterAbort)

@@ -170,11 +170,6 @@ export function readModelCaps(raw: RawModelCaps): ModelCaps {
   }
 }
 
-/** 这个模型能不能收图（没声明照片 = 不能）。 */
-export function supportsImages(modalities: readonly Modality[]): boolean {
-  return modalities.includes('image')
-}
-
 /** 选中的档位在这个模型上是否存在（默认档永远可选）。 */
 export function hasEffortLevel(caps: ModelCaps, effort: EffortLevel): boolean {
   return effort === 'default' || caps.thinkingLevels.includes(effort)

@@ -159,11 +159,6 @@ tools: run_code
 `,
 }
 
-/** 出厂模式名（界面标「内置」，删的时候给提示但不阻止不了——见 removePreset）。 */
-export function builtinPresetNames(): string[] {
-  return Object.keys(BUILTIN_FILES).sort()
-}
-
 /**
  * 把还不存在的出厂模式写进模式目录。
  * @returns 实际新写出的模式名（已存在的一律不覆盖，用户改过的永远留着）。

@@ -62,12 +62,15 @@ export const agentPlugin: Plugin.Object = {
             })
           }
           // 一轮结束广播出去：目标续跑这类「接着往下推」的行为自己听，别在这里点名。
+          // 一轮开始也广播一声（T41）：压缩插件数着它做 /compact 的运行中守卫。
+          if (event.type === 'turn/start') ctx.emit('dsc/turn-start')
           if (event.type === 'turn/end') ctx.emit('dsc/turn-end', event.reason)
           ctx.transcript.emit(event)
         },
-        beforeRequest: () => ctx.compact.check(),
-        // 请求因爆窗失败时压一次再重试（对齐 dsh 的溢出重试；压不出空间就把原错误抛回去）。
-        onContextOverflow: () => ctx.compact.forceCompact(),
+        // 压缩的取消信号跟着回合走（T41）：用户打断时压到一半的模型调用跟着停
+        beforeRequest: (signal) => ctx.compact.check(signal),
+        // 请求因爆窗失败时压一次再重试（对齐 dsh 的溢出重试；压不出空间就把原错误抛回去）
+        onContextOverflow: (signal) => ctx.compact.forceCompact(signal),
         rewrite: (messages) => ctx.prompt.rewrite(messages),
         // 发请求走 llm 服务的适配器表：端点声明什么协议就由谁的适配器去说
         stream: (api, request, handlers) => ctx.llm.stream(api, request, handlers),

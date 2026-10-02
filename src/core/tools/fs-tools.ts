@@ -9,11 +9,18 @@ import { promises as fs } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import type { ToolEntry, ToolOutput } from '../tools.js'
 import { diffLines, type DiffHunk } from '../diff-text.js'
-import { noteRead, noteWrite, readBlockReason, staleOverwriteReason, writeHardBlockReason } from '../path-policy.js'
+import { noteRead, noteWrite, readBlockReason, staleEditReason, staleOverwriteReason, writeHardBlockReason } from '../path-policy.js'
 import { sandboxPermissionProperties } from './sandbox-args.js'
 
 /** read 工具缺省一次读多少行（配置没给 readLineLimit 时用它）。 */
 export const READ_DEFAULT_LINE_LIMIT = 2000
+
+/** T34：read 输出的字符硬顶（dsh 的 maxOutputChars 同款口径；再往上是 spill 的事）。 */
+const READ_MAX_CHARS = 16_000
+/** T34：单行显示的字符上限（bundle/锁文件那种一行几十万字符的，截断后给个说明）。 */
+const READ_LINE_CHAR_CAP = 2_000
+/** T34：模型传 limit 时的行数硬顶（字符顶才是真防线，这个只防离谱数值）。 */
+const READ_MAX_LINES = 10_000
 
 /** 变更摘要里 diff 段最多保留多少行（超出砍尾并标 truncated，防一次整篇重写撑爆条目与日志）。 */
 const CHANGE_DIFF_LINE_LIMIT = 800
@@ -87,14 +94,34 @@ export function createReadTool(lineLimit = READ_DEFAULT_LINE_LIMIT): ToolEntry {
       if (blocked !== null) throw new Error(blocked)
       const raw = await fs.readFile(file, 'utf8')
       noteRead(file)
+      // T34：二进制（含 NUL 字节）不硬灌——乱码只会烧上下文，给一句明确指引
+      if (raw.slice(0, 8000).includes('\u0000')) {
+        throw new Error('这看起来是二进制文件，read 不支持直接读。需要内容时用 bash 配合格式工具取样（如 base64 / certutil -encode / xxd）。')
+      }
       const lines = raw.split(/\r?\n/)
       const start = Math.max(1, typeof args.offset === 'number' ? Math.floor(args.offset) : 1)
-      const limit = Math.max(1, typeof args.limit === 'number' ? Math.floor(args.limit) : lineLimit)
+      // T34：limit 不再是模型要多少给多少——行数与字符量都有硬顶，超长行也截断
+      const requested = typeof args.limit === 'number' ? Math.floor(args.limit) : lineLimit
+      const limit = Math.min(Math.max(requested, 1), READ_MAX_LINES)
       const slice = lines.slice(start - 1, start - 1 + limit)
-      const body = slice.map((line, index) => `${start + index}\t${line}`).join('\n')
+      const body: string[] = []
+      let used = 0
+      let withheld = 0
+      for (const [index, line] of slice.entries()) {
+        const shown = line.length > READ_LINE_CHAR_CAP ? `${line.slice(0, READ_LINE_CHAR_CAP)}…（本行超长已截断）` : line
+        const cost = shown.length + 1
+        if (body.length > 0 && used + cost > READ_MAX_CHARS) {
+          withheld = slice.length - index
+          break
+        }
+        body.push(`${start + index}\t${shown}`)
+        used += cost
+      }
       const total = lines.length
-      const more = start - 1 + slice.length < total ? `\n…（共 ${total} 行，可用 offset/limit 续读）` : ''
-      return `${file}\n${body}${more}`
+      const tail: string[] = []
+      if (withheld > 0) tail.push(`…（输出达到 ${String(READ_MAX_CHARS)} 字符上限，还有 ${String(withheld)} 行没显示，用 offset 续读）`)
+      if (start - 1 + slice.length < total) tail.push(`…（共 ${String(total)} 行，可用 offset/limit 续读）`)
+      return `${file}\n${body.join('\n')}${tail.length > 0 ? `\n${tail.join('\n')}` : ''}`
     },
   }
 }
@@ -125,9 +152,15 @@ export const writeTool: ToolEntry = {
     const stale = staleOverwriteReason(file)
     if (stale !== null) throw new Error(stale)
     const content = str(args.content, 'content')
+    // T35：CAS 锚——从这一刻到 writeFile 之间文件若被第三方改过，就拒绝整写
+    const anchorStat = await fs.stat(file).catch(() => null)
     // 旧内容拿不到（新建）就当空串：diff 呈现为整篇新增
     const before = await fs.readFile(file, 'utf8').catch(() => '')
     await fs.mkdir(resolve(file, '..'), { recursive: true })
+    const beforeWrite = anchorStat === null ? null : await fs.stat(file).catch(() => null)
+    if (anchorStat !== null && (beforeWrite === null || Math.abs(beforeWrite.mtimeMs - anchorStat.mtimeMs) > 1)) {
+      throw new Error('文件在你准备写入时又被其他程序改动，重试一次（先重新读它）。')
+    }
     await fs.writeFile(file, content, 'utf8')
     noteWrite(file)
     const changes = summarizeChange(file, before, content)
@@ -159,13 +192,23 @@ export const editTool: ToolEntry = {
     const file = abs(ctx.cwd, args.path)
     const hard = writeHardBlockReason(file)
     if (hard !== null) throw new Error(hard)
+    // T35：模型读过、之后又被第三方改过的文件不许拿旧印象去改（与 write 同一台账，
+    // 但不要求「没读过就拒绝」——edit 是现读现值，这是它与整写覆盖的语义差别）
+    const stale = staleEditReason(file)
+    if (stale !== null) throw new Error(stale)
     const oldText = str(args.old, 'old')
     const newText = str(args.new, 'new')
+    const anchorStat = await fs.stat(file).catch(() => null)
     const raw = await fs.readFile(file, 'utf8')
     const first = raw.indexOf(oldText)
     if (first < 0) throw new Error('old 内容在文件中不存在')
     if (raw.indexOf(oldText, first + 1) >= 0) throw new Error('old 内容在文件中匹配多处，请加长上下文使其唯一')
     const after = raw.slice(0, first) + newText + raw.slice(first + oldText.length)
+    // T35：CAS——读文件与写回之间被别的程序改过就拒绝，绝不拿刚算好的旧基线整篇写回
+    const beforeWrite = anchorStat === null ? null : await fs.stat(file).catch(() => null)
+    if (anchorStat !== null && (beforeWrite === null || Math.abs(beforeWrite.mtimeMs - anchorStat.mtimeMs) > 1)) {
+      throw new Error('文件在编辑过程中又被其他程序改动，重试一次（先重新读它）。')
+    }
     await fs.writeFile(file, after, 'utf8')
     noteWrite(file)
     const changes = summarizeChange(file, raw, after)

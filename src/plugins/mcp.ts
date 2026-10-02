@@ -138,12 +138,16 @@ function connectionKey(server: McpServerConfig): string {
 
 export const mcpPlugin: Plugin.Object = {
   name: 'mcp',
-  inject: ['tools', 'transcript', 'settings'],
+  inject: ['tools', 'transcript', 'settings', 'prompt'],
   apply(ctx, passed: unknown) {
     let deferred = false
     const states = new Map<string, ServerState>()
     /** 全部 server 的工具，按完整工具名索引（渐进披露的检索对象）。 */
     const catalog = new Map<string, McpToolInfo>()
+    /** T37：每个 server 挂在系统提示里的 instructions 段的退订函数。 */
+    const instructionDisposers = new Map<string, () => void>()
+    /** instructions 的字符上限（dsh 的 server-context 同一量级：交代用法，不塞整本手册）。 */
+    const INSTRUCTIONS_CAP = 4_000
 
     // 先把服务挂上再连：晚一步就有人会读到 undefined
     const offService = ctx.provide('mcp', buildService())
@@ -215,6 +219,27 @@ export const mcpPlugin: Plugin.Object = {
     function dropTools(state: ServerState): void {
       for (const dispose of state.disposers.values()) dispose()
       state.disposers.clear()
+      // T37：工具撤下了，说明段落也跟着摘（连接断了还留着旧的用法说明只会误导模型）
+      instructionDisposers.get(state.config.name)?.()
+      instructionDisposers.delete(state.config.name)
+    }
+
+    /** T37：连接就绪后把 server 的 instructions 挂进系统提示（有就挂，空串不挂）。 */
+    function syncInstructions(state: ServerState): void {
+      instructionDisposers.get(state.config.name)?.()
+      instructionDisposers.delete(state.config.name)
+      const declared = (state.connection?.instructions ?? '').trim()
+      if (declared === '') return
+      const clipped =
+        declared.length > INSTRUCTIONS_CAP ? `${declared.slice(0, INSTRUCTIONS_CAP)}…（说明过长已截断）` : declared
+      instructionDisposers.set(
+        state.config.name,
+        ctx.prompt.register(
+          `mcp-instructions-${state.config.name}`,
+          () => `MCP 服务器「${state.config.name}」对自己工具的用法交代：\n${clipped}`,
+          { order: 55 },
+        ),
+      )
     }
 
     /**
@@ -297,6 +322,7 @@ export const mcpPlugin: Plugin.Object = {
         state.failures = 0
         rebuildCatalog()
         applyTools(state)
+        syncInstructions(state)
         if (hadFailed) {
           ctx.transcript.system(`MCP server ${state.config.name} 重新连上了，带了 ${state.tools.length} 个工具`)
         }

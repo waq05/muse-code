@@ -1083,8 +1083,8 @@ export interface DscRuntime {
   answerApproval(answer: ApprovalAnswer, source?: 'app' | 'web'): void
   /** 回答模型发起的提问（ask_user）；文本就是答案，一批多题时按题序一次交一题。 */
   answerQuestion(answer: string): void
-  /** 回答计划评审卡（批准 = 切回执行模式开工）。 */
-  answerPlan(decision: PlanDecision): void
+  /** 回答计划评审卡（批准 = 切回执行模式开工）；拒绝时可附反馈原话，模型按它改方案。 */
+  answerPlan(decision: PlanDecision, feedback?: string): void
   /** 切换协作模式（执行 / 计划 / 探索 / 免打扰），写进会话记录。 */
   setMode(mode: CollaborationMode): void
   /**

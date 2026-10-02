@@ -495,8 +495,8 @@ ${body}
         if (!resolved.startsWith(resolve(teammateRoot()))) {
           throw new Error('这里只能看队友的运行记录（其它会话请在左侧打开）')
         }
-        // 只读：载入内存重放，不往那个文件写任何东西
-        const session = Session.load(resolved, true)
+        // 只读：载入内存重放，不往那个文件写任何东西（也不拿写租约——队友可能正活着写它）
+        const session = Session.load(resolved, true, { lease: false })
         const replay = new Transcript()
         replay.replayHistory(session.messages, session.toolErrors, session.fileChanges)
         return [...replay.entries, ...replay.liveEntries()]

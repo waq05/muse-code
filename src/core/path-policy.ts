@@ -214,16 +214,28 @@ export function staleOverwriteReason(target: string): PathVerdict {
   return null
 }
 
+/**
+ * edit 定点替换前的检查（T35）：只拦「模型读过、之后又被第三方改过」这一半——
+ * edit 自己会现读盘上现值，没读过的文件也允许直接改（这是它与整写覆盖的语义差别）。
+ */
+export function staleEditReason(target: string): PathVerdict {
+  const seen = readLedger.get(normalizeKey(target))
+  if (seen === undefined) return null
+  let mtime: number
+  try {
+    mtime = statSync(target).mtimeMs
+  } catch {
+    return null // 文件没了：让 edit 自己的 readFile 去报错
+  }
+  if (Math.abs(seen - mtime) > 1) {
+    return `${basename(target)} 在你上次读它之后又被改动了。重新读一遍再改。`
+  }
+  return null
+}
+
 /** 清掉读取台账（切会话时调用，避免上一个会话的读数误用于新会话）。 */
 export function clearReadLedger(): void {
   readLedger.clear()
-}
-
-/** 工作目录本身是不是可疑路径（启动时兜一次，异常配置直接说明）。 */
-export function suspiciousCwd(cwd: string): PathVerdict {
-  if (NT_NAMESPACE.test(cwd)) return '当前工作目录是 Windows 设备命名空间路径，路径校验无法保证有效。'
-  if (!isAbsolute(cwd)) return `当前工作目录不是绝对路径：${cwd}`
-  return null
 }
 
 /** 主目录（测试与提示词用）。 */

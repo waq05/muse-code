@@ -546,4 +546,6 @@ export class Transcript {
 const truncate = (text: string): string =>
   text.length > RESULT_TEXT_LIMIT ? `${text.slice(0, RESULT_TEXT_LIMIT)}…` : text
 
-export const errText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+// errText 的正主在 core/err-text（渲染层只能 import 纯 core 模块，内核不能反向 import
+// adapter）；这里保留同名 re-export，既有 import 不断。
+export { errText } from '../core/err-text.js'

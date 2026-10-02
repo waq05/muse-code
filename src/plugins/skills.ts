@@ -104,11 +104,17 @@ export const skillsPlugin: Plugin.Object = {
           item.description.length > DESCRIPTION_LIMIT
             ? `${item.description.slice(0, DESCRIPTION_LIMIT)}…`
             : item.description
-        return `- \`${item.name}\`: ${escapeXml(description)}`
+        // T47：whenToUse 之前解析了却没进目录——「何时该用」是模型挑技能的关键信号，
+        // 照 dsh 的目录形态补渲染；没有就不加（不占预算）。
+        const when = item.whenToUse === undefined ? '' : `（何时用：${item.whenToUse}）`
+        return `- \`${item.name}\`: ${escapeXml(description)}${when}`
       })
       return (
-        '\n\n以下技能是可直接照做的操作手册。需要用到时先用 skill 工具按名字取回正文，' +
-        '再照着执行；不要凭名字猜内容。\n\n<available_skills>\n' +
+        // T47：引导语从泛泛的「需要用到时」改成明确的第一判断——任务明显匹配就先调
+        // skill 工具取正文，宁可先看一眼目录也别凭印象硬写。
+        '以下技能是可直接照做的操作手册：接到任务时先扫一眼下面的目录，任务与某条技能明显' +
+        '匹配就先用 skill 工具按名字取回正文、再照着执行；不要凭名字或印象猜内容，也不要在' +
+        '没有匹配技能时硬套。\n\n<available_skills>\n' +
         `${lines.join('\n')}\n</available_skills>`
       )
     }

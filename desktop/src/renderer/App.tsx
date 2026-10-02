@@ -418,7 +418,11 @@ export function App(): JSX.Element {
 
   // ---- 插件页动作 ----
   const refreshPlugins = (): void => {
-    void proxy.listPlugins().then(setPlugins).catch(() => {})
+    // 拉失败给一句提示，别让插件页静默空白（对齐 SkillsView 的 setError 范式）
+    void proxy
+      .listPlugins()
+      .then(setPlugins)
+      .catch((error: unknown) => toastErr(`插件清单读取失败：${error instanceof Error ? error.message : String(error)}`))
   }
   useEffect(() => {
     if (view === 'plugins') refreshPlugins()
@@ -759,8 +763,9 @@ export function App(): JSX.Element {
                 )}
                 {snapshot.surfaces.pendingPlan !== null && (
                   <PlanReview
+                    key={snapshot.surfaces.pendingPlan.file}
                     plan={snapshot.surfaces.pendingPlan}
-                    onAnswer={(decision) => void proxy.answerPlan(decision)}
+                    onAnswer={(decision, feedback) => void proxy.answerPlan(decision, feedback)}
                   />
                 )}
                 {snapshot.surfaces.pendingQuestion !== null && (

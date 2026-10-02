@@ -102,6 +102,12 @@ export interface McpCallResult {
 export interface McpConnection {
   /** 底层进程还活着 / HTTP 通道还没关。 */
   readonly alive: boolean
+  /**
+   * T37：initialize 应答里的 `instructions`——server 用它交代自家工具的用法预期
+   * （什么参数组合有意义、什么时候该用别的 server）。空串 = 没给。插件层把它挂进
+   * 系统提示，模型才能看到这份交代。
+   */
+  readonly instructions: string
   listTools(signal: AbortSignal): Promise<McpToolSpec[]>
   callTool(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<McpCallResult>
   close(): void
@@ -687,12 +693,18 @@ export async function openConnection(server: McpServerConfig, options: McpOpenOp
     server.transport === 'http'
       ? new HttpChannel(server.url, server.headers, options.callTimeoutMs)
       : new StdioChannel(spawnStdio(server), options.callTimeoutMs, options.onClose)
+  let instructions = ''
   try {
-    await channel.request(
+    // T37：initialize 的应答不再整个丢掉——里面的 `instructions` 是 server 交代
+    // 自家工具怎么用的说明书，摘出来随连接交还。
+    const initResult = await channel.request(
       'initialize',
       { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: CLIENT_INFO },
       AbortSignal.timeout(options.connectTimeoutMs),
     )
+    const initDoc = asRecord(initResult)
+    const declared = initDoc?.instructions
+    if (typeof declared === 'string') instructions = declared
     channel.notify('notifications/initialized')
   } catch (error) {
     channel.close()
@@ -702,6 +714,7 @@ export async function openConnection(server: McpServerConfig, options: McpOpenOp
     get alive(): boolean {
       return channel.alive
     },
+    instructions,
     listTools: (signal) => listAllTools(channel, signal),
     callTool: (name, args, signal) => callTool(channel, name, args, signal),
     close: () => {

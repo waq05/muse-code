@@ -17,12 +17,31 @@ import type { LlmRoute, LlmService } from '../services/types.js'
 
 export const llmPlugin: Plugin.Object<DscCoreConfig> = {
   name: 'llm',
+  inject: ['session'],
   provide: 'llm',
   apply(ctx, config) {
     let currentProvider = config.defaultProvider
     let currentModel = config.defaultModel
     // 'default' = 不发思考字段（跟随端点默认行为）
     let currentEffort: EffortLevel = 'default'
+    // T39：会话里记过模型选择就先恢复它（/model 切过的不丢）；没记过才用配置默认。
+    const remembered = ctx.session.current().state('model')
+    if (remembered !== undefined && findModel(remembered.provider, remembered.model) !== undefined) {
+      currentProvider = remembered.provider
+      currentModel = remembered.model
+    }
+    // 切会话跟着切模型：新会话记过谁就用谁，没记过保持当前选择（与 /model 的
+    // 进程级热切换同一手感）。配置里已经没有的模型不恢复，静默留在当前选择上。
+    ctx.on('dsc/session-open', ({ session }) => {
+      const recalled = session.state('model')
+      if (recalled === undefined || findModel(recalled.provider, recalled.model) === undefined) return
+      if (recalled.provider === currentProvider && recalled.model === currentModel) return
+      currentProvider = recalled.provider
+      currentModel = recalled.model
+      // 原来选的档位在新模型上未必存在，退回「默认」比留着发不出去的值强
+      currentEffort = clampEffort(capsFor(currentProvider, currentModel), currentEffort)
+      ctx.emit('dsc/changed')
+    })
     /** 协议适配器表：id → 适配器。内置 openai-completions 预注册，插件可补新的协议。 */
     const adapters = new Map<string, LlmAdapter>([
       [OPENAI_COMPLETIONS_API, { id: OPENAI_COMPLETIONS_API, stream: streamChat }],
@@ -134,6 +153,8 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
         currentModel = model
         // 原来选的档位在新模型上未必存在，退回「默认」比留着发不出去的值强
         currentEffort = clampEffort(capsFor(provider, model), currentEffort)
+        // T39：记进当前会话——恢复会话时优先用它，重启/重开不再回落配置默认
+        ctx.session.current().appendState('model', { provider, model })
         ctx.emit('dsc/changed')
       },
       listModels(): ModelChoiceView[] {

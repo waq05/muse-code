@@ -13,9 +13,11 @@ import type { ModelChoiceView } from '../contract.js'
 
 /** 内置命令表（spec 单一真源；handler 在插件 apply 时注册）。 */
 export const BUILT_IN_COMMANDS: CommandSpec[] = [
-  { name: 'new', args: '', description: '新建会话' },
-  { name: 'resume', args: '', description: '恢复历史会话' },
-  { name: 'compact', args: '', description: '压缩上下文' },
+  // T44：duringTask = 回合跑着的时候还能不能用。new/resume 会打断挂着审批的回合、
+  // compact 会和进行中的落库交错，运行中一律挡下；其余随时可用。
+  { name: 'new', args: '', description: '新建会话', duringTask: 'deny' },
+  { name: 'resume', args: '', description: '恢复历史会话', duringTask: 'deny' },
+  { name: 'compact', args: '', description: '压缩上下文', duringTask: 'deny' },
   { name: 'model', args: '<[端点/]模型名>', description: '切换模型，下一次请求生效' },
   { name: 'review', args: '[关注点]', description: '审查工作区未提交改动' },
   { name: 'help', args: '', description: '查看帮助' },

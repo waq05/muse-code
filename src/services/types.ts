@@ -286,8 +286,8 @@ export interface PlanService {
   pendingPlan(): PlanView | null
   /** 交一份计划等用户批（挂起直到批准/拒绝/中断）。 */
   proposePlan(plan: { file: string; title: string; text: string }, signal: AbortSignal): Promise<PlanDecision>
-  /** 回答挂起的计划评审卡。 */
-  answerPlan(decision: PlanDecision): void
+  /** 回答挂起的计划评审卡；拒绝时可附反馈原话（经 exit_plan_mode 的结果捎给模型）。 */
+  answerPlan(decision: PlanDecision, feedback?: string): void
 }
 
 /** 模型提问服务（ask_user 那一块）：一次提问最多几个问题、每项几个选项由插件配置决定。 */
@@ -400,6 +400,12 @@ export interface CommandSpec {
   /** 参数占位提示（空 = 无参数）。 */
   args: string
   description: string
+  /**
+   * T44：回合跑着的时候还能不能用（codex slash_command 的 available_during_task 矩阵）。
+   * 缺省 'allow'（外部命令不知道自己安不安全，按可用处理）；内置表逐条声明。
+   * 派发时统一查这一位——桌面 / TUI / 远端从同一个闸过，不再各防各的。
+   */
+  duringTask?: 'allow' | 'deny'
 }
 
 /** 补全面板的一项（命令候选与模型候选共用）。 */
@@ -470,15 +476,19 @@ export interface TranscriptService {
 
 /** 上下文压缩服务。 */
 export interface CompactService {
-  /** 每轮请求前的自动压缩检查（超阈值时折叠历史）。 */
-  check(): Promise<void>
-  /** 手动压缩（/compact），结果经 dsc/notice 反馈。 */
+  /**
+   * 每轮请求前的自动压缩检查（超阈值时折叠历史）。
+   * T41：signal 是调用方那一轮的取消信号——用户打断时压到一半的模型调用跟着停。
+   */
+  check(signal?: AbortSignal): Promise<void>
+  /** 手动压缩（/compact），结果经 dsc/notice 反馈。回合运行中会被守卫挡下（防落库交错）。 */
   run(): Promise<void>
   /**
    * 请求报「上下文装不下」时的强制压缩：忽略触发线与「历史太短」检查直接折叠一次。
    * @returns true = 确实压缩了（调用方可以重试请求）；false = 没压出空间（原样报错）。
+   *   T41：signal 是调用方那一轮的取消信号。
    */
-  forceCompact(): Promise<boolean>
+  forceCompact(signal?: AbortSignal): Promise<boolean>
   /**
    * 登记一段「摘要之外必须原样带过去」的文本。
    * 任务清单、会话目标这类内容经摘要模型一转就会被改写走样，所以由功能点自己登记原文；
@@ -973,6 +983,11 @@ declare module '@deepseek-ai/cordis' {
      * 想知道「模型的工具目录刚变了」的功能点听这个，不必反过来依赖模式服务。
      */
     'dsc/preset-changed'(name: string): void
+    /**
+     * 一轮对话开始（agent 发出，T41）：压缩插件数着它做 /compact 的运行中守卫；
+     * 别的「想知道回合开始了」的功能点也听这个，不必各自盯快照。
+     */
+    'dsc/turn-start'(): void
     /**
      * 一轮对话结束（agent 发出，reason 与 CoreEvent 的 turn/end 一致）。
      * 目标续跑听这个；循环因此不认识「目标」这个功能。

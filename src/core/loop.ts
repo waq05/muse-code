@@ -13,11 +13,13 @@
  * @module dsc/core/loop
  */
 import type { ChatMessage, LlmRoute, StreamHandlers, StreamRequest, StreamResult, ToolCall, ToolSchema } from './llm.js'
-import { LlmError } from './llm.js'
+import { LlmError, StreamInterruptedError } from './llm.js'
 import type { CoreEvent } from './events.js'
 import type { Session } from './session.js'
 import type { ToolGuardChain } from './tool-guards.js'
 import { callFacts, stripBaseline, type FileChangeSummary, type ToolEntry } from './tools.js'
+import { collectGitTurnChanges, snapshotGitStatus } from './git-info.js'
+import { errText } from './err-text.js'
 
 export interface AgentDeps {
   /** 每次请求时动态读取（支持 /model 热切换）。 */
@@ -35,13 +37,17 @@ export interface AgentDeps {
    * 循环不认识具体协议——OpenAI 兼容也好、别的插件注册的也好，都从这条缝过。
    */
   stream(api: string, request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult>
-  /** 每轮请求前的一次维护动作（上下文压缩检查挂在这里）；缺省不启用。 */
-  beforeRequest?(): Promise<void>
+  /**
+   * 每轮请求前的一次维护动作（上下文压缩检查挂在这里）；缺省不启用。
+   * T41：传入这一轮的取消信号——压缩若真在跑模型调用，用户打断要能停得掉它。
+   */
+  beforeRequest?(signal: AbortSignal): Promise<void>
   /**
    * 请求报「上下文装不下」（HTTP 400 的爆窗文案）时调：强制压缩一次历史。
    * 返回 true = 压出了空间，循环重试这轮请求；false 或缺省 = 原错误照抛。
+   * T41：同样吃这一轮的取消信号。
    */
-  onContextOverflow?(): Promise<boolean>
+  onContextOverflow?(signal: AbortSignal): Promise<boolean>
   /**
    * 组装好「发给模型的那份消息」之后的投影链（只影响请求体，不改会话日志）。
    * 插件用它丢掉过期截图之类「留在历史里只会撑上下文、对下一轮没用」的内容；
@@ -50,7 +56,11 @@ export interface AgentDeps {
   rewrite?(messages: ChatMessage[]): ChatMessage[]
 }
 
-const errText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+/**
+ * T33：流中断后「保留半截再续」的自动重试次数（对齐 codex 的 stream_max_retries，
+ * 个人版取 1 次且不做配置面：半截落库之后模型的续写是从中断处自然接上的）。
+ */
+const STREAM_RECOVERY_ATTEMPTS = 1
 
 /**
  * 判定一个错误是不是「上下文装不下」：各家网关都把它报成 HTTP 400，措辞不一，多认几种。
@@ -150,8 +160,11 @@ export class MiniAgent {
     // 会话的基线，而且会话已切走就不再发聚合事件（发了会污染新会话的转录）。
     const session = this.session
     this.deps.emit({ type: 'turn/start' })
+    // T42：回合起点的 git 快照异步起跑，收尾才等它——write/edit 之外（bash/sed/构建
+    // 脚本）动过的文件靠「起点 vs 终点」的 porcelain 差集兜底进轮尾卡。
+    const gitStart = snapshotGitStatus(this.cwd)
     try {
-      await this.deps.beforeRequest?.()
+      await this.deps.beforeRequest?.(abort.signal)
       if (abort.signal.aborted) throw new Error('aborted')
       for (;;) {
         let result: StreamResult
@@ -166,7 +179,7 @@ export class MiniAgent {
           ) {
             throw error
           }
-          if (!(await this.deps.onContextOverflow())) throw error
+          if (!(await this.deps.onContextOverflow(abort.signal))) throw error
           result = await this.requestOnce(abort.signal)
         }
         if (abort.signal.aborted) break
@@ -188,6 +201,9 @@ export class MiniAgent {
       if (this.session === session) {
         try {
           const files = await session.takeTurnChanges()
+          // T42：git 快照差集补上 bash/脚本改的文件（write/edit 已记的路径不重复）
+          const extra = await collectGitTurnChanges(this.cwd, await gitStart, await snapshotGitStatus(this.cwd), files.map((file) => file.path))
+          files.push(...extra)
           if (files.length > 0) this.deps.emit({ type: 'turn/diff', files })
         } catch {
           // 聚合失败不遮回合本身的结果
@@ -196,59 +212,86 @@ export class MiniAgent {
     }
   }
 
-  /** 一轮模型请求：流式增量 → emit；定稿 → 落库 + emit message/usage。 */
+  /**
+   * 一轮模型请求：流式增量 → emit；定稿 → 落库 + emit message/usage。
+   * T33：流已开始后中断且已收到内容时，半截先落库成截断的 assistant 记录，
+   * 再自动整轮重试一次（消息按会话现状重新组装——半截已经在里面了，模型顺着续）。
+   */
   private async requestOnce(signal: AbortSignal): Promise<StreamResult> {
-    const route = this.deps.route()
-    const tools = this.deps.tools()
-    const assembled: ChatMessage[] = [
-      { role: 'system', content: this.deps.systemPrompt() },
-      ...this.session.messages,
-    ]
-    const messages =
-      this.deps.rewrite === undefined ? assembled : this.deps.rewrite(assembled)
-    const result = await this.deps.stream(
-      route.api,
-      {
-        baseUrl: route.baseUrl,
-        apiKey: route.apiKey,
-        model: route.model,
-        messages,
-        maxTokens: route.maxTokens,
-        temperature: route.temperature,
-        thinking: route.thinking,
-        reasoningEffort: route.reasoningEffort,
-        signal,
-        ...(tools.length > 0
-          ? {
-              tools: tools.map(
-                (tool): ToolSchema => ({
-                  name: tool.name,
-                  description: tool.description,
-                  parameters: tool.parameters,
-                }),
-              ),
-            }
-          : {}),
-      },
-      {
-        onDelta: (kind, text) => this.deps.emit({ type: 'delta', kind, text }),
-        // 「模型决定要调什么」与「工具真的开跑」之间那段真空，界面上靠这一条才有线索
-        onToolPrepare: (name) => this.deps.emit({ type: 'tool/prepare', name }),
-        // 重试发生在 llm 层内部，不透出来用户只会觉得界面莫名卡了几秒
-        onRetry: (attempt, reason) => this.deps.emit({ type: 'model/retry', attempt, reason }),
-      },
-    )
-    this.session.appendAssistant(result.text, result.reasoning, result.toolCalls)
+    for (let attempt = 1; ; attempt += 1) {
+      const route = this.deps.route()
+      const tools = this.deps.tools()
+      const assembled: ChatMessage[] = [
+        { role: 'system', content: this.deps.systemPrompt() },
+        ...this.session.messages,
+      ]
+      const messages =
+        this.deps.rewrite === undefined ? assembled : this.deps.rewrite(assembled)
+      try {
+        const result = await this.deps.stream(
+          route.api,
+          {
+            baseUrl: route.baseUrl,
+            apiKey: route.apiKey,
+            model: route.model,
+            messages,
+            maxTokens: route.maxTokens,
+            temperature: route.temperature,
+            thinking: route.thinking,
+            reasoningEffort: route.reasoningEffort,
+            signal,
+            ...(tools.length > 0
+              ? {
+                  tools: tools.map(
+                    (tool): ToolSchema => ({
+                      name: tool.name,
+                      description: tool.description,
+                      parameters: tool.parameters,
+                    }),
+                  ),
+                }
+              : {}),
+          },
+          {
+            onDelta: (kind, text) => this.deps.emit({ type: 'delta', kind, text }),
+            // 「模型决定要调什么」与「工具真的开跑」之间那段真空，界面上靠这一条才有线索
+            onToolPrepare: (name) => this.deps.emit({ type: 'tool/prepare', name }),
+            // 重试发生在 llm 层内部，不透出来用户只会觉得界面莫名卡了几秒
+            onRetry: (attempt, reason) => this.deps.emit({ type: 'model/retry', attempt, reason }),
+          },
+        )
+        this.session.appendAssistant(result.text, result.reasoning, result.toolCalls)
+        this.deps.emit({
+          type: 'message',
+          text: result.text,
+          reasoning: result.reasoning,
+          finishReason: result.finishReason,
+        })
+        if (result.usage !== null) {
+          this.deps.emit({ type: 'usage', inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens })
+        }
+        return result
+      } catch (error) {
+        if (!(error instanceof StreamInterruptedError) || signal.aborted || attempt > STREAM_RECOVERY_ATTEMPTS) throw error
+        this.persistPartial(error.partial)
+        this.deps.emit({
+          type: 'model/retry',
+          attempt: attempt + 1,
+          reason: `流中断，已保留半截回复并重试：${error.message}`,
+        })
+      }
+    }
+  }
+
+  /** T33：把流中断的半截回复落库（截断的 assistant 记录，不带工具调用——参数可能不完整）。 */
+  private persistPartial(partial: StreamResult): void {
+    this.session.appendAssistant(partial.text, partial.reasoning, [])
     this.deps.emit({
       type: 'message',
-      text: result.text,
-      reasoning: result.reasoning,
-      finishReason: result.finishReason,
+      text: partial.text,
+      reasoning: partial.reasoning,
+      finishReason: 'interrupted',
     })
-    if (result.usage !== null) {
-      this.deps.emit({ type: 'usage', inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens })
-    }
-    return result
   }
 
   /**

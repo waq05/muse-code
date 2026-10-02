@@ -76,6 +76,52 @@ export const ptcPlugin: Plugin.Object = {
       let calls = 0
       let trouble: string | undefined
 
+      /**
+       * T38 读写闸（对齐 dsh 的「mutating calls run alone」）：写/执行调用独占——
+       * 跑的时候读也得等，排队写也挡着新读（不让写饿死）；读调用互相并发。
+       * 没有它，脚本里一句 `Promise.all([sdk.write(…), sdk.write(…)])` 就能并发落盘。
+       * 守卫链（审批卡）在进闸**之前**问：等人不该挡住别的读。
+       */
+      const gate = (() => {
+        let activeReads = 0
+        let writes = 0 // 在跑的 + 排队的写
+        let holder = false
+        let waiters: Array<() => void> = []
+        const notify = (): void => {
+          const waiting = waiters
+          waiters = []
+          for (const wake of waiting) wake()
+        }
+        const wait = (): Promise<void> => new Promise((resolve) => waiters.push(resolve))
+        return {
+          async read<T>(fn: () => Promise<T>): Promise<T> {
+            while (writes > 0) await wait()
+            activeReads += 1
+            try {
+              return await fn()
+            } finally {
+              activeReads -= 1
+              notify()
+            }
+          },
+          async write<T>(fn: () => Promise<T>): Promise<T> {
+            writes += 1
+            try {
+              while (holder || activeReads > 0) await wait()
+              holder = true
+              try {
+                return await fn()
+              } finally {
+                holder = false
+              }
+            } finally {
+              writes -= 1
+              notify()
+            }
+          },
+        }
+      })()
+
       /** 脚本调一次工具：守卫链 → 执行 → 遮红 → 记日志。 */
       const callTool = async (rawName: unknown, rawArgs: unknown): Promise<string> => {
         const name = String(rawName ?? '')
@@ -113,7 +159,9 @@ export const ptcPlugin: Plugin.Object = {
           return `【被拒绝】${verdict.reason}`
         }
         try {
-          const output = await entry.run(args, { cwd, signal })
+          // T38：写/执行走独占闸，只读走并发闸（闸的规矩见上面的注释）
+          const execute = (): ReturnType<typeof entry.run> => entry.run(args, { cwd, signal })
+          const output = entry.risk === 'read' ? await gate.read(execute) : await gate.write(execute)
           const raw = typeof output === 'string' ? output : output.text
           // 工具结果里的密钥形状字符串不进脚本、不进日志（遮红挂在观察者链上）
           const text = ctx.guards.observe(name, raw)

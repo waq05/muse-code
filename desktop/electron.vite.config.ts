@@ -27,6 +27,12 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react()],
+    build: {
+      // out/renderer 在工程根之外，electron-vite/vite 默认不清空——不清的话旧的
+      // 内容哈希包会越积越多，trace-check/fold-check 这类「取目录里第一个产物」的
+      // 探针就会读到上上个构建的 bundle，报出与源码对不上的假失败。
+      emptyOutDir: true,
+    },
     resolve: {
       alias: {
         '@dsc/runtime': fileURLToPath(new URL('../lib', import.meta.url)),

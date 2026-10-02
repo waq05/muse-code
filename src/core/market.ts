@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { MarketSkillView, MarketSource } from '../contract.js'
+import { errText } from './err-text.js'
 import { parseSkillMarkdown } from './skills.js'
 
 const CACHE_DIR = join(homedir(), '.dsc', 'cache')
@@ -44,8 +45,6 @@ export interface MarketEntry {
   /** GitHub raw 根（`https://raw.githubusercontent.com/<owner>/<repo>/<ref>`）。 */
   rawBase?: string
 }
-
-const errText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
 async function fetchBytes(url: string, headers: Record<string, string> = {}): Promise<Uint8Array> {
   const response = await fetch(url, {

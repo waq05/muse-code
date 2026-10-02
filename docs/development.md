@@ -49,21 +49,21 @@
 
 ## 2. 仓库地图
 
-规模是这轮改动之后现量的，只数源文件行数，当量尺用。
+规模现量于 2026-10-02（0.6.27 时点），只数源文件行数，当量尺用。
 
 | 路径 | 规模 | 职责 |
 | --- | --- | --- |
-| `src/core/` | 45 个文件 ≈13000 行 | 纯能力：模型客户端与协议适配器、会话、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板 |
-| `src/core/tools/` | 6 个文件 ≈620 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
+| `src/core/` | 97 个文件 ≈31800 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板 |
+| `src/core/tools/` | 6 个文件 ≈900 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
 | `src/core/dsh-compat/` | 3 个文件 ≈200 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
-| `src/plugins/` | 44 个文件 ≈14000 行 | 每个服务一个 cordis 插件 + 十六个官方可开关插件 |
-| `src/host/kernel.ts` | 385 行 | 内核装配顺序与三档插件元数据 |
-| `src/contract.ts` | 916 行 | UI ⇄ 运行时的中性契约（`DscRuntime` + 视图类型） |
-| `src/services/types.ts` | 950 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
-| `src/adapter/transcript.ts` | 279 行 | 内核事件 → UI 快照的折叠投影 |
-| `src/app/` | 7 个组件 | ink 终端界面（与桌面端共用契约） |
+| `src/plugins/` | 48 个文件 ≈17600 行 | 每个服务一个 cordis 插件 + 十六个官方可开关插件 |
+| `src/host/kernel.ts` | 424 行 | 内核装配顺序与三档插件元数据 |
+| `src/contract.ts` | 1118 行 | UI ⇄ 运行时的中性契约（`DscRuntime` + 视图类型） |
+| `src/services/types.ts` | 1050 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
+| `src/adapter/transcript.ts` | 551 行 | 内核事件 → UI 快照的折叠投影 |
+| `src/app/` | 7 个组件 ≈700 行 | ink 终端界面（与桌面端共用契约） |
 | `desktop/electron/` | main + preload | 窗口、托盘、运行时子进程、终端与浏览器 dock |
-| `desktop/src/renderer/` | 20 个文件 ≈4250 行 | 桌面界面：会话、侧栏、插件、技能、设置、队友 |
+| `desktop/src/renderer/` | 58 个文件 ≈18700 行 | 桌面界面：会话、侧栏、插件、技能、设置、队友 |
 | `shots/` | 脚本 + 实拍产物 | 自检与实拍（全部跑在临时 HOME 上）。**这个目录被 `.gitignore` 忽略**：它只在本机存在，不随版本库分发 |
 | `examples/plugins/` | 4 个示例 | 手写插件的参照 |
 

@@ -21,6 +21,8 @@ import {
   THINKING_PARAMS,
   THINKING_PARAM_LABELS,
 } from '@dsc/runtime/core/model-caps.js'
+// error → 文案走全仓库唯一那份（core/err-text；别名沿用本文件既有的 text(...) 调用点）
+import { errText as text } from '@dsc/runtime/core/err-text.js'
 import type {
   Modality,
   ModelConfigView,
@@ -756,11 +758,6 @@ function pairShare(result: SettingsMutation): PairShareData | null {
   if (data === undefined || data.kind !== 'pair-code') return null
   if (data.code === '' || data.url === '' || Number.isFinite(data.expiresAt) === false) return null
   return data
-}
-
-/** 把抛出来的东西压成一句话。 */
-function text(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /** 模型分区：端点增删改、API key 写入、默认模型。 */

@@ -153,7 +153,7 @@ export function createRuntimeProxy(): RuntimeProxy {
     listTools: () => call<ToolEntryView[]>('listTools'),
     clearTodos: () => callVoid('clearTodos'),
     answerQuestion: (answer) => callVoid('answerQuestion', answer),
-    answerPlan: (decision) => callVoid('answerPlan', decision),
+    answerPlan: (decision, feedback) => callVoid('answerPlan', decision, feedback),
     goalAction: (action) => call<SettingsMutation>('goalAction', action),
     dock: (op, payload) => call<unknown>('dock', op, payload ?? {}),
     answerApproval: (answer) => callVoid('answerApproval', answer),

@@ -170,8 +170,3 @@ export function scrubChildEnv(source: NodeJS.ProcessEnv | Record<string, string 
   }
   return { env, stripped }
 }
-
-/** 遮红是否生效（自检脚本用）。 */
-export function redactionActive(): boolean {
-  return REDACT_ENABLED
-}

@@ -61,6 +61,15 @@ export const commandsPlugin: Plugin.Object = {
           ui.notice(`未知命令：/${command}（/help 查看全部）`)
           return true
         }
+        // T44：可用性矩阵统一在派发这一闸——回合跑着的时候 deny 的命令挡下，
+        // 桌面 / TUI / 远端三端行为一致（以前只有桌面输入框自己禁了字）。
+        if (
+          entry.spec.duringTask === 'deny' &&
+          runtime.getSnapshot().status.turnState !== 'idle'
+        ) {
+          ui.notice(`/${command} 要等当前回合结束（或先打断）再用`)
+          return true
+        }
         entry.handler({ args, runtime, ui })
         return true
       },

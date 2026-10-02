@@ -116,12 +116,25 @@ function toHit(value: unknown, titleKeys: string, urlKeys: string, snippetKeys: 
 }
 
 /** 调一家提供方。返回前把结果归一成 SearchHit。 */
-async function search(provider: SearchProvider, query: string, maxResults: number, signal: AbortSignal): Promise<SearchHit[]> {
+async function search(
+  provider: SearchProvider,
+  query: string,
+  maxResults: number,
+  signal: AbortSignal,
+  domains?: { include: string[]; exclude: string[] },
+): Promise<SearchHit[]> {
   if (provider === 'tavily') {
+    // T46：tavily 原生的 include/exclude_domains 直通（其它提供方没有等价参数，不硬凑）
     const body = (await postJson(
       'https://api.tavily.com/search',
       {},
-      { query, max_results: maxResults, search_depth: 'basic' },
+      {
+        query,
+        max_results: maxResults,
+        search_depth: 'basic',
+        ...(domains !== undefined && domains.include.length > 0 ? { include_domains: domains.include } : {}),
+        ...(domains !== undefined && domains.exclude.length > 0 ? { exclude_domains: domains.exclude } : {}),
+      },
       signal,
     )) as unknown
     const list = pick(body, 'results')
@@ -166,6 +179,16 @@ export const webSearchPlugin: Plugin.Object = {
           type: 'object',
           properties: {
             query: { type: 'string', description: '搜索关键词（可以用任何语言）' },
+            includeDomains: {
+              type: 'array',
+              items: { type: 'string' },
+              description: '只要这些域名的结果（如 ["example.com"]；当前提供方为 tavily 时生效）',
+            },
+            excludeDomains: {
+              type: 'array',
+              items: { type: 'string' },
+              description: '排除这些域名的结果（当前提供方为 tavily 时生效）',
+            },
           },
           required: ['query'],
         },
@@ -174,6 +197,10 @@ export const webSearchPlugin: Plugin.Object = {
           (async () => {
             const query = String(args.query ?? '').trim()
             if (query === '') throw new Error('query 不能为空')
+            const listOf = (value: unknown): string[] =>
+              Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item !== '') : []
+            const include = listOf(args.includeDomains)
+            const exclude = listOf(args.excludeDomains)
             const current = readConfig()
             const key = resolveKey(current)
             if (key === '') {
@@ -188,7 +215,10 @@ export const webSearchPlugin: Plugin.Object = {
                 : current.provider === 'bocha'
                   ? { authorization: `Bearer ${key}` }
                   : { 'X-API-KEY': key }
-            const hits = await search(current.provider, query, current.maxResults, runCtx.signal)
+            const hits =
+              include.length > 0 || exclude.length > 0
+                ? await search(current.provider, query, current.maxResults, runCtx.signal, { include, exclude })
+                : await search(current.provider, query, current.maxResults, runCtx.signal)
             if (hits.length === 0) return `「${query}」没有搜到结果。换个更具体的关键词再试。`
             // 搜索结果里出现的「指令」不是命令：包一层围栏，模型只能把它当资料读。
             return wrapUntrusted(

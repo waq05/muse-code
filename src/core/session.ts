@@ -8,7 +8,7 @@
  */
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, promises as fsp } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ChatContentPart, ChatMessage, ToolCall } from './llm.js'
 import type { CollaborationMode, PlanView, TodoItemView } from '../contract.js'
@@ -17,6 +17,7 @@ import { stripBaseline, type FileChangeSummary } from './tools.js'
 import { summarizeChange } from './tools/fs-tools.js'
 import { dropSessionMeta, patchSessionMeta, readSessionMeta } from './session-meta.js'
 import type { SessionMetaRecord } from './session-meta.js'
+import { acquireLock, withExclusiveLock, type FileLock } from './lockfile.js'
 
 /** 会话元数据（jsonl 首行 + 列表投影）。 */
 export interface SessionMeta {
@@ -115,6 +116,11 @@ export interface SessionStateMap {
   /** 会话目标快照（goal 插件写）。 */
   goal: GoalSnapshot
   /**
+   * T39：这份会话用的模型（llm 插件在 /model 切换与设默认时写）。恢复会话优先
+   * 取它，而不是回落配置默认——会话进行到一半换过的模型不该被「重启」冲掉。
+   */
+  model: { provider: string; model: string }
+  /**
    * 自我改进的记账（self-improve 插件写）：本轮复盘到哪个轮次、本会话读过哪些技能。
    *
    * 形状故意留成 `unknown`：core 层不该认识插件层的类型（依赖方向反过来就成环），
@@ -139,6 +145,17 @@ export const REJECTED_TOOL_TEXT = '用户拒绝了这次工具调用。'
 /** 工具结果的异常标记：`rejected` = 用户拒绝，`tool-error` = 工具执行报错（loop 写入）。 */
 const REJECTED_TOOL_ERROR = 'rejected'
 
+/**
+ * T32：中断回合的合成闭合文案。进程在「assistant 的 tool_calls 已落盘、工具结果
+ * 还没写」之间被杀，恢复时给每个孤儿调用补一条这样的结果并落盘（dsh repair.ts 的
+ * interruptedTurnClosers 同款语义）——模型必须知道「这个调用已发起、结果未知」，
+ * 才能决定是先核查还是重试；只读调用可直接重试，有副作用的必须先核实。
+ */
+const INTERRUPTED_TOOL_TEXT =
+  '[回合被打断] 这个工具调用已经发起，但 Muse Code 没来得及记录它的结果——它可能已经产生了' +
+  '副作用（写文件、跑命令、发请求）。先核查实际状态（读文件、查进程、看输出），再决定下一步：' +
+  '只读调用可以直接重试；有副作用的调用在核实之前不要盲目重跑。'
+
 /** 压缩 cwd 为目录名：`C:\Users\waq` → `C-Users-waq`。 */
 export function slugCwd(cwd: string): string {
   return cwd.replace(/[\\/:]+/g, '-')
@@ -146,6 +163,92 @@ export function slugCwd(cwd: string): string {
 
 export function sessionsRoot(): string {
   return join(homedir(), '.dsc', 'sessions')
+}
+
+/** T30：拿会话写租约；被别的进程占着就抛明确错误（桌面端与 TUI 同开一个工作区的保护）。 */
+function takeWriteLease(file: string): FileLock {
+  const lease = acquireLock(file)
+  if (lease === null) {
+    throw new Error(
+      `这份会话已在另一个 Muse Code 窗口打开：${basename(file)}（同一份会话日志同时只允许一处写入，先关掉那边再试）`,
+    )
+  }
+  return lease
+}
+
+/**
+ * T31：meta 首行损坏时的抢救。id 用文件名（uuid），createdAt 用文件诞生时间，
+ * cwd 从内容里的绝对路径反推：真正的 cwd 一定是这些路径的祖先，且它的 slug 必须
+ * 等于日志所在目录名（`sessions/<slugCwd(cwd)>/<uuid>.jsonl` 的布局）——两个条件
+ * 夹出来的 cwd 是准的；一条绝对路径都找不到才退到最长公共目录，再不行就抛错
+ * （文件保留在原位，交给上层的明确报错）。
+ */
+function salvageMeta(file: string, lines: string[]): SessionMeta {
+  const paths = new Set<string>()
+  for (const line of lines) {
+    if (!line.startsWith('{"type":"')) continue
+    let record: { type?: string; changes?: { path?: unknown }[]; payload?: unknown }
+    try {
+      record = JSON.parse(line) as { type?: string; changes?: { path?: unknown }[]; payload?: unknown }
+    } catch {
+      continue // 坏行跳过：抢救靠的是幸存的记录
+    }
+    if (record.type === 'tool' && Array.isArray(record.changes)) {
+      for (const change of record.changes) {
+        if (change !== null && typeof change === 'object' && typeof change.path === 'string' && change.path !== '') {
+          paths.add(change.path)
+        }
+      }
+    }
+    if (record.type === 'state' && record.payload !== null && typeof record.payload === 'object') {
+      const planFile = (record.payload as { file?: unknown }).file
+      if (typeof planFile === 'string' && planFile !== '') paths.add(planFile)
+    }
+  }
+  const dirName = basename(dirname(file))
+  let cwd: string | null = null
+  for (const path of paths) {
+    if (!isAbsolute(path)) continue
+    let dir = dirname(path)
+    for (let depth = 0; depth < 12; depth += 1) {
+      if (slugCwd(dir) === dirName) {
+        cwd = dir
+        break
+      }
+      const parent = dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+    if (cwd !== null) break
+  }
+  if (cwd === null) cwd = commonDirectory(paths)
+  if (cwd === null) {
+    throw new Error(`会话文件头损坏，且无法从内容推断工作目录（文件保留在原位，没有动它）：${file}`)
+  }
+  let createdAt = Date.now()
+  try {
+    const born = statSync(file).birthtimeMs
+    if (Number.isFinite(born) && born > 0) createdAt = Math.floor(born)
+  } catch {
+    // 取不到诞生时间就用现在：只影响列表里的「创建时间」展示
+  }
+  return { id: basename(file, '.jsonl'), cwd, createdAt }
+}
+
+/** 一组绝对路径的最长公共目录（大小写不敏感）；没有绝对路径返回 null。 */
+function commonDirectory(paths: Iterable<string>): string | null {
+  const dirs = [...paths].filter((p) => isAbsolute(p)).map((p) => dirname(p))
+  if (dirs.length === 0) return null
+  let candidate = dirs[0]!
+  const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
+  for (const dir of dirs) {
+    while (!same(dir, candidate) && !dir.toLowerCase().startsWith(candidate.toLowerCase() + sep)) {
+      const parent = dirname(candidate)
+      if (parent === candidate) return null
+      candidate = parent
+    }
+  }
+  return candidate
 }
 
 /** 一个会话：内存消息 + 磁盘日志。 */
@@ -158,6 +261,12 @@ export class Session {
   private stream: ReturnType<typeof createWriteStream> | null = null
   /** meta 首行是否已经写进磁盘。 */
   private metaWritten: boolean
+  /**
+   * T30 写租约：一份会话日志同一时刻只允许一个进程写。桌面端与 TUI 从同一份
+   * `.last-session` 取默认会话，没有这层时两边会交错 append、重放串线。
+   * 只读打开（队友运行记录的 peek、load-bench）可以不租（`load` 的 `lease: false`）。
+   */
+  private lease: FileLock | null
   /**
    * 工具调用的异常标记（callId → `rejected` / `tool-error`）。
    * OpenAI 协议里没有这个概念，所以它不挂在 `messages` 上（否则会被发进请求体），
@@ -194,11 +303,13 @@ export class Session {
     restored = false,
     state?: ReadonlyMap<string, unknown>,
     initialNotes: SessionNote[] = [],
+    lease: FileLock | null = null,
   ) {
     this.meta = meta
     this.file = file
     this.messages.push(...initialMessages)
     this.metaWritten = restored
+    this.lease = lease
     if (state !== undefined) for (const [id, payload] of state) this.stateById.set(id, payload)
     this.noteLog.push(...initialNotes)
   }
@@ -209,7 +320,8 @@ export class Session {
    */
   static create(cwd: string, file?: string): Session {
     const meta: SessionMeta = { id: randomUUID(), cwd, createdAt: Date.now() }
-    return new Session(meta, file ?? join(sessionsRoot(), slugCwd(cwd), `${meta.id}.jsonl`))
+    const target = file ?? join(sessionsRoot(), slugCwd(cwd), `${meta.id}.jsonl`)
+    return new Session(meta, target, [], false, undefined, [], takeWriteLease(target))
   }
 
   /**
@@ -217,8 +329,21 @@ export class Session {
    * @param keepPath - true = 后续追加写回读进来的这个路径。
    *                   省略时按会话根目录重算路径（归档区里的文件因此会被"搬回"活动区，
    *                   这是历史行为，只有读别人家的日志才需要传 true）。
+   * @param options.lease - 是否拿写租约（T30）。缺省 true = 拿（恢复要接着写，写的人
+   *                        还负责把中断回合修复落盘）；只读重放（队友记录的 peek）传 false。
    */
-  static load(file: string, keepPath = false): Session {
+  static load(file: string, keepPath = false, options: { lease?: boolean } = {}): Session {
+    const lease = options.lease === false ? null : takeWriteLease(file)
+    try {
+      return Session.buildFromLog(file, keepPath, lease)
+    } catch (error) {
+      lease?.release()
+      throw error
+    }
+  }
+
+  /** T30/T31/T32 的装配核心：读日志 → 逐行重放 →（头坏了就抢救）→（握着租约就修复中断回合）。 */
+  private static buildFromLog(file: string, keepPath: boolean, lease: FileLock | null): Session {
     const lines = readFileSync(file, 'utf8').split(/\r?\n/).filter((line) => line !== '')
     let meta: SessionMeta | undefined
     const messages: ChatMessage[] = []
@@ -326,7 +451,9 @@ export class Session {
           break
       }
     }
-    if (meta === undefined) throw new Error(`会话文件缺少 meta 行：${file}`)
+    // T31：meta 首行损坏（半截 JSON）不等于整个会话报废——从内容抢救一份 meta，
+    // 抢救不出来才报错（文件原样保留，绝不静默回落「开新会话」让用户无感知丢会话）。
+    if (meta === undefined) meta = salvageMeta(file, lines)
     const session = new Session(
       meta,
       keepPath ? file : join(sessionsRoot(), slugCwd(meta.cwd), `${meta.id}.jsonl`),
@@ -334,9 +461,12 @@ export class Session {
       true,
       state,
       notes,
+      lease,
     )
     for (const [callId, error] of toolErrors) session.toolErrors.set(callId, error)
     for (const [callId, change] of fileChanges) session.fileChanges.set(callId, change)
+    // T32：修复只在「我们是写租约持有人」时做——修复要落盘，只读重放（队友记录 peek）不动它。
+    if (lease !== null) session.repairInterruptedTurns()
     return session
   }
 
@@ -464,6 +594,34 @@ export class Session {
   }
 
   /**
+   * T32：中断回合的修复。恢复会话时扫一遍消息，最后一个带 tool_calls 的 assistant
+   * 若有配不上结果的调用，就各补一条「已发起、结果未知」的合成结果并落盘——模型据此
+   * 知道这个调用可能已有副作用，先核查再决定重试。落盘之后孤儿不再存在，重复恢复幂等。
+   * 只在握着写租约时调用（修复要写盘）；尾巴之前的孤儿（不该出现）仍由请求侧的
+   * sanitizeToolOrphans 兜底。
+   */
+  private repairInterruptedTurns(): void {
+    const answered = new Set<string>()
+    for (const message of this.messages) {
+      if (message.role === 'tool' && message.tool_call_id !== undefined) answered.add(message.tool_call_id)
+    }
+    let last = -1
+    for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+      const message = this.messages[index]!
+      if (message.role === 'assistant' && message.tool_calls !== undefined && message.tool_calls.length > 0) {
+        last = index
+        break
+      }
+      if (message.role === 'user') break // 回到用户消息还没见着带调用的 assistant：没有待修复的尾巴
+    }
+    if (last < 0) return
+    for (const call of this.messages[last]!.tool_calls!) {
+      if (answered.has(call.id)) continue
+      this.appendTool(call.id, call.function.name, INTERRUPTED_TOOL_TEXT)
+    }
+  }
+
+  /**
    * 压缩落库：内存里换成「摘要 + 保留的尾部」，磁盘上追加一条 summary 记录。
    *
    * `keep` 记下保留了多少条尾部消息：日志是 append-only，摘要之前的原始记录一条都不会删，
@@ -526,6 +684,9 @@ export class Session {
   close(): void {
     this.stream?.end()
     this.stream = null
+    // T30：写租约随会话关闭一起还（切会话、退出都会走到这）
+    this.lease?.release()
+    this.lease = null
     // 回合基线是纯内存的回合内状态：会话关掉（/new、/resume 切走）就没有意义了
     this.turnBaselines = new Map()
     this.turnTouched = []
@@ -635,21 +796,61 @@ function scanSessions(root: string, metas: Record<string, SessionMetaRecord>): S
   return out.sort((a, b) => b.createdAt - a.createdAt)
 }
 
-/** 读一个会话文件的前几行 + mtime；首行不是 meta（损坏/空文件）返回 null。 */
+/** 读一个会话文件的前几行 + mtime；首行不是 meta（损坏/空文件）时尽量抢救（T31）。 */
 function readSessionFile(filePath: string, sidecar?: SessionMetaRecord): SessionListItem | null {
   try {
-    const head = readFileSync(filePath, 'utf8').split(/\r?\n/, 8)
-    const record = JSON.parse(head[0] ?? '') as SessionRecord
-    if (record.type !== 'meta') return null
-    const derived = head.find((line) => line.startsWith('{"type":"user"'))
-    const title = sidecar?.title
-      ?? (derived !== undefined
-        ? (JSON.parse(derived) as { text: string }).text.replace(/\s+/g, ' ').trim().slice(0, 60)
-        : undefined)
+    const head = readFileSync(filePath, 'utf8').split(/\r?\n/, 200)
+    let record: SessionRecord | undefined
+    try {
+      record = JSON.parse(head[0] ?? '') as SessionRecord
+    } catch {
+      record = undefined
+    }
+    if (record?.type === 'meta') {
+      const derived = head.find((line) => line.startsWith('{"type":"user"'))
+      const title = sidecar?.title
+        ?? (derived !== undefined
+          ? (JSON.parse(derived) as { text: string }).text.replace(/\s+/g, ' ').trim().slice(0, 60)
+          : undefined)
+      return {
+        id: record.id,
+        cwd: record.cwd,
+        createdAt: record.createdAt,
+        updatedAt: statSync(filePath).mtimeMs,
+        ...(title !== undefined ? { title } : {}),
+        ...(sidecar?.pinnedAt !== undefined ? { pinnedAt: sidecar.pinnedAt } : {}),
+        path: filePath,
+      }
+    }
+    // T31：头行坏了的会话也要在列表里露脸（不然用户连「打开它」的入口都没有）。
+    // id 取文件名、标题取幸存的首条用户消息、cwd 从幸存的改动路径反推；推不出 cwd
+    // 就给空串（列表照常显示，真去打开时会拿到「头损坏」的明确报错）。
+    const paths = new Set<string>()
+    let title: string | undefined = sidecar?.title
+    for (const line of head) {
+      if (!line.startsWith('{"type":"')) continue
+      try {
+        const parsed = JSON.parse(line) as { type?: string; text?: unknown; changes?: { path?: unknown }[] }
+        if (title === undefined && parsed.type === 'user' && typeof parsed.text === 'string' && parsed.text !== '') {
+          title = parsed.text.replace(/\s+/g, ' ').trim().slice(0, 60)
+        }
+        if (Array.isArray(parsed.changes)) {
+          for (const change of parsed.changes) {
+            if (change !== null && typeof change === 'object' && typeof change.path === 'string' && change.path !== '') {
+              paths.add(change.path)
+            }
+          }
+        }
+      } catch {
+        // 坏行跳过
+      }
+    }
+    let createdAt = statSync(filePath).birthtimeMs
+    if (!Number.isFinite(createdAt) || createdAt <= 0) createdAt = statSync(filePath).mtimeMs
     return {
-      id: record.id,
-      cwd: record.cwd,
-      createdAt: record.createdAt,
+      id: basename(filePath, '.jsonl'),
+      cwd: commonDirectory(paths) ?? '',
+      createdAt,
       updatedAt: statSync(filePath).mtimeMs,
       ...(title !== undefined ? { title } : {}),
       ...(sidecar?.pinnedAt !== undefined ? { pinnedAt: sidecar.pinnedAt } : {}),
@@ -708,18 +909,23 @@ function moveSessionFile(filePath: string, toRoot: string): string {
 /** 归档一个会话：移进 `.archived/<工作目录名>/`，并在 sidecar 记归档时间。 */
 export function archiveSession(filePath: string): string {
   const source = assertLiveSessionFile(filePath)
-  const target = moveSessionFile(source, archivedRoot())
-  patchSessionMeta(uuidOf(source), { archivedAt: Date.now() })
-  return target
+  // T30：挪文件之前拿写租约——另一个窗口正开着它就明确拒绝，而不是把人家手里的路径挪没
+  return withExclusiveLock(source, busyLeaseMessage(source), () => {
+    const target = moveSessionFile(source, archivedRoot())
+    patchSessionMeta(uuidOf(source), { archivedAt: Date.now() })
+    return target
+  })
 }
 
 /** 恢复一个归档会话：移回正常区，清掉归档时间。 */
 export function restoreSession(archivedPath: string): string {
   const source = join(archivedPath)
   if (!source.startsWith(archivedRoot()) || !existsSync(source)) throw new Error(`归档会话不存在：${archivedPath}`)
-  const target = moveSessionFile(source, sessionsRoot())
-  patchSessionMeta(uuidOf(source), { archivedAt: null })
-  return target
+  return withExclusiveLock(source, busyLeaseMessage(source), () => {
+    const target = moveSessionFile(source, sessionsRoot())
+    patchSessionMeta(uuidOf(source), { archivedAt: null })
+    return target
+  })
 }
 
 /**
@@ -730,9 +936,11 @@ export function restoreSession(archivedPath: string): string {
 export function purgeSession(filePath: string): string {
   // 归档区和活动区都删得掉：设置页传进来的路径就在 .archived/ 里
   const source = assertSessionFile(filePath)
-  const target = moveSessionFile(source, trashRoot())
-  dropSessionMeta(uuidOf(source))
-  return target
+  return withExclusiveLock(source, busyLeaseMessage(source), () => {
+    const target = moveSessionFile(source, trashRoot())
+    dropSessionMeta(uuidOf(source))
+    return target
+  })
 }
 
 /** 清掉回收站里超过保留期的文件（按 mtime 判断），失败的文件留着下次再清。 */
@@ -824,6 +1032,11 @@ export function readUserMessages(filePath: string): string[] {
 /** 文件名就是 `<uuid>.jsonl`，取 uuid 用来写 sidecar。 */
 function uuidOf(filePath: string): string {
   return basename(filePath, '.jsonl')
+}
+
+/** T30：会话库操作撞上「另一个窗口开着它」时的统一说法。 */
+function busyLeaseMessage(filePath: string): string {
+  return `会话正在另一个 Muse Code 窗口使用，先关掉那边再操作：${basename(filePath)}`
 }
 
 

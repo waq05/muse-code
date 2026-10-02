@@ -77,6 +77,10 @@ const OWNER_RETRY_MS = 30_000
 
 /** 同类推送的节流窗口：审批卡连着弹、轮结束连着来的时候，手机上别炸一串。 */
 const NOTIFY_THROTTLE_MS = 10_000
+/** T45：同一张卡挂了这么久还没人理，就升级再提醒一声（别让推送石沉大海）。 */
+const ESCALATE_WAIT_MS = 120_000
+/** T45：升级提醒最多几声（别变成骚扰）。 */
+const ESCALATE_MAX = 3
 
 /** 多短的一轮不值得通报（用过 15 秒以上，或者这一轮出现过审批卡，才发「轮完成」）。 */
 const TURN_NOTIFY_MIN_MS = 15_000
@@ -999,45 +1003,84 @@ export const remotePlugin: Plugin.Object = {
 
     // ── 推送触发：全在现有订阅与事件里，内核一条新事件都不用加 ───────────────
 
-    /** 上一帧的审批卡 id（判「从无到有」）。 */
-    let prevApprovalId: string | null = null
+    /** 上一帧「等人的卡」的键（判「从无到有 / 换了一张」；键 = 卡种:卡标识）。 */
+    let prevCardKey: string | null = null
     /** 上一帧的回合状态（判「一轮开始了」）。 */
     let prevTurnState: StatusView['turnState'] = 'idle'
     /** 这一轮什么时候开始的（推送里要报「用时 Xs」，宿主没有 turn-start 事件，插件自己记）。 */
     let turnStartedAt = 0
-    /** 这一轮里出现过审批卡没有（短轮也值得通报的第二条条件）。 */
-    let turnHadApproval = false
+    /** 这一轮里出现过「等人」的卡没有（短轮也值得通报的第二条条件）。 */
+    let turnHadWaitingCard = false
+    /** T45：升级提醒的计时器与计数（同一张卡挂久了再喊几声）。 */
+    let escalateTimer: NodeJS.Timeout | null = null
+    let escalateCount = 0
 
-    /** 会话流一变就看一眼快照：审批卡从无到有 → 推送；回合从 idle 起来 → 记开始时刻。 */
+    /** 当前快照里「等人的卡」（审批 → 计划评审 → 模型提问，同一时刻至多一张在前面挡着）。 */
+    function waitingCardOf(current: RuntimeSnapshot): { key: string; title: string; headline: string } | null {
+      const approval = current.surfaces.pendingApproval
+      if (approval !== null) return { key: `approval:${approval.id}`, title: 'Muse Code 等待审批', headline: approvalHeadline(approval) }
+      const plan = current.surfaces.pendingPlan
+      if (plan !== null) return { key: `plan:${plan.file}`, title: 'Muse Code 等待计划评审', headline: plan.title }
+      const question = current.surfaces.pendingQuestion
+      if (question !== null) {
+        return { key: `ask:${question.id}`, title: 'Muse Code 在向你提问', headline: question.header ?? question.question }
+      }
+      return null
+    }
+
+    const clearEscalation = (): void => {
+      if (escalateTimer !== null) clearTimeout(escalateTimer)
+      escalateTimer = null
+      escalateCount = 0
+    }
+
+    /** T45：升级再提醒——2 分钟第一声，之后每 2 分钟一声，最多 {@link ESCALATE_MAX} 声。 */
+    function armEscalation(key: string, headline: string): void {
+      clearEscalation()
+      escalateTimer = setTimeout(() => {
+        escalateCount += 1
+        const still = waitingCardOf(runtime.getSnapshot())
+        if (still === null || still.key !== key || escalateCount > ESCALATE_MAX) return
+        void notify(
+          `escalate:${key}`,
+          { title: 'Muse Code 还在等人', body: `已等 ${String(Math.round((ESCALATE_WAIT_MS * escalateCount) / 1000))} 秒：${headline}`, url: addressText() },
+          false,
+        )
+        armEscalation(key, headline)
+      }, ESCALATE_WAIT_MS)
+      escalateTimer.unref()
+    }
+
+    /** 会话流一变就看一眼快照：等人的卡从无到有（或换了一张）→ 推送 + 挂升级提醒；回合从 idle 起来 → 记开始时刻。 */
     const watchTransitions = (): void => {
       const current = runtime.getSnapshot()
       const state = current.status.turnState
       if (state !== 'idle' && prevTurnState === 'idle') {
         turnStartedAt = Date.now()
-        turnHadApproval = false
+        turnHadWaitingCard = false
       }
       prevTurnState = state
-      const approval = current.surfaces.pendingApproval
-      const approvalId = approval === null ? null : approval.id
-      if (approval !== null && approvalId !== null && prevApprovalId === null) {
-        turnHadApproval = true
-        void notify(
-          'approval',
-          { title: 'Muse Code 等待审批', body: approvalHeadline(approval), url: addressText() },
-          true,
-        )
+      const card = waitingCardOf(current)
+      if (card !== null && card.key !== prevCardKey) {
+        turnHadWaitingCard = true
+        // T45：节流键带上卡片标识——10 秒内连来两张审批卡时，第二张不再被同一把
+        // 「approval」节流吞掉；同一条卡重复的快照刷新仍然只推一声。
+        void notify(card.key, { title: card.title, body: card.headline, url: addressText() }, true)
+        armEscalation(card.key, card.headline)
+      } else if (card === null && prevCardKey !== null) {
+        clearEscalation()
       }
-      prevApprovalId = approvalId
+      prevCardKey = card?.key ?? null
     }
     const offTransitions = ctx.transcript.subscribe(watchTransitions)
 
-    /** 一轮结束：用过 15 秒以上、或者这一轮出现过审批卡，才值得推一条。 */
+    /** 一轮结束：用过 15 秒以上、或者这一轮出现过等人的卡，才值得推一条。 */
     const onTurnEnd = (): void => {
       const elapsedMs = turnStartedAt === 0 ? 0 : Date.now() - turnStartedAt
-      const hadApproval = turnHadApproval
+      const hadWaitingCard = turnHadWaitingCard
       turnStartedAt = 0
-      turnHadApproval = false
-      if (elapsedMs < TURN_NOTIFY_MIN_MS && !hadApproval) return
+      turnHadWaitingCard = false
+      if (elapsedMs < TURN_NOTIFY_MIN_MS && !hadWaitingCard) return
       const seconds = Math.max(0, Math.round(elapsedMs / 1000))
       void notify('turn-end', { title: 'Muse Code 轮完成', body: `用时 ${String(seconds)}s`, url: addressText() }, true)
     }
@@ -1395,6 +1438,7 @@ export const remotePlugin: Plugin.Object = {
       offSection()
       offPrefs()
       offTransitions()
+      clearEscalation()
       clearRetry()
       stopServer()
       owner.release()

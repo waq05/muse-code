@@ -58,6 +58,31 @@ function killTree(child: ChildProcess): void {
   }
 }
 
+/** 优雅终止后的宽限期（T36）：到点还没自己退，才上强杀。 */
+const KILL_GRACE_MS = 3_000
+/** 强杀之后还没等到 close 的最后兜底（T36）：再等不到就把已收输出直接交回。 */
+const FORCE_FAILSAFE_MS = 2_000
+
+/**
+ * 第一档终止（T36）：礼貌地请进程退——构建工具能跑完清理逻辑、缓存能落盘。
+ * POSIX 对 detached 的进程组发 SIGTERM（负数 pid 整组收到）。Windows 没有不依赖
+ * 外部进程的优雅通道（taskkill 不带 /F 那条路被安全门的命令选项注入检查拦着，
+ * 不为它新开 spawn），所以 Windows 这一档直接走 {@link killTree} 强杀——糙一点，
+ * 但一定杀得掉，已收输出也照样交回。
+ */
+function terminateTree(child: ChildProcess): void {
+  if (process.platform === 'win32') {
+    killTree(child)
+    return
+  }
+  if (child.pid === undefined) return
+  try {
+    process.kill(-child.pid, 'SIGTERM')
+  } catch {
+    child.kill('SIGTERM')
+  }
+}
+
 /**
  * 真正 spawn 并收输出。执行计划可能被沙箱的执行器缝改写
  * （容器后端会把 shell 换成 `docker run`），所以这里不认死 `powershell.exe`。
@@ -84,30 +109,60 @@ function spawnShell(plan: SpawnPlan, timeoutMs: number, outputLimit: number, sig
     child.stdout?.on('data', append)
     child.stderr?.on('data', append)
 
-    const timer = setTimeout(() => {
-      killTree(child)
-      rejectPromise(new Error(`命令超时（${timeoutMs}ms）`))
-    }, timeoutMs)
+    // T36：超时/取消不再把输出丢掉——先礼貌终止（POSIX SIGTERM，宽限 3 秒，到点强杀），
+    // 等进程真正退出后把已收到的输出连同终止说明一起交回。编译错误印在前 20 秒、
+    // 31 秒超时的场景，模型现在拿得到那 20 秒里说过的每句话。
+    let done = false
+    let reason: string | null = null
+    let grace: NodeJS.Timeout | undefined
+    let failsafe: NodeJS.Timeout | undefined
+    const finish = (code: number | null): void => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      if (grace !== undefined) clearTimeout(grace)
+      if (failsafe !== undefined) clearTimeout(failsafe)
+      signal.removeEventListener('abort', onAbort)
+      const truncated = output.length > outputLimit ? `${output.slice(0, outputLimit)}…（已截断）` : output
+      const body = truncated.trim()
+      const lines: string[] = []
+      if (reason !== null) lines.push(reason)
+      if (code !== 0 && reason === null) lines.push(`退出码 ${String(code)}`)
+      lines.push(body === '' ? (reason === null ? '（无输出）' : '（进程被终止，没有收到输出）') : body)
+      resolvePromise(redact(lines.join('\n')))
+    }
+    const arm = (why: string): void => {
+      reason = why
+      terminateTree(child)
+      // 宽限到点还没退就强杀；强杀后再等不到 close（极端：句柄被别的进程攥着）
+      // 就把已收输出直接交回，不让整轮挂在僵尸进程上。
+      grace = setTimeout(() => {
+        killTree(child)
+        failsafe = setTimeout(() => finish(null), FORCE_FAILSAFE_MS)
+        failsafe.unref()
+      }, KILL_GRACE_MS)
+      grace.unref()
+    }
+
+    const timer = setTimeout(() => arm(`命令超时（${String(timeoutMs)}ms），已终止进程`), timeoutMs)
 
     const onAbort = (): void => {
       clearTimeout(timer)
-      killTree(child)
-      rejectPromise(new Error('命令被用户取消'))
+      arm('命令被用户取消')
     }
-    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
 
     child.on('error', (error) => {
+      if (done) return
+      done = true
       clearTimeout(timer)
+      if (grace !== undefined) clearTimeout(grace)
+      if (failsafe !== undefined) clearTimeout(failsafe)
       signal.removeEventListener('abort', onAbort)
       rejectPromise(error)
     })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      signal.removeEventListener('abort', onAbort)
-      const truncated = output.length > outputLimit ? `${output.slice(0, outputLimit)}…（已截断）` : output
-      const header = code === 0 ? '' : `退出码 ${code}\n`
-      resolvePromise(redact(`${header}${truncated.trim() || '（无输出）'}`))
-    })
+    child.on('close', finish)
   })
 }
 

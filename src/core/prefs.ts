@@ -79,8 +79,9 @@ const DENSITIES: readonly UiDensity[] = ['compact', 'standard', 'roomy']
 /**
  * 过程折叠程度四档（桌面端「通用 → 过程折叠程度」）。
  * 与桌面端 appearance.ts 的 normalizeProcessFold 同一张表，改这里要两边一起改。
+ * satisfies 锁住拼写与类型：档位名写错当场编译报错，不会静默漏进白名单。
  */
-const PROCESS_FOLDS: readonly UiProcessFold[] = ['compact', 'standard', 'detailed', 'verbose']
+const PROCESS_FOLDS = ['compact', 'standard', 'detailed', 'verbose'] as const satisfies readonly UiProcessFold[]
 /** 读不出过程折叠程度时的默认档：标准档（整轮折叠 + 阶段分组 + 摘要 + 组头带实时详情）。 */
 const PROCESS_FOLD_DEFAULT: UiProcessFold = 'standard'
 

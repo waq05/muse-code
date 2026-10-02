@@ -203,8 +203,8 @@ export const runtimePlugin: Plugin.Object = {
         ctx.ask.answerQuestion(answer)
       },
 
-      answerPlan(decision) {
-        ctx.plan.answerPlan(decision)
+      answerPlan(decision, feedback) {
+        ctx.plan.answerPlan(decision, feedback)
       },
 
       goalAction(action) {

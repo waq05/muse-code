@@ -12,6 +12,10 @@
  * @module dsc/core/git-info
  */
 import { execFile } from 'node:child_process'
+import { promises as fsp } from 'node:fs'
+import { join } from 'node:path'
+import { stripBaseline, type FileChangeSummary } from './tools.js'
+import { summarizeChange } from './tools/fs-tools.js'
 
 /** 审查 diff 塞进上下文的字符预算（约 1.5 万 token；超了从尾部截，头部是改动清单更值钱）。 */
 export const REVIEW_DIFF_BUDGET = 60_000
@@ -53,4 +57,81 @@ export async function collectWorkingTree(cwd: string): Promise<{ diff: string; u
   const diff =
     raw.length > REVIEW_DIFF_BUDGET ? `${raw.slice(0, REVIEW_DIFF_BUDGET)}\n…（diff 过长，已从 ${String(REVIEW_DIFF_BUDGET)} 字符处截断）` : raw
   return { diff, untracked }
+}
+
+// ── T42：回合首尾快照（轮尾「文件已更改」卡对 bash/脚本改动的兜底）─────────────
+
+/** 一轮最多补多少个 git 兜底条目（防一个脚本扫动几千个文件把轮尾卡撑爆）。 */
+const MAX_GIT_TURN_FILES = 20
+
+/**
+ * 回合起点的 git 状态快照：仓库根 + porcelain 一行一条。非 git 仓库、git 跑不动
+ * （超时/没装）一律返回 null——兜底只在确定拿得到的时候参与，绝不挡回合本身。
+ */
+export async function snapshotGitStatus(cwd: string): Promise<{ root: string; lines: string[] } | null> {
+  try {
+    const inside = (await gitExec(cwd, ['rev-parse', '--is-inside-work-tree'])).trim()
+    if (inside !== 'true') return null
+    const root = (await gitExec(cwd, ['rev-parse', '--show-toplevel'])).trim()
+    const lines = (await gitExec(cwd, ['-c', 'core.quotePath=false', 'status', '--porcelain=v1', '--untracked-files=all']))
+      .split('\n')
+      .filter((line) => line !== '')
+    return { root, lines }
+  } catch {
+    return null
+  }
+}
+
+/** porcelain 一行 → { 状态码, 仓库根相对路径 }；rename 的 `old -> new` 取 new 一侧。 */
+function parsePorcelain(line: string): { code: string; path: string } | null {
+  if (line.length < 4) return null
+  const code = line.slice(0, 2)
+  let path = line.slice(3)
+  const arrow = path.indexOf(' -> ')
+  if (arrow >= 0) path = path.slice(arrow + 4)
+  if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1)
+  return { code, path }
+}
+
+/**
+ * 对比回合首尾快照，把「第一方 write/edit 之外」动过的文件补成变更条目（bash、
+ * sed、构建脚本改的文件也要进轮尾卡，用户不能看到「无更改」而工作区其实变了）。
+ *
+ * 口径：porcelain 状态码变了才算本回合动的——回合开始前就脏着的文件「又改了一刀」
+ * 在这里看不出来，这是相对 dsh scratch-index 方案的已知盲区。`already` 里的路径跳过
+ * （write/edit 已经记了更准的「回合前全文」基线）。基线内容：已跟踪取 HEAD 版本，
+ * 未跟踪取空串（整篇新增）。删除（盘上已无此文件）跳过——diff 面板没有「删除」的展示形态。
+ */
+export async function collectGitTurnChanges(
+  cwd: string,
+  before: { root: string; lines: string[] } | null,
+  after: { root: string; lines: string[] } | null,
+  already: readonly string[],
+): Promise<FileChangeSummary[]> {
+  if (before === null || after === null || before.root !== after.root) return []
+  const startState = new Map<string, string>()
+  for (const line of before.lines) {
+    const parsed = parsePorcelain(line)
+    if (parsed !== null) startState.set(parsed.path, parsed.code)
+  }
+  const taken = new Set(already.map((path) => path.toLowerCase()))
+  const out: FileChangeSummary[] = []
+  for (const line of after.lines) {
+    if (out.length >= MAX_GIT_TURN_FILES) break
+    const parsed = parsePorcelain(line)
+    if (parsed === null || parsed.code === ' D' || parsed.code === 'D ') continue
+    const startCode = startState.get(parsed.path)
+    if (startCode === parsed.code) continue // 状态没变：要么没动，要么回合前就脏着（盲区）
+    const abs = join(after.root, parsed.path)
+    if (taken.has(abs.toLowerCase())) continue
+    const baseline =
+      startCode === undefined
+        ? '' // 回合开始时不存在（未跟踪的新文件）：整篇算新增
+        : await gitExec(cwd, ['show', `HEAD:${parsed.path}`]).catch(() => '')
+    const current = await fsp.readFile(abs, 'utf8').catch(() => null)
+    if (current === null) continue
+    const change = summarizeChange(abs, baseline, current)
+    if (change !== undefined) out.push(stripBaseline(change))
+  }
+  return out
 }

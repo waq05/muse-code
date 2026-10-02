@@ -29,8 +29,7 @@ import {
   KERNEL_API_VERSION,
   type PluginMeta,
 } from './plugin-registry.js'
-
-const err = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+import { errText as err } from './err-text.js'
 
 /** 内核插件 API 版本（重导出，供宿主/文档引用）。 */
 export { KERNEL_API_VERSION }

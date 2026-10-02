@@ -9466,3 +9466,18 @@ body.resizing iframe {
 .hover-preview-diff .diff-no {
   padding-right: 5px;
 }
+
+/* 追加区：新样式段一律加在这行之下，加完把这行挪到文件末尾（trace-check 的末尾纪律断言认这行） */
+
+/* 计划评审卡的拒绝反馈框（T40）：与 plan-body 同宽，走令牌不硬编码色值 */
+.plan-feedback {
+  background: var(--dsc-bg-inset);
+  border: 1px solid var(--dsc-border);
+  border-radius: var(--dsc-radius);
+  color: var(--dsc-text-primary);
+  font-family: var(--dsc-font-ui);
+  font-size: var(--dsc-fs-ui);
+  padding: 8px 10px;
+  resize: vertical;
+  width: 100%;
+}
