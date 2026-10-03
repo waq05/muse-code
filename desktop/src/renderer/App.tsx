@@ -428,8 +428,9 @@ export function App(): JSX.Element {
       playCompletionSound(normalizeSoundVariant(uiPrefs.turnCompleteSoundVariant))
     }
     if (uiPrefs.turnCompleteNotify && isBackgrounded()) {
-      // 通知标题用会话标题（照顶栏的解析口径），正文取最后一条回复的摘要
-      const session = snapshot.sessions.find((s) => s.id.endsWith(`${curr.id ?? '#'}.jsonl`))
+      // 通知标题用会话标题（照顶栏的解析口径，同款 `?? '#'`——sessionId 还没落盘时
+      // 不能拿空串去 endsWith('.jsonl')，那会错配到列表里第一个会话的标题）
+      const session = snapshot.sessions.find((s) => s.id.endsWith(`${snapshot.status.sessionId ?? '#'}.jsonl`))
       const title = session?.title?.trim() || 'Muse Code'
       void dsc
         .notify({ title: `${title} · 任务完成`, body: completionNotifyBody(snapshot.entries) })

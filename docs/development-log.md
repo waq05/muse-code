@@ -1371,3 +1371,11 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **验证**：新探针 `shots/sound-notify-check.mjs` 31 断言全绿（音色表 14 项结构与编号连续、编号归一、后台判定三态、跳变判定七例、通知正文五例、宿主读档临时 HOME 六例）。实机走查 `desktop/shots/sound-notify.ps1` + `sound-fake-server.mjs`（18961 端口一律回纯文本，gitignored）：实例 A 假端点跑一轮真对话——EVAL 里把 `document.hasFocus` patch 成 false（比抢焦点可靠、与真实「用户在别的窗口」同构），stderr 出两条 `[selfcheck] 系统通知：`——「走查直调通知 / 主进程 notify 链路」（直调 dsc.notify 返回 true）与「跑一轮提醒走查 · 任务完成 / 提醒走查完成」（完成跳变 effect 真触发，标题走会话标题、正文取最后一条回复），`new AudioContext()` 冒烟 true，假端点对账 chat+title 两请求；实例 B `?settings=general` 截图目检——「任务完成提醒」组三行版式与外观组一致、音色下拉显示「双音轻抚」。真实 ~/.dsc 指纹逐文件一致（185 文件）。探针 45 个全绿（preset-check 首轮误报系 grep 把 PASS 行里的「（✗）」记号算进失败，重跑全绿）。双端 typecheck + build 绿。
 
 **诚实边界**：通知与提示音只覆盖「当前会话」的回合完成——切走后旧会话跑完不提醒（快照只推当前会话的 turnState；跨会话完成提醒要动内核快照面，本轮不做）；用户主动打断、审批拒绝也走同一条「跑动→idle」跳变（回合确实结束了，响一声不算误报）；主进程通知的真实弹出效果（Windows toast 视觉、点击聚焦）自动化只验到 handler 与 show() 不抛，真机目检在本机通过；「通知铃铛图标」「错误回合独立音效」（hermes 的 turnError、codex 的 approval-requested 分型）未做——两开关各自独立已覆盖主需求，分型通知留待有真实需求再加。
+
+## 阶段 60：0.6.40 重审与重打包——修掉通知标题的会话错配（0.6.40 补丁）
+
+用户要求「重新审查并打包」。重审 0.6.40 全部改动面（turn-notify / completion-sound / App 完成 effect / SettingsModal 三行 / 主进程 notify handler / preload / prefs 读档 / contract 三字段 / runtime 回执），其余全过：合成器全程 AudioContext 时钟调度（无 setTimeout，窗口最小化时不会被 Electron 后台节流毁掉时序）、打包 icon 经 extraResources 进 resourcesPath 与 handler 路径一致、showMainWindow 处理最小化恢复、主进程 sender/title 校验与 `silent: true` 全对。
+
+**揪出一处**：`App.tsx` 完成 effect 里通知标题的会话匹配写的是 `curr.id ?? '#'`——`curr.id` 已在两行前归一成空串（`?? ''`），`??` 永不触发，是死分支；且与顶栏既有口径（同文件 575 行 `snapshot.status.sessionId ?? '#'`）漂移：sessionId 还没落盘时空串拼出 `.jsonl`，`endsWith('.jsonl')` 会**错配到列表里第一个会话**的标题，而不是按设计回落「Muse Code」。修成与顶栏逐字同款（用 `snapshot.status.sessionId ?? '#'`），`curr.id` 只留给跳变判同。
+
+**回归**：双端 typecheck + build 绿；sound-notify-check 31 断言全绿；40 个 check 类探针循环电池全绿。**browser-check 12.x 环境烟测失败**（198 PASS / 1 FAIL）：真启动受控 Chrome 等 DevToolsActivePort 30s 超时——本机浏览器环境态问题（与本次渲染层一行改动无交集，13.x 完整生命周期 198 项全过），两次重跑同点复现，记录在案。重打包（nsis + portable 签名完成）、dist-presets-probe 全过、pkg-smoke 截图冒烟绿（hasApp/hasComposer/hasSidebar/rendered 全 true，目检非白屏）。
