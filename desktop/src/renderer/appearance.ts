@@ -8,6 +8,7 @@
  */
 import type { ThemeMode, UiDensity, UiFontSize, UiPrefsView, UiProcessFold } from '@dsc/runtime/contract.js'
 import { dsc } from './bridge.js'
+import { normalizeSoundVariant } from './turn-notify.js'
 
 export type { ThemeMode, UiDensity, UiFontSize, UiProcessFold }
 
@@ -140,6 +141,11 @@ export function normalizeUiPrefs(prefs: UiPrefsView): UiPrefsView {
     // 判 `=== true` 让「缺项」与「明确的 false」落到同一个结果上。
     reasoningDefaultOpen: prefs.reasoningDefaultOpen === true,
     toolDefaultOpen: prefs.toolDefaultOpen === true,
+    // 任务完成提醒三件套默认全开：口径与上面相反——只有明确的 false 才算关，
+    // 缺项（undefined）回落开，与 App 首帧 state 的出厂默认一致；音色过一遍夹取。
+    turnCompleteSound: prefs.turnCompleteSound !== false,
+    turnCompleteSoundVariant: normalizeSoundVariant(prefs.turnCompleteSoundVariant),
+    turnCompleteNotify: prefs.turnCompleteNotify !== false,
     // 分组展开态与会话手动顺序：老宿主回读里没有就给空表，别让侧栏读 undefined。
     sessionExpansion: prefs.sessionExpansion ?? {},
     sessionOrder: prefs.sessionOrder ?? {}

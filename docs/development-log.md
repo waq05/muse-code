@@ -1379,3 +1379,9 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **揪出一处**：`App.tsx` 完成 effect 里通知标题的会话匹配写的是 `curr.id ?? '#'`——`curr.id` 已在两行前归一成空串（`?? ''`），`??` 永不触发，是死分支；且与顶栏既有口径（同文件 575 行 `snapshot.status.sessionId ?? '#'`）漂移：sessionId 还没落盘时空串拼出 `.jsonl`，`endsWith('.jsonl')` 会**错配到列表里第一个会话**的标题，而不是按设计回落「Muse Code」。修成与顶栏逐字同款（用 `snapshot.status.sessionId ?? '#'`），`curr.id` 只留给跳变判同。
 
 **回归**：双端 typecheck + build 绿；sound-notify-check 31 断言全绿；40 个 check 类探针循环电池全绿。**browser-check 12.x 环境烟测失败**（198 PASS / 1 FAIL）：真启动受控 Chrome 等 DevToolsActivePort 30s 超时——本机浏览器环境态问题（与本次渲染层一行改动无交集，13.x 完整生命周期 198 项全过），两次重跑同点复现，记录在案。重打包（nsis + portable 签名完成）、dist-presets-probe 全过、pkg-smoke 截图冒烟绿（hasApp/hasComposer/hasSidebar/rendered 全 true，目检非白屏）。
+
+## 阶段 61：完成提醒测试执行轮——补上渲染层 prefs 归一漏掉的三字段（0.6.40 补丁 2）
+
+按测试计划逐项执行：sound-notify.ps1 实机走查重跑全绿（实例 A 两条 stderr 通知——直调链路与完成跳变各一，`notified`/`acProbe`/`replyOk` 全 true；实例 B marks 含「任务完成提醒」组；假端点本轮恰好 chat+title 一组，server-log 追加式前三组是上轮残留；真实 ~/.dsc 指纹逐文件一致 189 文件）。截图目检：设置页「任务完成提醒」三行版式对齐、说明文案齐全；主界面一轮真对话完整（回复/用量/标题生成都在）。注意通知标题显示的是**完成瞬间的**会话标题（首条用户消息版），LLM 生成的正式标题在其后异步到达才替换——时序内联，非回归。
+
+**又揪出一处**：`appearance.ts` 的 `normalizeUiPrefs` 对三新字段零处理（`...prefs` 原样透传）——与阶段 59 交付说明宣称的「渲染层缺项 `!== false` 回落开」不符；既有的 `reasoningDefaultOpen`/`toolDefaultOpen` 都有渲染层第二层归一（不信任宿主形状的纵深防御），新字段漏了这层。宿主读档白名单目前恒返回归一值所以没暴露成可见 bug，但补齐：两开关 `!== false`（缺项回落**开**，与 `=== true` 的收起默认方向相反——出厂语义就是开）、音色过 `normalizeSoundVariant`。appearance.ts 因 import bridge.js 值依赖探针跑不了，这层归一无独立断言（normalizeSoundVariant 本体有探针九例），如实记录。typecheck + build + sound 探针 + 重打包 + pkg-smoke 全绿。
