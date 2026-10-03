@@ -111,8 +111,19 @@ export function Sidebar(props: {
   const [searching, setSearching] = useState(false)
   const [query, setQuery] = useState('')
   /** 打开着行菜单的行（工作区行是 `w:<cwd>`，会话行是 `s:<路径>`）。会话行由右键唤起，
-      带指针坐标（fixed 贴指针，与 dock 页签右键菜单同款）；工作区行由 `···` 唤起，就地展开。 */
-  const [menu, setMenu] = useState<{ key: string; x?: number; y?: number } | null>(null)
+      带指针坐标（fixed 贴指针，与 dock 页签右键菜单同款）；工作区行由 `···` 唤起，带按钮
+      坐标（fixed 贴按钮，底部放不下翻到按钮上方）——就地展开会被滚动区的 overflow 裁掉，
+      视图菜单当年就是这个坑（见 viewMenu 的注释）。 */
+  const [menu, setMenu] = useState<{
+    key: string
+    /** 右键唤起：指针坐标。 */
+    x?: number
+    y?: number
+    /** `···` 唤起：菜单左缘横坐标 + 纵向锚（top = 按钮下方，bottom = 按钮上方，二选一）。 */
+    left?: number
+    top?: number
+    bottom?: number
+  } | null>(null)
   /**
    * 视图选项菜单（分组 / 排序 / 筛选）的落点。用视口坐标而不是就地绝对定位：
    * 这个菜单挂在滚动区里的头部上，就地定位会被 `overflow-y: auto` 裁掉。
@@ -691,7 +702,9 @@ export function Sidebar(props: {
               style={{
                 position: 'fixed',
                 left: Math.min(menu.x, window.innerWidth - 220),
-                top: Math.min(menu.y, window.innerHeight - 300),
+                // 菜单实际高约 160px（5 项 + 分隔线）：夹取值贴着它给，不然靠底的
+                // 行右键时菜单会跟指针脱开一大截
+                top: Math.min(menu.y, window.innerHeight - 240),
               }}
               onClick={(event) => event.stopPropagation()}
             >
@@ -1010,7 +1023,19 @@ export function Sidebar(props: {
                     data-tip="更多操作"
                     onClick={(event) => {
                       event.stopPropagation()
-                      setMenu(menu?.key === key ? null : { key })
+                      if (menu?.key === key) {
+                        setMenu(null)
+                        return
+                      }
+                      // fixed 贴按钮：默认在按钮下方 6px；底部空间放不下（菜单最高约
+                      // 5 项 ≈ 180px，留余量判 240）就翻到按钮上方 6px 向上伸展。
+                      const rect = event.currentTarget.getBoundingClientRect()
+                      const fitsBelow = window.innerHeight - rect.bottom >= 240
+                      setMenu({
+                        key,
+                        left: Math.max(8, rect.right - 200),
+                        ...(fitsBelow ? { top: rect.bottom + 6 } : { bottom: window.innerHeight - rect.top + 6 }),
+                      })
                     }}
                   >
                     <IconMore size={15} />
@@ -1029,7 +1054,15 @@ export function Sidebar(props: {
                 {menu?.key === key && (
                   <>
                     <div className="menu-backdrop" onClick={() => setMenu(null)} />
-                    <div className="row-menu" onClick={(event) => event.stopPropagation()}>
+                    <div
+                      className="row-menu"
+                      style={{
+                        position: 'fixed',
+                        left: menu.left ?? 8,
+                        ...(menu.bottom !== undefined ? { bottom: menu.bottom } : { top: menu.top ?? 8 }),
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                    >
                       <button className="menu-item" onClick={() => reveal(cwd)}>
                         <IconFolderOpen size={15} /> 在资源管理器中打开
                       </button>

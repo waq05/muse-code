@@ -208,7 +208,12 @@ export function Dock(props: {
       {menu !== null && (
         <div
           className="row-menu dock-tab-menu"
-          style={{ position: 'fixed', left: menu.x, top: menu.y }}
+          style={{
+            position: 'fixed',
+            left: Math.min(menu.x, window.innerWidth - 140),
+            // dock 区贴着窗口底缘：不夹取的话菜单下半截会伸出窗外
+            top: Math.min(menu.y, window.innerHeight - 120),
+          }}
           onClick={(event) => event.stopPropagation()}
         >
           <button

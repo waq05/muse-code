@@ -745,11 +745,14 @@
 /* 侧栏/顶栏的行菜单。浮起来这件事跟原语 .dsc-pop 用同一套做法
    （弹层底色 + 发丝边 + shadow-md），圆角同一档；以前这里用 shadow-float
    （浮层那一档更重的阴影）+ 3px 与 4px 两种圆角，于是同一个应用里
-   「⋯ 菜单」和别处的菜单不是一个长相。 */
+   「⋯ 菜单」和别处的菜单不是一个长相。
+
+   位置一律归各消费方自己给（贴指针的右键菜单 fixed + inline 坐标，
+   其余显式挂点）：以前类上默认 top: calc(100% - 2px) + right: 4px，
+   而 fixed 贴指针的菜单 inline 只给 left/top——left 与遗留的 right 并存
+   把容器横向拉满，菜单项只占左边一小列、空壳横贯整个窗口。 */
 .row-menu {
   position: absolute;
-  top: calc(100% - 2px);
-  right: 4px;
   z-index: var(--dsc-z-menu);
   min-width: 190px;
   padding: 4px;

@@ -1385,3 +1385,13 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 按测试计划逐项执行：sound-notify.ps1 实机走查重跑全绿（实例 A 两条 stderr 通知——直调链路与完成跳变各一，`notified`/`acProbe`/`replyOk` 全 true；实例 B marks 含「任务完成提醒」组；假端点本轮恰好 chat+title 一组，server-log 追加式前三组是上轮残留；真实 ~/.dsc 指纹逐文件一致 189 文件）。截图目检：设置页「任务完成提醒」三行版式对齐、说明文案齐全；主界面一轮真对话完整（回复/用量/标题生成都在）。注意通知标题显示的是**完成瞬间的**会话标题（首条用户消息版），LLM 生成的正式标题在其后异步到达才替换——时序内联，非回归。
 
 **又揪出一处**：`appearance.ts` 的 `normalizeUiPrefs` 对三新字段零处理（`...prefs` 原样透传）——与阶段 59 交付说明宣称的「渲染层缺项 `!== false` 回落开」不符；既有的 `reasoningDefaultOpen`/`toolDefaultOpen` 都有渲染层第二层归一（不信任宿主形状的纵深防御），新字段漏了这层。宿主读档白名单目前恒返回归一值所以没暴露成可见 bug，但补齐：两开关 `!== false`（缺项回落**开**，与 `=== true` 的收起默认方向相反——出厂语义就是开）、音色过 `normalizeSoundVariant`。appearance.ts 因 import bridge.js 值依赖探针跑不了，这层归一无独立断言（normalizeSoundVariant 本体有探针九例），如实记录。typecheck + build + sound 探针 + 重打包 + pkg-smoke 全绿。
+
+## 阶段 62：侧栏菜单两报障——右键菜单横贯窗口、工作区「···」贴底被裁（0.6.41）
+
+用户实测报的两个侧栏菜单 bug，附截图：① 会话右键菜单「特别长一条」——菜单项只占左边一小列，容器横贯整个窗口；② 工作区行在最底下时点「···」更多，菜单被侧栏底部裁掉。
+
+**根因一（超宽）**：`.row-menu` 类上默认 `top: calc(100% - 2px); right: 4px`（为「···」贴行右缘而设），而三处 fixed 贴指针/贴按钮的菜单（会话右键 `sess-ctx-menu`、dock 页签右键 `dock-tab-menu`、工作区「···」）inline 只给 `left`——**left 与遗留的 right 并存**（absolute/fixed 且 width:auto）把容器从 left 一直拉到视口右缘，菜单项窄列、空壳通栏。修法：`.row-menu` 删掉默认 top/right（全量核对过 6 个消费方——view-menu/`ws-open-menu`/`sub-menu` 全都显式定位，无一依赖默认值），位置一律归各消费方自己给；一处 CSS 删默认值同时修好两个右键菜单并杜绝复发。
+
+**根因二（贴底被裁）**：工作区「···」菜单 absolute 就地展开（`top: calc(100% - 2px)`），挂在 `.group-row`（position:relative）里，被滚动区 `overflow-y: auto` 裁掉——viewMenu 当年正是这个坑（注释 116-118 写着「就地定位会被 overflow-y: auto 裁掉」），改成视口坐标时工作区「···」没一起改。修法：对齐 viewMenu 先例，`···` 按钮点击时 `getBoundingClientRect()` 记按钮坐标，菜单改 fixed 贴按钮（left = 按钮右缘 − 200、`Math.max(8, …)` 防窄窗出左缘）；底部空间 < 240（菜单最高约 5 项 ≈ 180px 留余量）翻到按钮上方（CSS `bottom`，不用估菜单高度）。state 从 `{key,x?,y?}` 扩成 `{key,x?,y?,left?,top?,bottom?}`。顺手：会话右键菜单的垂直夹取 300→240（菜单实际高约 160，300 会让靠底行的菜单与指针脱开一大截）；dock 页签菜单加同款左右下夹取（原来完全无夹取，dock 贴窗口底缘会伸出窗外）。
+
+**走查**（`desktop/shots/menu-check.ps1`，复用 sound-home、无假端点）：三场景数值断言全绿——右键菜单宽 190px（min-width 收缩，修复前 ≈ 视口宽 − left ≈ 1700+）且完整在视口内；空间充足时菜单贴按钮下方 6px（downOk）；贴底翻转用「patch 按钮实例 getBoundingClientRect 成贴视口底缘的假矩形」构造（真实内容不足一屏、窗口有 640 下限构造不出真实贴底；判定与 CSS bottom 同源自洽，真实 innerHeight 不动）——菜单底边精确贴锚点 top−6（846 = 852−6）且完整可见（flipOk）。**走查脚本的三个坑记录在案**：① `.row-actions` 隐藏时按钮 rect 全 0——`body.classList.add('shot-reveal')` 让按钮组常驻（与用户 hover 后点击等价）；② patch `window.innerHeight` 后 `delete` 会让布局代码读到 undefined、渲染层崩（capturePage UnknownVizError + 宿主 invoke 报退出）——要么不 patch、要么恢复原值，本例换成自洽的按钮 rect patch；③ pwsh 相对路径跟 cwd 漂移（/d/dsc 与 /d/dsc/desktop 之间），跑前先 cd。sound-notify.ps1 对照重跑全绿（应用本身没坏，纯属脚本问题）。typecheck + build + sound 探针 + 重打包 + pkg-smoke 全绿。bump 0.6.41。
