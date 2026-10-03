@@ -147,6 +147,13 @@ export const runtimePlugin: Plugin.Object = {
         return team.message(name, text)
       },
 
+      removeTeammate(name) {
+        // 与 stopTeammate 同一条理由：team 是可选服务，只能 ctx.get
+        const team = ctx.get('team')
+        if (team === undefined) return Promise.reject(new Error('子智能体插件没开，名册里没有可移除的队友'))
+        return team.remove(name)
+      },
+
       peekTranscript(file) {
         const team = ctx.get('team')
         if (team === undefined) return Promise.reject(new Error('子智能体插件没开，看不到队友的运行记录'))

@@ -1040,6 +1040,11 @@ export interface DscRuntime {
    */
   messageTeammate(name: string, text: string): Promise<string>
   /**
+   * 把一个收工的队友从名册移除（运行记录文件一并删除，名字随之释放）。
+   * 还在干活的队友会被拒绝（先停止）；名字不存在时返回的那句话就是明确的错误说明，不抛错。
+   */
+  removeTeammate(name: string): Promise<string>
+  /**
    * 只读重放一个会话文件的对话条目（看队友在干什么用）。
    * 它不改那个文件，也不能归档/删除/分叉——校验在 core/session.ts。
    */

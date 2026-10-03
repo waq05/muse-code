@@ -18,7 +18,7 @@
  * @module dsc/plugins/subagent
  */
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { Transcript } from '../adapter/transcript.js'
@@ -512,6 +512,40 @@ ${body}
       // 名字不存在时返回的那句话本身就是给用户看的错误说明。
       stop: async (name: string): Promise<string> => stopTeammate(name, 'stop'),
       message: async (name: string, text: string): Promise<string> => messageTeammate(name, text, 'user'),
+      remove: async (name: string): Promise<string> => {
+        // 还在干活的先停止（文件正被流式写入，删了也会被重建）；收工的才许移除
+        const live = teammates.get(name)
+        if (live !== undefined && live.state === 'working') {
+          return `队友「${name}」还在干活：先停止，再从名册移除。`
+        }
+        const record = readRoster().find((entry) => entry.name === name)
+        if (live === undefined && record === undefined) return `名册里没有叫「${name}」的队友。`
+        teammates.delete(name)
+        writeRoster(readRoster().filter((entry) => entry.name !== name))
+        // 运行记录文件一并删：它只在名册里可达，留着就是孤儿。只认 teammateRoot 下的路径，
+        // 删不动（被占用等）不算失败——名册已经摘掉，孤儿文件不影响任何列表。
+        const file = live?.session.filePath ?? record?.file
+        let removedFile = false
+        if (typeof file === 'string' && file !== '') {
+          const resolvedFile = resolve(file)
+          if (resolvedFile.startsWith(resolve(teammateRoot()))) {
+            try {
+              // rmSync 的 force 对不存在的文件也算成功：如实报告文件本来就在不在
+              const existed = existsSync(resolvedFile)
+              rmSync(resolvedFile, { force: true })
+              rmSync(`${resolvedFile}.lock`, { force: true })
+              removedFile = existed
+            } catch {
+              // 文件被占用：下次同位置的记录不冲突（uuid 命名），孤儿文件无害
+            }
+          }
+        }
+        // T21：队友名册进了快照的跨会话状态面，摘掉也要让侧栏/面板立刻知道
+        ctx.transcript.touch()
+        return removedFile
+          ? `已把「${name}」从名册移除，运行记录一并删除。`
+          : `已把「${name}」从名册移除（它的运行记录文件不在了，跳过删除）。`
+      },
     }
     ctx.provide('team', teamService)
 

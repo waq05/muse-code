@@ -596,6 +596,12 @@ export interface TeamService {
    * @returns 给用户看的一句话；名字不存在或话是空的，这句话就是明确的错误说明（不抛错）。
    */
   message(name: string, text: string): Promise<string>
+  /**
+   * 把一个收工的队友从名册移除，运行记录文件一并删除（它只在名册里可达），
+   * 名字随之释放、之后派出的队友可以复用。还在干活的队友不接受移除——先停止。
+   * @returns 给用户看的一句话；名字不存在或还在干活，这句话就是明确的错误说明（不抛错）。
+   */
+  remove(name: string): Promise<string>
 }
 
 /**

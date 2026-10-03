@@ -1341,3 +1341,17 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **验证**：走查两项判定全绿复跑两轮——seen=[working, awaiting-approval]、审批卡工具=write、批准后状态点消失+回复出现、侧栏出「E2E 状态点导出走查」自动标题、/export 出「已导出 4 条消息 → …」系统行且 675 字节 markdown 落盘、假端点请求序 tool-call→after-tool→title；探测文件（升权审批后）落真实 %TEMP% 并验内容。探针：desktop 4 + 根目录 38 全部零失败（含修好的 6 个；win-token-smoke 19、kernel-boot 亦绿），fold-check 220。根 build + desktop build 绿。
 
 **诚实边界**：走查用假模型——模型内容质量、真实计费/限流行为不在覆盖面（限流解除后可用真模型再目检一轮，非阻塞）；桌面壳读真实 desktop.json 的隔离缝隙只读未写，未改行为（改它要动 Electron home 语义，收益低）；`更新检查 URL` 维持占位空串，等发布后填（用户已确认）。
+
+## 阶段 58：会话行操作对齐图二（图钉前置 + 右键菜单）+ 团队面板名册删除通路（0.6.39）
+
+用户两条补充任务：①会话行的图钉改到行首空白处悬浮展示、右侧「···」更多按钮去掉改右键；②智能体团队面板——「其它会话的队友」没有删除入口，问参考 dsh 是否有逻辑错误，并优化界面。
+
+**任务①（Sidebar.tsx + styles.css）**：对照用户的图二目标稿（dsh 本身没有会话置顶，图二是样式意图）。行首 16px 前导槽改造：有会话级状态时照旧画状态点（working/awaiting-approval），没有时画**前置图钉**——平时 `opacity: 0`，行悬浮/键盘聚焦时浮出，已置顶的常显并染黄色（沿用原 `.pin-mark` 的色彩语言）；点一下切换置顶。行尾 `.row-actions` 只剩归档/恢复一颗钮（图钉钮、`···` 钮退场，时间旁的置顶标与 `.pin-mark` 样式一并删除）。右键菜单：会话行本来就有 `onContextMenu` 开行菜单，但只会贴在行底——现在菜单状态带指针坐标（`{key, x, y}`），`position: fixed` 贴指针展开并做视口收口（左/上各留 220/300px），与 dock 页签右键菜单同款；菜单项不变（置顶/重命名/分叉/复制 ID/归档·恢复）。工作区组行的 `···` 菜单保持原样（点击唤起、就地展开），只把菜单状态适配成对象形状。
+
+**任务②——定性**：roster（`~/.dsc/team/roster.json`，上限 200 条）只进不出：名册没有删除 API、UI 没有删除入口，收工队友（尤其别的会话派出的）永久挂着，名字还被 `uniqueName` 永久占位；记录指向的运行记录文件被删后条目照样在，点开就报错。**不算逻辑错误，是缺了一整条清理通路**——dsh 没有这个问题是因为它的子智能体就是会话本体（`dsh-resource://subagentchat/session/...`），随会话列表的生灭管理；我们的 roster 是自研记账，补删除即可。另外「停止」按钮的条件原来是 `working || stopped`——对已停止的队友再点停止是空话，收紧为仅 working。
+
+**任务②——落地**：核心 `TeamService.remove(name)`（subagent.ts）：working 的拒绝（先停止——文件正被流式写入，删了也会被重建）；收工的从内存表与名册同时摘除，运行记录文件连同 `.lock` 一并删除（只认 `teammateRoot()` 下的路径，越界路径不删；`rmSync force` 对不存在的文件也算成功，回执如实区分「已删」与「本来就不在」）；名字随之释放。合同链：`DscRuntime.removeTeammate`（contract.ts）→ runtime.ts（team 可选服务 ctx.get 模式，同 stopTeammate）→ host-methods.ts 白名单 → bridge.ts。UI（TeamPanel.tsx）：所有收工的行（**含其它会话派出的**——这正是清名册的入口）都有「移除」，确认框标 `danger: true`（破坏性确认钮走红档），文案写明「不进回收站、名字释放」；行尾动作渲染条件收紧；面板头与折叠组的提示文案同步。面板 CSS：`height: auto`（原来固定 560px 高，队伍只有两行时下半屏全是空的），`max-height` 封顶内部滚动，宽度 760→720。
+
+**验证**：新增 `shots/team-remove-check.mjs`（8 条断言全绿）：真内核 + plugins.json 打开 subagent，种两条名册——收工队友移除（文件与租约一并删、名册摘除、名字释放）、文件已丢的老记录照删（回执如实说跳过文件）、不存在的名字给明确说明、teammateRoot 之外的路径不删。实机两用例（`shots/ui-row-team.ps1` + `ui-row-team-seed.mjs`，隔离 HOME + 真实 ~/.dsc 指纹比对一致）：ui-row 三项判定全绿（行尾恰好一颗钮、两行都有前置图钉、`pin-mark` 清零、图钉默认 opacity 0、点击置顶后 `.pinned` 常显、右键菜单 fixed 定位且含分叉/复制 ID、点遮罩关闭）；ui-team 两项判定全绿（面板直开、折叠组两行都有移除、确认框文案含「运行记录」、确认后行数 2→1），跑后对账 roster 只剩 explorer-2、explorer-1.jsonl 与租约确实被删。探针 43 个全绿（含新探针；browser-check 198/199——12.x 真启动烟测在本机偶发「Edge 起来但不写 DevToolsActivePort」，纯 Edge + HOME 覆盖可脱离 dsc 代码复现，属环境敏感项非代码回归）。根 build + desktop build + typecheck 绿。
+
+**诚实边界**：移除只清运行记录文件，队友可能派生过的后台进程仍由宿主收摊逻辑管（remove 拒绝 working 已把风险面收到最小）；dsh 式「随会话删除联动清名册」没做（会话删除时名册保留记录，用户可从面板手动清——记录指向的文件丢了也照删不误）。

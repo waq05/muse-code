@@ -34,9 +34,10 @@ export const INVOKABLE_METHODS = [
   'listPlugins',
   'setPluginEnabled',
   'listTeammates',
-  // 队友的界面管理通道（等价于 subagent 工具的 stop / message）；远程白名单里没有它们
+  // 队友的界面管理通道（等价于 subagent 工具的 stop / message；远程白名单里没有它们）
   'stopTeammate',
   'messageTeammate',
+  'removeTeammate',
   'peekTranscript',
   'runCommand',
   'setPolicy',

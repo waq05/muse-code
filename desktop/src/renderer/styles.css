@@ -389,8 +389,8 @@
     color var(--dsc-dur) var(--dsc-ease);
 }
 
-/* dsh 的 16px 前导槽：会话级状态点（运行中/待批准）画在这里；现在没有
-   会话级状态数据，留空占位撑住几何。 */
+/* dsh 的 16px 前导槽：有会话级状态时画状态点（运行中/待批准），
+   没有时画前置图钉（悬浮浮出，已置顶常显），几何始终撑住。 */
 .sess-item .row-slot {
   flex: none;
   height: var(--dsc-row-lead);
@@ -468,17 +468,43 @@
 }
 
 /* 行尾互换（dsh 的 time ↔ rowActions）：hover/键盘聚焦/菜单开着（钮上的 .on）
-   时，时间与置顶标让位给操作钮，行保持着高亮。 */
+   时，时间让位给操作钮，行保持着高亮。 */
 .sess-item:hover .when,
 .sess-item:focus-within .when,
 .sess-item:has(.row-actions .icon-btn.on) .when {
   display: none;
 }
 
-.sess-item:hover .pin-mark,
-.sess-item:focus-within .pin-mark,
-.sess-item:has(.row-actions .icon-btn.on) .pin-mark {
-  display: none;
+/* 行首前置图钉（图二样式）：平时隐形，悬浮/键盘聚焦时浮出；已置顶的常显并染强调色。
+   状态点占用的行（正在跑/等审批）整个前置槽让位给状态点，图钉只剩右键菜单里的入口。 */
+.sess-item .lead-pin {
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--dsc-r-badge);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  height: var(--dsc-row-lead);
+  justify-content: center;
+  opacity: 0;
+  padding: 0;
+  transition: opacity var(--dsc-dur) var(--dsc-ease), color var(--dsc-dur) var(--dsc-ease);
+  width: 16px;
+}
+
+.sess-item:hover .lead-pin,
+.sess-item:focus-within .lead-pin,
+.sess-item .lead-pin.pinned {
+  opacity: 1;
+}
+
+.sess-item .lead-pin.pinned {
+  color: var(--dsc-yellow);
+}
+
+.sess-item .lead-pin:hover {
+  color: var(--dsc-text-primary);
 }
 
 /* 「展开剩余 / 收起」（dsh 的 sessionOverflowButton）：占满一行的左对齐文本钮 */
@@ -693,15 +719,8 @@
   display: none;
 }
 
-.shot-reveal .sess-item .when,
-.shot-reveal .sess-item .pin-mark {
+.shot-reveal .sess-item .when {
   display: none;
-}
-
-.pin-mark {
-  display: inline-flex;
-  align-items: center;
-  color: var(--dsc-yellow);
 }
 
 .row-rename {
@@ -5362,8 +5381,11 @@ body.resizing iframe {
 
 /* 团队面板：与设置面板同档浮层（.settings-mask + .settings），尺寸小一号——里面只有一列名册 */
 .team-panel {
-  width: min(760px, calc(100vw - 80px));
-  height: min(560px, calc(100vh - 72px));
+  width: min(720px, calc(100vw - 80px));
+  /* 高度贴内容走，别撑出一屏空白（队伍就两行时面板下方全是空的）；
+     队伍真长时封顶、名单内部滚动。 */
+  height: auto;
+  max-height: min(560px, calc(100vh - 72px));
 }
 
 .team-list {

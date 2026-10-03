@@ -13,7 +13,8 @@
  *   - 运行记录是只读的（点开的是 TeammatePeek，那里不给发言口）；
  *   - 「停止」是尽力而为——宿主只能拦下还肯收手的队友，已经自己跑完的它改不了结果，
  *     接口回执原样显示，界面不替宿主打包票；
- *   - 其它会话的行不提供停止与发话：管它请切回派出它的那个会话。
+ *   - 其它会话的行不给停止与发话（管活请切回派出它的那个会话），但收工的可以
+ *     从这里移除——名册清理不必千里迢迢切回去；运行记录文件随移除一并删除。
  *
  * @module desktop/renderer/TeamPanel
  */
@@ -143,6 +144,35 @@ export function TeamMateRow(props: {
       .finally(() => setBusy(false))
   }
 
+  /** 从名册移除（只对收工的队友开放）：名册记录与运行记录文件一并清掉，名字随之释放。 */
+  const removeSelf = (): void => {
+    void confirmAction({
+      title: `移除队友「${mate.name}」？`,
+      detail:
+        '会把它从名册摘掉，运行记录文件一并删除（这个操作不进回收站）；名字随之释放，之后派出的新队友可以再叫这个名字。还在干活的队友要先停止才能移除。',
+      confirmLabel: '移除',
+      danger: true,
+    }).then((yes) => {
+      if (!yes) return
+      setBusy(true)
+      setNote('')
+      void props.proxy
+        .removeTeammate(mate.name)
+        .then(
+          (text) => {
+            setNoteBad(false)
+            setNote(text)
+            props.onChanged()
+          },
+          (error: unknown) => {
+            setNoteBad(true)
+            setNote(reasonOf(error))
+          },
+        )
+        .finally(() => setBusy(false))
+    })
+  }
+
   // 「哪来的」：本会话派出的标「本会话」，别的会话只给一段短 id（完整 id 进悬浮提示），
   // 老记录没有出生会话就整格不画。
   const sessionTag =
@@ -183,35 +213,52 @@ export function TeamMateRow(props: {
         {used ?? ''}
       </span>
       <span className="tm-state">{TEAMMATE_STATE_LABEL[mate.state]}</span>
-      <span className="team-acts">
-        {manageable && (mate.state === 'working' || mate.state === 'stopped') && (
-          <button
-            className="text-btn danger"
-            disabled={busy}
-            data-tip="停掉这个队友（尽力而为，已跑完的改不了结果）"
-            onClick={(event) => {
-              event.stopPropagation()
-              stop()
-            }}
-          >
-            停止
-          </button>
-        )}
-        {manageable && (
-          <button
-            className="text-btn"
-            aria-pressed={writing}
-            disabled={busy}
-            data-tip="给这个队友发一句话（走宿主转发）"
-            onClick={(event) => {
-              event.stopPropagation()
-              setWriting((current) => !current)
-            }}
-          >
-            发话
-          </button>
-        )}
-      </span>
+      {/* 行尾动作：停止只对还在干活的（已停止的再点停止是空话）；移除对所有收工的开放——
+          包括其它会话派出的（这正是清名册的入口），正在干活的先停止。 */}
+      {(manageable || mate.state !== 'working') && (
+        <span className="team-acts">
+          {manageable && mate.state === 'working' && (
+            <button
+              className="text-btn danger"
+              disabled={busy}
+              data-tip="停掉这个队友（尽力而为，已跑完的改不了结果）"
+              onClick={(event) => {
+                event.stopPropagation()
+                stop()
+              }}
+            >
+              停止
+            </button>
+          )}
+          {manageable && (
+            <button
+              className="text-btn"
+              aria-pressed={writing}
+              disabled={busy}
+              data-tip="给这个队友发一句话（走宿主转发）"
+              onClick={(event) => {
+                event.stopPropagation()
+                setWriting((current) => !current)
+              }}
+            >
+              发话
+            </button>
+          )}
+          {mate.state !== 'working' && (
+            <button
+              className="text-btn danger"
+              disabled={busy}
+              data-tip="从名册移除，运行记录一并删除（不进回收站）"
+              onClick={(event) => {
+                event.stopPropagation()
+                removeSelf()
+              }}
+            >
+              移除
+            </button>
+          )}
+        </span>
+      )}
       {/* 回执与输入口各占整行：行首那几格在窄面板里也不用为了它们让位 */}
       {(writing || note !== '') && (
         <span className="team-side" onClick={(event) => event.stopPropagation()}>
@@ -290,7 +337,7 @@ export function SubagentMenu(props: {
               />
             ))}
             <p className="team-hint">
-              点一行看它的运行记录（只读）；「停止」是尽力而为，「发话」由宿主转交给它。
+              点一行看它的运行记录（只读）；「停止」是尽力而为，「发话」由宿主转交，收工的可以移除。
             </p>
           </div>
         </>
@@ -331,7 +378,7 @@ export function TeamPanel(props: {
           <div className="settings-head">
             <div className="settings-head-text">
               <h2>智能体团队</h2>
-              <p>这里是本会话派出的队伍，切到别的会话就是另一支；其它会话的队友在底部只读列出。</p>
+              <p>这里是本会话派出的队伍，切到别的会话就是另一支；其它会话的队友在底部列出，可点开记录或移除。</p>
             </div>
             <button className="icon-btn" autoFocus data-tip="关闭，快捷键 Esc" onClick={props.onClose}>
               <IconClose size={16} />
@@ -385,7 +432,8 @@ export function TeamPanel(props: {
                       />
                     ))}
                     <p className="team-hint">
-                      这些队友是别的会话（或更早的版本）派出的：这里只读，管理请切回派出它的会话。
+                      这些队友是别的会话（或更早的版本）派出的：点一行看运行记录，收工的可以移除；
+                      正在干活的请切回派出它的会话再管。
                     </p>
                   </div>
                 )}

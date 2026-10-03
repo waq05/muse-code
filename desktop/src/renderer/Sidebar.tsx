@@ -110,8 +110,9 @@ export function Sidebar(props: {
   const [sessionLimits, setSessionLimits] = useState<Record<string, number>>({})
   const [searching, setSearching] = useState(false)
   const [query, setQuery] = useState('')
-  /** 打开着 `···` 菜单的行（工作区行是 `w:<cwd>`，会话行是 `s:<路径>`）。 */
-  const [menu, setMenu] = useState<string | null>(null)
+  /** 打开着行菜单的行（工作区行是 `w:<cwd>`，会话行是 `s:<路径>`）。会话行由右键唤起，
+      带指针坐标（fixed 贴指针，与 dock 页签右键菜单同款）；工作区行由 `···` 唤起，就地展开。 */
+  const [menu, setMenu] = useState<{ key: string; x?: number; y?: number } | null>(null)
   /**
    * 视图选项菜单（分组 / 排序 / 筛选）的落点。用视口坐标而不是就地绝对定位：
    * 这个菜单挂在滚动区里的头部上，就地定位会被 `overflow-y: auto` 裁掉。
@@ -562,9 +563,10 @@ export function Sidebar(props: {
           rowKeys(event, sKey, 'session')
         }}
         onContextMenu={(event) => {
-          // 右键 = 直接打开这一行的 `···` 菜单（归档行也一样：里面的复制 ID 与恢复都还能用）
+          // 右键 = 这一行操作菜单贴着指针展开（dock 页签同款）；归档行也一样，
+          // 里面的复制 ID 与恢复都还能用
           event.preventDefault()
-          setMenu(sKey)
+          setMenu({ key: sKey, x: event.clientX, y: event.clientY })
         }}
         draggable={draggable}
         onDragStart={(event: DragEvent<HTMLDivElement>) => {
@@ -596,14 +598,30 @@ export function Sidebar(props: {
             : undefined
         }
       >
-        {/* T21 行首状态点：working = 正在跑（当前回合或队友活着），awaiting-approval = 挂着等批 */}
+        {/* T21 行首状态点：working = 正在跑（当前回合或队友活着），awaiting-approval = 挂着等批。
+            没有状态点的前置槽让位给图钉（图二样式）：悬浮浮出，已置顶的常显，点一下切换。 */}
         {(() => {
           const runState = props.sessionStates[session.id]
-          return runState === undefined ? (
-            <span className="row-slot" aria-hidden />
-          ) : (
-            <span className={`row-slot session-dot ${runState}`} data-tip={runState === 'working' ? '这个会话正在跑' : '挂着等你审批'} aria-label={runState === 'working' ? '运行中' : '等待审批'}>
-              <span className="dot" />
+          if (runState !== undefined) {
+            return (
+              <span className={`row-slot session-dot ${runState}`} data-tip={runState === 'working' ? '这个会话正在跑' : '挂着等你审批'} aria-label={runState === 'working' ? '运行中' : '等待审批'}>
+                <span className="dot" />
+              </span>
+            )
+          }
+          return (
+            <span className="row-slot">
+              <button
+                className={`lead-pin${session.pinnedAt !== undefined ? ' pinned' : ''}`}
+                data-tip={session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
+                aria-label={session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void run(props.proxy.setSessionPinned(session.id, session.pinnedAt === undefined))
+                }}
+              >
+                <IconPin size={13} />
+              </button>
             </span>
           )
         })()}
@@ -633,25 +651,12 @@ export function Sidebar(props: {
           </span>
         )}
         {/* 归档行的时间显示归档时刻：那才是它在这一档里排队的依据。
-            行尾时间戳与操作钮占同一格，hover 时互换（dsh 的 time ↔ rowActions）。 */}
+            行尾时间戳与操作钮占同一格，hover 时互换（dsh 的 time ↔ rowActions）。
+            图钉已挪到行首前置槽，「更多操作」由右键代替——行尾只剩归档/恢复一件事。 */}
         <span className="when">
           {relative(sort === 'created' ? session.createdAt : (session.archivedAt ?? session.updatedAt))}
         </span>
-        {session.pinnedAt !== undefined && (
-          <span className="pin-mark" data-tip="已置顶">
-            <IconPin size={12} />
-          </span>
-        )}
         <span className="row-actions" onClick={(event) => event.stopPropagation()}>
-          <button
-            className="icon-btn"
-            data-tip={session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
-            onClick={(event) => {
-              void run(props.proxy.setSessionPinned(session.id, session.pinnedAt === undefined))
-            }}
-          >
-            <IconPin size={14} />
-          </button>
           {isArchived ? (
             <button
               className="icon-btn"
@@ -677,20 +682,19 @@ export function Sidebar(props: {
               <IconArchive size={14} />
             </button>
           )}
-          <button
-            className={`icon-btn${menu === sKey ? ' on' : ''}`}
-            data-tip="更多操作"
-            onClick={(event) => {
-              setMenu(menu === sKey ? null : sKey)
-            }}
-          >
-            <IconMore size={15} />
-          </button>
         </span>
-        {menu === sKey && (
+        {menu?.key === sKey && menu.x !== undefined && menu.y !== undefined && (
           <>
             <div className="menu-backdrop" onClick={() => setMenu(null)} />
-            <div className="row-menu" onClick={(event) => event.stopPropagation()}>
+            <div
+              className="row-menu sess-ctx-menu"
+              style={{
+                position: 'fixed',
+                left: Math.min(menu.x, window.innerWidth - 220),
+                top: Math.min(menu.y, window.innerHeight - 300),
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
               <button
                 className="menu-item"
                 onClick={() => {
@@ -1002,11 +1006,11 @@ export function Sidebar(props: {
                     </button>
                   )}
                   <button
-                    className={`icon-btn${menu === key ? ' on' : ''}`}
+                    className={`icon-btn${menu?.key === key ? ' on' : ''}`}
                     data-tip="更多操作"
                     onClick={(event) => {
                       event.stopPropagation()
-                      setMenu(menu === key ? null : key)
+                      setMenu(menu?.key === key ? null : { key })
                     }}
                   >
                     <IconMore size={15} />
@@ -1022,7 +1026,7 @@ export function Sidebar(props: {
                     <IconNewChat size={15} />
                   </button>
                 </span>
-                {menu === key && (
+                {menu?.key === key && (
                   <>
                     <div className="menu-backdrop" onClick={() => setMenu(null)} />
                     <div className="row-menu" onClick={(event) => event.stopPropagation()}>
