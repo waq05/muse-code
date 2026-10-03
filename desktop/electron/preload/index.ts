@@ -107,6 +107,11 @@ const api = {
     return ipcRenderer.invoke('dsc:open-external', url)
   },
 
+  /** 弹一条系统通知（任务完成提醒；点击通知唤回主窗口）。返回是否真的创建了。 */
+  notify(payload: { title: string; body?: string }): Promise<boolean> {
+    return ipcRenderer.invoke('dsc:notify', payload) as Promise<boolean>
+  },
+
   // ── dock：内置终端（宿主 desktop-dock 服务，管道模式）/ 内置浏览器 ──
 
   /** dock 终端输出流（term-spawn 会话 id 维度）。 */

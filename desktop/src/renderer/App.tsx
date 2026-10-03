@@ -8,6 +8,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'rea
 import type { ModelChoiceView, PluginInfoView, RuntimeSnapshot, TeammateView, TranscriptEntry, UiPrefsView } from '@dsc/runtime/contract.js'
 import { applyAppearance, loadCachedAppearance, normalizeUiPrefs, saveCachedAppearance } from './appearance.js'
 import { toastErr, toastOk } from './components/toast.js'
+import { playCompletionSound } from './completion-sound.js'
+import { completionNotifyBody, isBackgrounded, normalizeSoundVariant, turnCompleted } from './turn-notify.js'
 import { dsc, createRuntimeProxy, type RuntimeProxy } from './bridge.js'
 import { ApprovalCard } from './ApprovalCard.js'
 import { AskCard, GoalBar, PlanReview, TaskDock } from './TaskDock.js'
@@ -139,6 +141,10 @@ export function App(): JSX.Element {
     // 分组展开态与会话手动顺序：首帧空表，宿主回读到了再换成真值。
     sessionExpansion: {},
     sessionOrder: {},
+    // 任务完成提醒三项：出厂都开、1 号音色，宿主回读到了再换成真值。
+    turnCompleteSound: true,
+    turnCompleteSoundVariant: 1,
+    turnCompleteNotify: true,
   }))
   // 最近用过的工作目录：切过去但还没发过消息的工作区也要能在侧栏看到
   const [recentCwds, setRecentCwds] = useState<string[]>([])
@@ -406,6 +412,30 @@ export function App(): JSX.Element {
     }
     lastTurnState.current = state
   }, [snapshot, refreshMates])
+
+  // 任务完成提醒：同一会话内「跑动 → idle」跳变时，按设置播一声提示音、并在窗口
+  // 离开前台（最小化 / 缩托盘 / 失焦）时弹一条系统通知。判定与文案抽在 turn-notify.ts。
+  // 前台不弹通知——那时用户正看着，提示音已经足够；两个开关互不依赖。
+  const lastTurnForNotify = useRef<{ id: string; state: string } | null>(null)
+  useEffect(() => {
+    if (snapshot === null) return
+    // sessionId 可能是 null（新会话还没落盘）——归一成空串，与顶栏标题的 ?? '#' 口径一致
+    const curr = { id: snapshot.status.sessionId ?? '', state: snapshot.status.turnState }
+    const prev = lastTurnForNotify.current
+    lastTurnForNotify.current = curr
+    if (!turnCompleted(prev, curr)) return
+    if (uiPrefs.turnCompleteSound) {
+      playCompletionSound(normalizeSoundVariant(uiPrefs.turnCompleteSoundVariant))
+    }
+    if (uiPrefs.turnCompleteNotify && isBackgrounded()) {
+      // 通知标题用会话标题（照顶栏的解析口径），正文取最后一条回复的摘要
+      const session = snapshot.sessions.find((s) => s.id.endsWith(`${curr.id ?? '#'}.jsonl`))
+      const title = session?.title?.trim() || 'Muse Code'
+      void dsc
+        .notify({ title: `${title} · 任务完成`, body: completionNotifyBody(snapshot.entries) })
+        .catch(() => {})
+    }
+  }, [snapshot, uiPrefs.turnCompleteSound, uiPrefs.turnCompleteSoundVariant, uiPrefs.turnCompleteNotify])
 
   // 两个面板开着的时候每 3 秒拉一次（照项目里「看的这档是活的就轮询」的惯例）：
   // 队友在后台干活，状态、轮数、耗时一直在动。

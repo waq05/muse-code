@@ -393,7 +393,11 @@ export const runtimePlugin: Plugin.Object = {
                           ? patch.toolDefaultOpen
                             ? '工具卡默认展开'
                             : '工具卡默认收起'
-                          : '已保存工作区名字'
+                          : patch.turnCompleteSound !== undefined ||
+                              patch.turnCompleteSoundVariant !== undefined ||
+                              patch.turnCompleteNotify !== undefined
+                            ? '已保存任务完成提醒设置'
+                            : '已保存工作区名字'
         return Promise.resolve({ ok: true, notice })
       },
 

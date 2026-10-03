@@ -678,6 +678,18 @@ export interface UiPrefsView {
    * 键缺失或表里没有的会话按最近使用排在后面。
    */
   sessionOrder: Record<string, string[]>
+  /**
+   * 一轮干完（跑动 → 空闲）时播一声完成提示音吗（默认开）。桌面端行为偏好：
+   * 声音由桌面渲染层用 Web Audio 现场合成，远程界面（手机浏览器）不消费这几项。
+   */
+  turnCompleteSound: boolean
+  /** 完成提示音的音色编号（1–14，设置里选中即试听）；读档越界时夹回。 */
+  turnCompleteSoundVariant: number
+  /**
+   * 窗口不在前台（最小化 / 缩托盘 / 失焦）时，一轮干完弹一条系统通知吗（默认开）。
+   * 通知由桌面主进程创建，点击唤回主窗口；前台时不弹——那时提示音已经足够。
+   */
+  turnCompleteNotify: boolean
 }
 
 /** 分叉结果：成功时带新会话的 jsonl 路径，UI 拿它直接切过去。 */

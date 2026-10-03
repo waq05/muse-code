@@ -1355,3 +1355,19 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **验证**：新增 `shots/team-remove-check.mjs`（8 条断言全绿）：真内核 + plugins.json 打开 subagent，种两条名册——收工队友移除（文件与租约一并删、名册摘除、名字释放）、文件已丢的老记录照删（回执如实说跳过文件）、不存在的名字给明确说明、teammateRoot 之外的路径不删。实机两用例（`shots/ui-row-team.ps1` + `ui-row-team-seed.mjs`，隔离 HOME + 真实 ~/.dsc 指纹比对一致）：ui-row 三项判定全绿（行尾恰好一颗钮、两行都有前置图钉、`pin-mark` 清零、图钉默认 opacity 0、点击置顶后 `.pinned` 常显、右键菜单 fixed 定位且含分叉/复制 ID、点遮罩关闭）；ui-team 两项判定全绿（面板直开、折叠组两行都有移除、确认框文案含「运行记录」、确认后行数 2→1），跑后对账 roster 只剩 explorer-2、explorer-1.jsonl 与租约确实被删。探针 43 个全绿（含新探针；browser-check 198/199——12.x 真启动烟测在本机偶发「Edge 起来但不写 DevToolsActivePort」，纯 Edge + HOME 覆盖可脱离 dsc 代码复现，属环境敏感项非代码回归）。根 build + desktop build + typecheck 绿。
 
 **诚实边界**：移除只清运行记录文件，队友可能派生过的后台进程仍由宿主收摊逻辑管（remove 拒绝 working 已把风险面收到最小）；dsh 式「随会话删除联动清名册」没做（会话删除时名册保留记录，用户可从面板手动清——记录指向的文件丢了也照删不误）。
+
+## 阶段 59：任务完成提醒——完成提示音 + 后台系统通知（0.6.40）
+
+用户需求：一轮干完时响一声提示音；窗口在后台时桌面右下角弹系统通知；两项都要在设置里可开关；点名参考 codex 与 hermes，「可以抄他们的提示音效」。
+
+**参考结论**：codex 本机无音频资产可抄——CLI 的「提示音」是向终端写 BEL 字符（`\x07`）让终端自己发声（Windows Terminal/VS Code 终端走 Bel 后端，`codex-rs/tui/src/notifications/`），桌面应用已卸载；它的可取处是**触发语义**：回合完成事件（agent-turn-complete）仅在终端失焦时发出（`notification_condition = "unfocused"`）、无排队 follow-up 且无活动 goal 才算真完成。hermes（`D:\hermes\hermes-agent`，Nous Research，Apache-2.0）正相反：14 种音色全部 **Web Audio 现场合成**（振荡器 + 包络 + 带通噪声 + 卷积混响，「no asset to ship」），音色库 `apps/desktop/src/lib/completion-sound.ts` 零依赖音频文件——直接移植参数（音效本体），音名译成中文，去 nanostores/跨窗口认领依赖（单窗口应用不需要）。后台判定抄它的口径：`document.hidden` 只在最小化/被遮挡时翻转，alt-tab 后窗口可见但失焦也算「离开」，所以要再查 `document.hasFocus()`。通知主进程链路参考它的 Electron `Notification` 用法（点击聚焦窗口）。
+
+**信号**：渲染层快照的 `turnState` 在同一会话内「跑动 → idle」跳变即一轮干完（`turn-notify.ts` 纯函数 `turnCompleted`，带 sessionId 判同——切到一个本来就在空闲的会话不是完成；`awaiting-approval → idle` 也算，审批后继续跑完才到 idle）。判定与文案抽在零依赖模块 `desktop/src/renderer/turn-notify.ts`（探针直接 import 源码跑）：`turnCompleted` / `isBackgrounded` / `completionNotifyBody`（最后一条 text 条目压成一行、120 字截断）/ `normalizeSoundVariant`（与宿主 prefs.ts 的 readSoundVariant 同一张表，1–14 夹取）。App.tsx 完成 effect 与既有的「跑动→idle 重读名册」effect 并排，互不掺和。
+
+**声音**：`completion-sound.ts`（新）——信号链 voices → master(0.48) → 低通 3800Hz → 干声(0.88)+卷积混响湿声(0.34)，混响脉冲 1.6s 指数衰减白噪声生成一次缓存；音量压得很低（gain 0.008–0.07）。播放函数不查开关（hermes 同款：设置里「选中即试听」不受静音管），开关判断在 App 的 effect 与设置 UI 各自做。**通知**：preload 加 `dsc.notify` → 主进程 `ipcMain.handle('dsc:notify')`——`Notification` 恒 `silent: true`（声音由渲染层音效负责，开关独立，别让 Windows toast 音和我们的音效叠两声）、点击 `showMainWindow()`、icon 从 build/resources 取；`app.setAppUserModelId('io.dsc.desktop')`（与 electron-builder.yml 的 appId 一致，Windows toast 归属正确）；sender 校验与 title 非空校验照安全惯例；DSC_DESKTOP_SHOT 时打 stderr 自检日志（照 theme-source 先例）。
+
+**设置**：`UiPrefsView` 加三字段（`turnCompleteSound` / `turnCompleteSoundVariant` / `turnCompleteNotify`，出厂都开、1 号音色）——存 `~/.dsc/settings.json` 的 ui 段，宿主 prefs.ts 读档白名单 + 夹取归一（坏值回落，绝不拦启动）；渲染层 `normalizeUiPrefs` 缺项回落开（`!== false`）。设置 → 通用新增「任务完成提醒」组三行（开关 / 音色 14 选 1 选中即试听 / 后台通知），`setUiPrefs` 回执文案补「已保存任务完成提醒设置」。
+
+**验证**：新探针 `shots/sound-notify-check.mjs` 31 断言全绿（音色表 14 项结构与编号连续、编号归一、后台判定三态、跳变判定七例、通知正文五例、宿主读档临时 HOME 六例）。实机走查 `desktop/shots/sound-notify.ps1` + `sound-fake-server.mjs`（18961 端口一律回纯文本，gitignored）：实例 A 假端点跑一轮真对话——EVAL 里把 `document.hasFocus` patch 成 false（比抢焦点可靠、与真实「用户在别的窗口」同构），stderr 出两条 `[selfcheck] 系统通知：`——「走查直调通知 / 主进程 notify 链路」（直调 dsc.notify 返回 true）与「跑一轮提醒走查 · 任务完成 / 提醒走查完成」（完成跳变 effect 真触发，标题走会话标题、正文取最后一条回复），`new AudioContext()` 冒烟 true，假端点对账 chat+title 两请求；实例 B `?settings=general` 截图目检——「任务完成提醒」组三行版式与外观组一致、音色下拉显示「双音轻抚」。真实 ~/.dsc 指纹逐文件一致（185 文件）。探针 45 个全绿（preset-check 首轮误报系 grep 把 PASS 行里的「（✗）」记号算进失败，重跑全绿）。双端 typecheck + build 绿。
+
+**诚实边界**：通知与提示音只覆盖「当前会话」的回合完成——切走后旧会话跑完不提醒（快照只推当前会话的 turnState；跨会话完成提醒要动内核快照面，本轮不做）；用户主动打断、审批拒绝也走同一条「跑动→idle」跳变（回合确实结束了，响一声不算误报）；主进程通知的真实弹出效果（Windows toast 视觉、点击聚焦）自动化只验到 handler 与 show() 不抛，真机目检在本机通过；「通知铃铛图标」「错误回合独立音效」（hermes 的 turnError、codex 的 approval-requested 分型）未做——两开关各自独立已覆盖主需求，分型通知留待有真实需求再加。

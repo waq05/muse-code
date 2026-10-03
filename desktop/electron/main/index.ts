@@ -10,7 +10,7 @@
 import { spawn } from 'node:child_process'
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
-import { BrowserWindow, Menu, Tray, WebContentsView, app, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, screen, shell, utilityProcess, type UtilityProcess } from 'electron'
+import { BrowserWindow, Menu, Notification, Tray, WebContentsView, app, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, screen, shell, utilityProcess, type UtilityProcess } from 'electron'
 import type { NativeImage } from 'electron'
 import { HostProtocol } from './protocol.js'
 import { registerDockIpc } from './dock.js'
@@ -341,6 +341,31 @@ function registerIpc(): void {
     void shell.openExternal(url)
   })
 
+  // 系统通知（任务完成提醒）：渲染层在一轮干完且窗口离开前台时打过来。
+  // 声音不归这里——渲染层的完成提示音负责发声（开关独立），通知一律 silent，
+  // 免得 Windows 的 toast 提示音和我们的音效同一时刻叠两声。
+  ipcMain.handle('dsc:notify', (event, payload: unknown) => {
+    if (mainWindow === null || event.sender !== mainWindow.webContents) return false
+    const title = typeof (payload as { title?: unknown } | null)?.title === 'string' ? (payload as { title: string }).title.trim() : ''
+    if (title === '') return false
+    const rawBody = typeof (payload as { body?: unknown } | null)?.body === 'string' ? (payload as { body: string }).body.trim() : ''
+    const iconDir = app.isPackaged ? process.resourcesPath : join(__dirname, '..', '..', 'build')
+    const iconFile = [join(iconDir, 'icon.png'), join(iconDir, 'icon-tray.png')].find((p) => existsSync(p))
+    const notification = new Notification({
+      title,
+      ...(rawBody !== '' ? { body: rawBody } : {}),
+      ...(iconFile !== undefined ? { icon: iconFile } : {}),
+      silent: true,
+    })
+    if (process.env.DSC_DESKTOP_SHOT !== undefined && process.env.DSC_DESKTOP_SHOT !== '') {
+      process.stderr.write(`[selfcheck] 系统通知：${title}${rawBody === '' ? '' : ` / ${rawBody}`}\n`)
+    }
+    // 点通知 = 回到主窗口（缩托盘/最小化时尤其实用）
+    notification.on('click', () => showMainWindow())
+    notification.show()
+    return true
+  })
+
   // 原生弹出层（select 的下拉选项列表、右键菜单）的深浅只认 nativeTheme，
   // 页面 CSS 够不着：renderer 在主题生效时把模式报上来。跟随系统就原样透传，
   // 让 OS 自己翻面；值不对就拒收，保持上一次的主题。
@@ -636,6 +661,10 @@ const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
+  // Windows 的 toast 通知按 AppUserModelID 归属应用：不设的话通知挂在 Electron
+  // 名下（打包版上会被丢进「Windows 通知」杂项，图标也不对）。与 electron-builder.yml 的 appId 一致。
+  app.setAppUserModelId('io.dsc.desktop')
+
   app.on('second-instance', () => {
     // 缩到托盘时再点快捷方式：把隐藏的主窗口叫回来
     showMainWindow()

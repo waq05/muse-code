@@ -106,6 +106,23 @@ const BUTTON_SCALE_DEFAULT = 1
 /** 工作区别名的长度上限（侧栏一行放不下太长名字）。 */
 const ALIAS_LIMIT = 40
 
+/** 完成提示音的音色数量，与桌面端 renderer/turn-notify.ts 的夹取一致（改这里要两边一起改）。 */
+const SOUND_VARIANT_COUNT = 14
+
+/**
+ * 把存档里的完成提示音音色编号读成 1–{@link SOUND_VARIANT_COUNT} 的整数。
+ *
+ * 手改坏的值（0、负数、小数、字符串、NaN）一律回落 1 号音色，绝不让存档把启动拦下来。
+ * 夹取而不是拒绝：设置下拉只有 14 项，夹回范围的值至少还能正常出声。
+ *
+ * @param value settings.json 里 `ui.turnCompleteSoundVariant` 的原始值
+ * @returns 可直接交给渲染层音色表的编号
+ */
+function readSoundVariant(value: unknown): number {
+  const id = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : 1
+  return Math.min(SOUND_VARIANT_COUNT, Math.max(1, id))
+}
+
 /**
  * 把存档里的字号读成倍率。
  *
@@ -209,6 +226,10 @@ export function readPrefs(): DscPrefs {
       // 侧栏分组展开态与会话手动顺序：出厂都是空表（全部用默认行为）。
       sessionExpansion: {},
       sessionOrder: {},
+      // 任务完成提醒三项：提示音默认开（合成音，音量压得很低），后台系统通知默认开。
+      turnCompleteSound: true,
+      turnCompleteSoundVariant: 1,
+      turnCompleteNotify: true,
     },
     remote: { enabled: false, port: REMOTE_PORT_DEFAULT, lan: false, push: false, notifyWebhook: '' },
   }
@@ -284,6 +305,17 @@ export function readPrefs(): DscPrefs {
           if (Object.keys(order).length >= 500) break
         }
         prefs.ui.sessionOrder = order
+      }
+      // 任务完成提醒三项：老 settings.json 里没有，读不到就保持上面的默认值（都开、1 号音色）；
+      // 音色编号由 readSoundVariant 夹回 1–14，坏值回落 1。
+      if (typeof ui.turnCompleteSound === 'boolean') {
+        prefs.ui.turnCompleteSound = ui.turnCompleteSound
+      }
+      if (ui.turnCompleteSoundVariant !== undefined) {
+        prefs.ui.turnCompleteSoundVariant = readSoundVariant(ui.turnCompleteSoundVariant)
+      }
+      if (typeof ui.turnCompleteNotify === 'boolean') {
+        prefs.ui.turnCompleteNotify = ui.turnCompleteNotify
       }
     }
     if (typeof doc.defaultPolicy === 'string' && POLICIES.includes(doc.defaultPolicy as ApprovalPolicy)) {

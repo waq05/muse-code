@@ -59,6 +59,8 @@ import {
   normalizeFontScale,
 } from './appearance.js'
 import { confirmAction } from './components/confirm.js'
+import { COMPLETION_SOUND_VARIANTS, playCompletionSound } from './completion-sound.js'
+import { normalizeSoundVariant } from './turn-notify.js'
 import { Select } from './components/Select.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { SkillsView } from './SkillsView.js'
@@ -611,6 +613,59 @@ function AppearanceRows(props: {
               { value: 'open', label: '默认展开' },
             ]}
             onPick={(value) => props.onUiPrefs({ toolDefaultOpen: value === 'open' })}
+          />
+        </div>
+      </div>
+
+      <div className="settings-group-title">任务完成提醒</div>
+      <div className="setting-row">
+        <div className="setting-text">
+          <div className="setting-label">完成提示音</div>
+          <div className="setting-help">一轮干完时轻轻响一声（Web Audio 现场合成，仓库不带音频文件）。</div>
+        </div>
+        <div className="setting-control">
+          <Dropdown
+            value={props.uiPrefs.turnCompleteSound ? 'on' : 'off'}
+            options={[
+              { value: 'on', label: '开启' },
+              { value: 'off', label: '关闭' },
+            ]}
+            onPick={(value) => props.onUiPrefs({ turnCompleteSound: value === 'on' })}
+          />
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-text">
+          <div className="setting-label">提示音音色</div>
+          <div className="setting-help">选中即试听，挑一个顺耳的；试听不受上面的开关管。</div>
+        </div>
+        <div className="setting-control">
+          <Dropdown
+            value={String(normalizeSoundVariant(props.uiPrefs.turnCompleteSoundVariant))}
+            options={COMPLETION_SOUND_VARIANTS.map((variant) => ({ value: String(variant.id), label: variant.name }))}
+            onPick={(value) => {
+              const id = normalizeSoundVariant(Number.parseInt(value, 10))
+              props.onUiPrefs({ turnCompleteSoundVariant: id })
+              playCompletionSound(id)
+            }}
+          />
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-text">
+          <div className="setting-label">后台完成通知</div>
+          <div className="setting-help">
+            窗口缩到托盘、最小化或失焦时，一轮干完在系统右下角弹一条通知，点它回到窗口；在前台时不弹。
+          </div>
+        </div>
+        <div className="setting-control">
+          <Dropdown
+            value={props.uiPrefs.turnCompleteNotify ? 'on' : 'off'}
+            options={[
+              { value: 'on', label: '开启' },
+              { value: 'off', label: '关闭' },
+            ]}
+            onPick={(value) => props.onUiPrefs({ turnCompleteNotify: value === 'on' })}
           />
         </div>
       </div>

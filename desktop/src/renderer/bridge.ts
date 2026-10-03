@@ -85,6 +85,8 @@ export interface DscBridge {
   setThemeSource(mode: 'dark' | 'light' | 'system'): void
   /** 用系统浏览器打开一个 http/https 链接（检查更新的「打开发布页」）。 */
   openExternal(url: string): Promise<void>
+  /** 弹一条系统通知（任务完成提醒；主进程创建 toast，点击唤回窗口）。返回是否创建成功。 */
+  notify(payload: { title: string; body?: string }): Promise<boolean>
   quit(): void
 }
 
