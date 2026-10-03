@@ -655,7 +655,11 @@ export function App(): JSX.Element {
         onPick={pickSession}
         onChooseDir={() => {
           void dsc.chooseDirectory().then((next) => {
-            if (next !== null) setCwd(next)
+            // 宿主端已经重启到新目录（dsc:choose-directory 里 restartHost），这里
+            // 必须走 switchCwd 的全套状态更新——只 setCwd 的话 recentCwds 不加新目录，
+            // 侧栏分组列表就没有这个空组，要等第一条消息落盘才随快照冒出来（0.6.43 报障）。
+            // switchCwd 里对已切好的目录不会重复重启（next === hostCwd 短路）。
+            if (next !== null) switchCwd(next)
           })
         }}
         recentCwds={recentCwds}

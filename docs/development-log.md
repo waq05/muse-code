@@ -1419,3 +1419,15 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **修法（语义拆分）**：`newSessionIn`（组行「+」）对 `isActiveGroup` 的依赖**必须保持宿主 cwd 语义**（活动组直接 `onNew`；非活动组要先 `switchCwd` 换宿主目录再建会话——新会话的 cwd 是宿主进程目录，误判会把会话建错工作区）。所以拆成两个概念：保留 `isActiveGroup`（宿主 cwd）给 `newSessionIn`；新增 `activeCwd`（useMemo：有选中会话 → 在 groups 里找含它的组返回其 cwd；无选中会话或被搜索/归档筛出列表 → 回落 `props.cwd`）给组行 className。回落 cwd 而非照抄 dsh 的「无会话不亮」，是保住 dsc「你现在跑在哪个工作区」的空态指示（dsc 顶栏之外侧栏是唯一的工作区方位感）。树模式的祖先链高亮（dsh containsCurrentDescendant）没搬——dsc 树模式此前也没有祖先行高亮，不是本 bug 范围，避免视觉回归。
 
 **走查**（`shots/ws-active-check.ps1`，sound-home 塞一条 C-Users-waq 假会话造出第二组，固定保留作回归依赖）：①跨组点 waq 会话 → active 组变 waq、图标色 = `--dsc-accent`（rgb(86,134,254)）；②点「新会话」→ activeSessionId 置空回落宿主 cwd（tip 显示 D:\dsc 的 dsc 组亮回）。截图目检（ws-active-shot.png）：waq 图标蓝、dsc 图标灰、会话行高亮——正是用户要的指示。探针电池 42/43 绿（browser-check 12.x 环境态失败沿用既有记录）。typecheck + build 绿。bump 0.6.43。
+
+## 阶段 65：添加工作区两报——按钮图标换加号、选完目录组立即出现（0.6.44）
+
+用户报两件事：①「新增工作区」按钮图标要换（红框圈的是工作区头部那颗，原来用 `IconFolderOpen`，和工作区行的文件夹图标撞脸）；②点它选完文件夹后，左侧**不出现**新工作区，要等输入第一条对话后「整个左侧栏闪一下」才冒出来。
+
+**根因（②）**：渲染层 `onChooseDir` 回调只做了 `setCwd(next)`。对比 `switchCwd`（侧栏点工作区「+」/最近目录走的）少了三件事：`recentCwds` 前插、`proxy.refreshSessions()`、`setView('chat')`。而 `buildWorkGroups` 靠 `recentCwds` 把「切过去还没发消息」的工作区铺成空组（`sidebar-groups.ts` 分桶前 `for (const dir of recentCwds) map.set(dir, [])`）——选完目录 recentCwds 不含新目录，空组自然不出；发第一条消息后会话落盘随快照下来，新组带着会话突然插入，观感就是「整个侧栏闪一下」。宿主端（`dsc:choose-directory`）其实早就 `restartHost(next)` 把宿主切好了，纯是渲染层状态没收尾。**修法**：`onChooseDir` 改为 `chooseDirectory().then((next) => next !== null && switchCwd(next))` 整套复用——`switchCwd` 里对已切好的目录 `next === hostCwd` 短路不会重复重启，recentCwds/refreshSessions/toast「已切到 X」全套白得。
+
+**修法（①）**：对齐 dsh 的 add-workspace 图标（`WorkspacePicker.tsx` 的 `menu.addWorkspace` 用 `IconPlusOutlineRegular`），换成现有 `IconPlus`，`data-tip` 从「浏览其他目录」改成「添加工作区（选择目录）」；sidebar-footer 的当前目录行保持文件夹图标不动（那是方位指示，不是动作）。
+
+**验证**：新探针 `shots/ws-add-groups-check.mjs` 5 断言全绿——先经 esbuild 打包（`sidebar-groups.ts` 带 `.js` 别名依赖，node 裸跑解析不了；esbuild 在 `desktop/node_modules/.pnpm` 里没挂 .bin，探针自己找）再 import 产物：既有会话分组回归、recentCwds 新目录出现为空组、空组无会话、既有组不受影响、归档 only 档空组不出现。走查 `shots/ws-add-check.ps1`：加号按钮 DOM 断言（tip + IconPlus 两条线段 path）+ footer 文件夹图标未被误伤，截图目检。typecheck + build 绿；探针电池 43/44（browser-check 沿用已知记录）。
+
+**走查配方的坑（重要，记住）**：本想走 `switchCwd('C:\Windows')` + `openSession` 端到端断言「组立即出现 + 侧栏不闪空」，但 **restartHost 链路绕过 USERPROFILE 覆盖**——主进程状态文件 `~/.dsc/desktop.json`（lastCwd/recentCwds/windowBounds）经 Electron 主进程的 `app.getPath('home')`/`readState()` 走**真实 HOME**（os.homedir() 不吃 env），`dsc:switch-cwd` 成功路径里 `writeState({ lastCwd, recentCwds })` 把走查值写进了真实档案（实测 `lastCwd` 被写成 `C:\Windows`、recentCwds 被前插；会话库本身无污染——19 点后真实库零新 jsonl）。已还原 desktop.json（recentCwds 去掉 C:\Windows、lastCwd 回 D:\codex\codex）。教训：**desktop.json 是走查环境与真实档案的唯一交叉点**——纯启动走查不写它（前后 mtime 一致实测），凡涉及切工作区的走查一律不许真调 switchCwd/chooseDirectory，跑前后比对 desktop.json mtime。走查实例侧栏看到的「真实工作区名」（codex/System32 等）只是 recentCwds 空组镜像（只读），配置/会话仍隔离在 sound-home（顶栏 fake/fake-chat 可证）。end-to-end 的「选目录 → 组出现」留给装包人工验证。重打包 + pkg-smoke 绿。bump 0.6.44。

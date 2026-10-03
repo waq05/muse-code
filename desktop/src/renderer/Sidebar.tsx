@@ -880,8 +880,8 @@ export function Sidebar(props: {
             >
               <IconSort size={15} />
             </button>
-            <button className="icon-btn" data-tip="浏览其他目录" onClick={props.onChooseDir}>
-              <IconFolderOpen size={15} />
+            <button className="icon-btn" data-tip="添加工作区（选择目录）" onClick={props.onChooseDir}>
+              <IconPlus size={15} />
             </button>
           </span>
         </div>
