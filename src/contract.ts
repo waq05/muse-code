@@ -346,6 +346,9 @@ export interface UsageModelView {
   inputTokens: number
   outputTokens: number
   turns: number
+  /** 输入里的前缀缓存命中 / 未命中 tokens（端点没上报这项的记录按 0 计）。 */
+  cacheHitTokens: number
+  cacheMissTokens: number
 }
 
 /**
@@ -358,6 +361,12 @@ export interface UsageStatsView {
   sinceTs: number | null
   totalInputTokens: number
   totalOutputTokens: number
+  /**
+   * 输入里的前缀缓存命中 / 未命中 tokens 合计（2026-10-03 起记录；更早的行没有这项，
+   * 按 0 计）。两个数都只统计端点上报了明细的请求，命中率 = 前者 /（前者 + 后者）。
+   */
+  totalCacheHitTokens: number
+  totalCacheMissTokens: number
   totalTurns: number
   /** 有记录的自然日数。 */
   activeDays: number

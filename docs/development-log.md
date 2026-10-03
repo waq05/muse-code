@@ -1445,3 +1445,31 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 - IPC 三层：preload `removeRecentCwd` + bridge `DscBridge.removeRecentCwd` + 主进程 handler（入参 `String(path ?? '')`，空串直接返回）。
 
 **验证**：新走查 `shots/ws-del-check.ps1`（无污染约束写在头注释：确认框**只点「取消」**——点确认会经 `dsc:remove-recent-cwd` 写真实 HOME 的 desktop.json，0.6.44 的交叉点坑）全绿：空组菜单含「删除工作区」且无「归档这 N 个会话」、空组确认框走「还没有会话」档（带当前目录附注）、有会话组确认框走「全部归档」档、两框取消后弹层正常关闭。截图目检（ws-del-check.png）：codex 空组菜单第三项红色「删除工作区」。回归：ws-add-check / ws-active-check 绿（0.6.43/0.6.44 功能未伤）、menu-check 不受影响（只量裁剪不钉文案）、根探针 38/39（browser-check 环境态沿用既有记录）、typecheck + build + pkg-smoke 绿。bump 0.6.45。
+
+## 阶段 67：400 卡死修复 + 请求组装五条（对齐 dsh / codex 的缓存与规范化做法）（0.6.46）
+
+两件事一批：①修「重开同一会话后整段对话被 HTTP 400 永久拒掉」的死局；②按 dsh、codex 的对照调研结论改请求组装的五处。
+
+### ① 400 死局——同一 callId 两条 tool 结果
+
+**根因链（磁盘日志 + 代码顺序证实）**：点击当前正在看的会话会把它**重开一遍**（`session.open` 没有同路径短路）→ `Session.load` 在租约下跑 T32 中断修复、往日志补写「结果未知」合成 tool 结果 → `dsc/session-open` 事件让 ask 插件把挂起的提问作废（会话已切）→ 但被打断的那一轮还活着，把**真实**结果又写了一遍 → 同一 callId 两条 tool 结果 → DeepSeek 网关 400「Messages with role 'tool' must be a response to a preceding message with 'tool_calls'」，此后该会话每次请求都被拒（`sanitizeToolOrphans` 当时只剔孤儿、不去重）。
+
+**修法（四层，统一「保留首条」的保守口径——首条是合成件时模型会先去核查副作用，不会被后到的「用户取消」措辞误导成什么都没发生）**：
+1. 请求侧：`sanitizeToolOrphans` 同 callId 只放行第一条结果（`core/llm.ts`）；
+2. 重放侧：`Session.load` 重放时同 callId 结果去重、保留首条（`core/session.ts` buildFromLog）；
+3. 落库侧：`appendTool` 同 callId 已有结果就不写（晚到的真实结果被丢，界面照常经事件看到现场）；
+4. 源头：`session.open(filePath)` 同路径直接短路——点击自己正在看的会话老老实实什么都不做（对齐 dsh 常驻会话的 open 语义，`plugins/session.ts`）。
+
+**验证**：新回归 `scripts/session-dedupe-test.mjs`（15 断言：首条保留、第二次不上盘、新 callId 正常、sanitize 去重/孤儿剔除/部分应答过滤、不改传入数组）。出事故的那份真实日志无需手改，重放层静默去重后直接可继续。
+
+### ② 五条（对照调研：dsh 的 system-prompt / agent-loop / compaction-basic 与 codex 的 WorldState / compact）
+
+1. **压缩调用复用主对话前缀**（`core/compact.ts`、`plugins/compact.ts`）：摘要请求从「独立 system + 转写文本」改成 `[真实系统提示词, ...被折区间的真实消息, 末尾压缩指令]`、工具目录照发——成为上一次真实请求的前缀扩展，命中服务端 KV 缓存；摘要模型看到的是对话原貌，不再截 120 字符参数。锚点索引/原话引用仍从原文机械抽取；模型不收图时区域图片全卸载（真实消息带 image_url 会被端点 400）。
+2. **瞬态注入不改写头部**（`plugins/lsp.ts`、`plugins/lifecycle-hooks.ts`）：诊断/钩子产出从 system 角色改为 user 角色追加——system 会被 fold-system 并进头部那条，头部字节一变、服务端前缀缓存从改写点之后整段失效（下一次请求诊断消失再来一次）；user 只往历史尾巴追加，前缀原样命中。LSP 诊断附「不是用户发言」出处句。
+3. **用量补前缀缓存明细**（`core/llm.ts` 解析 `prompt_cache_hit/miss_tokens`（OpenAI 系回落 `cached_tokens`）→ CoreEvent usage → usage.jsonl 的 `ch`/`cm` → 设置页「前缀缓存命中」卡）：命中率是「请求前缀有没有被改写」的直接读数。
+4. **环境事实搬出 system prompt**（`core/prompt.ts`、`plugins/prompt.ts`）：日期/平台/git 分支不再随提示词每天重写前缀，改由 env-facts 投影（order 600）作为请求末尾的 user 快照附上——每次请求都带当前值，模型手里没有过期环境；变化时写一条 hash 去重的 `env-facts` 状态留痕（Model-visible ⟺ logged，与 system-prompt 条目同套做法）。
+5. **请求侧清洗出声**（`core/llm.ts` 的 `sanitizeToolOrphansWithReport`、`plugins/llm.ts`）：清洗带账并经 `dsc/notice` 报给用户（每会话同形状只报一次）——重放层修不掉的残留（孤儿结果等）从此可见，不再靠撞 400 才发现。
+
+**验证**：typecheck（根 + 桌面端）绿；`pnpm build` 绿。探针：prompt-projection 20/20（含 env-facts 快照与状态留痕）、lsp 167/167、lifecycle-hooks 81/81、llm-adapter 18/18、compact-check 56/56（含前缀三断言）、batch-b 12/12、preset-check / modes-security 全过（「环境事实垫在最后」两处断言随事实跟改）、session-dedupe 15/15、transcript-usage 全过、kernel-boot 绿。端到端冒烟（临时 HOME 真内核 + 假 SSE 端点）：损坏会话（重复 + 孤儿结果）过真请求 → 通知恰一条、同形状第二轮不重报；usage 记录带 `ch`/`cm`；`env-facts` 状态落盘且 system-prompt 不再含环境事实。bump 0.6.46。
+
+**附：参考实现拆解入档（同一批）**：本轮对照调研的 dsh / codex 源码级结论各写成常驻文档，以后对齐不必重新探索——`docs/dsh-request-assembly.md`（HEAD `4878cdabd8` 快照）与 `docs/codex-request-assembly.md`（HEAD `1cc7e23612` 快照），按功能分节、引用到「文件:行号」，每篇结尾带「与 Muse Code 的对照（抄了什么/没抄什么/仍缺什么）」。README 文档表与三份对标文档（peer-feature-inventory / harness-benchmark-roadmap / dsh-plugin-porting）的相互索引已接上。

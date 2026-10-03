@@ -7,6 +7,9 @@
  * agent 插件在拿到模型响应的 usage 事件时落一条（见 plugins/agent.ts），
  * 这份日志从功能上线那刻开始积累，更早的会话没有记录。
  *
+ * 2026-10-03 起记录前缀缓存明细（`ch`/`cm`）：命中率是「请求前缀有没有被改写」
+ * 的直接读数——系统提示词改一个字节、注入并进头部，整段历史都会按全价重读。
+ *
  * @module dsc/core/usage-log
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
@@ -23,6 +26,9 @@ export interface UsageRecord {
   /** 输入 / 输出 token。 */
   i: number
   o: number
+  /** 输入里的前缀缓存命中 / 未命中 tokens（端点上报时才有；老记录没有这两项，按 0 计）。 */
+  ch?: number
+  cm?: number
   /** 发起请求的会话 uuid（队友的轮次也归到主会话名下时用它区分）。 */
   sid: string
 }
@@ -57,6 +63,8 @@ export function readUsageRecords(): UsageRecord[] {
         model: typeof row.model === 'string' ? row.model : '',
         i: row.i,
         o: row.o,
+        ...(typeof row.ch === 'number' ? { ch: row.ch } : {}),
+        ...(typeof row.cm === 'number' ? { cm: row.cm } : {}),
         sid: typeof row.sid === 'string' ? row.sid : '',
       })
     } catch {
@@ -81,6 +89,7 @@ const MAX_SPAN_DAYS = 370
  * 把原始记录聚合成设置页要用的统计视图。
  * days 从首条记录所在日（不足一年时）或 370 天前（更早时）到今天，逐日给全
  * （没记录的日子是零日）——热力图要连续的格子，空档由这里补齐。
+ * 前缀缓存明细只统计上报了它的记录（`ch`/`cm` 缺失按 0 计），命中率因此不会被老记录拉偏。
  */
 export function aggregateUsage(records: UsageRecord[]): UsageStatsView {
   const days = new Map<string, UsageDayView>()
@@ -88,6 +97,8 @@ export function aggregateUsage(records: UsageRecord[]): UsageStatsView {
   let totalInput = 0
   let totalOutput = 0
   let totalTurns = 0
+  let totalCacheHit = 0
+  let totalCacheMiss = 0
   let sinceTs: number | null = null
 
   for (const record of records) {
@@ -106,15 +117,19 @@ export function aggregateUsage(records: UsageRecord[]): UsageStatsView {
     totalInput += record.i
     totalOutput += record.o
     totalTurns += 1
+    totalCacheHit += record.ch ?? 0
+    totalCacheMiss += record.cm ?? 0
     if (sinceTs === null || record.t < sinceTs) sinceTs = record.t
     let model = models.get(modelKey)
     if (model === undefined) {
-      model = { key: modelKey, inputTokens: 0, outputTokens: 0, turns: 0 }
+      model = { key: modelKey, inputTokens: 0, outputTokens: 0, turns: 0, cacheHitTokens: 0, cacheMissTokens: 0 }
       models.set(modelKey, model)
     }
     model.inputTokens += record.i
     model.outputTokens += record.o
     model.turns += 1
+    model.cacheHitTokens += record.ch ?? 0
+    model.cacheMissTokens += record.cm ?? 0
   }
 
   // 逐日补零：起点 = max(首条记录所在日, 今天-369天)，终点 = 今天
@@ -165,6 +180,8 @@ export function aggregateUsage(records: UsageRecord[]): UsageStatsView {
     sinceTs,
     totalInputTokens: totalInput,
     totalOutputTokens: totalOutput,
+    totalCacheHitTokens: totalCacheHit,
+    totalCacheMissTokens: totalCacheMiss,
     totalTurns,
     activeDays: active.size,
     currentStreakDays: currentStreak,

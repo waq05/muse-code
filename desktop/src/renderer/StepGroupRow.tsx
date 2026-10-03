@@ -1,6 +1,6 @@
 /**
  * 阶段组头（对照 dsh 的 ChatGroupSeat.tsx:91-128 的 ProcessGroupHeader）：一行可点的小字，
- * 「类别图标 + 标题（+ 实时任务详情）+ 行尾箭头」，整行可点开合。
+ * 「类别图标 + 标题（+ 下一行的实时任务详情）+ 行尾箭头」，整行可点开合。
  *
  * 为什么是聚合标题而不是工具名清单：一阶段里可能压着十几次调用（read → grep → glob → bash），
  * 逐条列出来跟没折叠一样长。dsh 的组头只说「这一阶段干了哪类事」——
@@ -8,8 +8,9 @@
  * （对照 conversation-nodes/step-process.ts:11-27）。
  *
  * 三处显隐与开合细节（都对照 dsh）：
- * - **未结束的组头带实时详情**：「正在运行命令 · pnpm build」，回答「现在卡在哪一步」。
- *   取参数的键序在 process-groups.ts 的 DETAIL_KEYS，档位开关是 liveDetail（紧凑档不带）。
+ * - **未结束的组头带实时详情**：「正在运行命令」标题下一行跟「pnpm build」，回答「现在卡在哪
+ *   一步」。取参数的键序在 process-groups.ts 的 DETAIL_KEYS，档位开关是 liveDetail（紧凑档
+ *   不带）。详情与标题分行是 0.6.46 起的：原来「 · 」接尾，直播思考一长整行撑出会话。
  * - **标题至少保留 150ms**（useStableLiveTitle + liveTitleDecision）：不然一次多步工具轮里
  *   标题一秒跳好几次，读不出来。
  * - **图标位与箭头叠放，悬停或键盘聚焦时换成箭头**（dsh 的 .leading 里叠着
@@ -31,7 +32,7 @@ import {
   IconQueue, IconSearch, IconSpark, IconTerminal, IconTree,
 } from './icons.js'
 import {
-  joinLiveDetail, liveTitleDecision, liveTitleOf, sameLiveTitle, stepGroupTitle,
+  liveTitleDecision, liveTitleOf, sameLiveTitle, stepGroupTitle,
   type LiveProcessTitle, type ProcessActivity, type StepGroup,
 } from './process-groups.js'
 
@@ -134,7 +135,6 @@ export function StepGroupRow(props: {
     live.preparing,
   )
   const detail = closed || !props.showDetail ? '' : live.detail
-  const title = joinLiveDetail(label, detail)
   // 次数与实时详情不上面面，但要留在 DOM 上：截图用例与探针靠它断言「这一组收进去几条什么类别的调用」
   const counts = props.group.counts.map((item) => `${item.kind}=${String(item.count)}`).join(',')
   return (
@@ -168,13 +168,23 @@ export function StepGroupRow(props: {
           <IconChevronDown size={12} />
         </span>
       </span>
-      <span
-        className="step-fold-label"
-        // 跑动中的扫光：属性值就是 ::after 要复制的那串文字（见 styles.css 里那条共用规则）。
-        // 收口的组不给——它已经不动了，扫光反而像还在干活（对照 dsh 的 active={!data.closed}）。
-        data-shimmer={closed ? undefined : title}
-      >
-        {title}
+      {/* 标题与实时详情各占一行（.step-fold-text 柱）：详情原来用「 · 」接在标题后，
+          直播思考一长（上限 160 字）就把整行撑出会话（0.6.46 报障）——换行后详情在
+          柱内单行截断，截断宽度是组头自己的宽度，永远出不了会话。 */}
+      <span className="step-fold-text">
+        <span
+          className="step-fold-label"
+          // 跑动中的扫光：属性值就是 ::after 要复制的那串文字（见 styles.css 里那条共用规则）。
+          // 收口的组不给——它已经不动了，扫光反而像还在干活（对照 dsh 的 active={!data.closed}）。
+          data-shimmer={closed ? undefined : label}
+        >
+          {label}
+        </span>
+        {detail !== '' && (
+          <span className="step-fold-detail" data-shimmer={detail}>
+            {detail}
+          </span>
+        )}
       </span>
     </button>
   )

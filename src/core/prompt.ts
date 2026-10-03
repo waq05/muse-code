@@ -9,7 +9,13 @@
  *   20  工具使用规范        —— 哪个工具干什么、别拿 bash 当万能
  *   30+ 插件贡献段（模式条款、技能目录、扩展插件）
  *   200 指令文件（AGENTS.md / CLAUDE.md）—— 用户随时会改，放贡献段之后
- *   900 环境事实（日期、平台、目录、git、模型）—— 每天都变，垫在最后
+ *   890 模型信息            —— /model 切换才变
+ *
+ * 环境事实（日期、平台、目录、git 分支）**不在这份提示词里**（2026-10-03 起）：
+ * 它每天都变，放进提示词等于每次变化都重写一次前缀，服务端缓存从改写点之后整段
+ * 失效。它改由 prompt 插件的 env-facts 投影作为请求末尾的 user 快照附上——
+ * 前缀原样命中，变化只落在尾巴；codex 的 environment_context、dsh 的
+ * runtime-context 都是这个形状。
  *
  * @module dsc/core/prompt
  */
@@ -54,7 +60,7 @@ export function composePrompt(sections: readonly PromptContribution[]): string {
     .join('\n\n')
 }
 
-const IDENTITY = `你是 dsc（Muse Code），跑在用户桌面里的编程助手。全程用中文回答，称呼用户「兄弟」。
+const IDENTITY = `你是 Muse Code，跑在用户桌面里的编程助手。全程用中文回答，称呼用户「兄弟」。
 说人话：主谓宾写全，省字只删没信息量的空话，不删句子骨架；能用数字和具体对象说清，就不写范畴词。
 指代代码就写「文件名:行号」，别只说「那个文件」。不确定就说不确定，别编。`
 
@@ -202,7 +208,9 @@ function gitLine(cwd: string, args: string[]): string | null {
 }
 
 /**
- * 环境事实段（每天、每次 cd 都会变，所以垫在整个提示的最后，保护前面的缓存前缀）。
+ * 环境事实全文（日期、平台、工作目录、git 分支）——由 prompt 插件的 env-facts
+ * 投影附在每次请求末尾（user 快照消息），不再进系统提示词（2026-10-03）：
+ * 它每天都变，放在提示词里会把服务端前缀缓存整段打掉。
  *
  * git 子进程是同步跑的（大仓库 `status --porcelain` 秒级，还会冻结事件循环），
  * 所以按 cwd 做 30 秒 TTL 缓存（2026-09-29）：最坏情况分支/脏标晚半分钟更新，
@@ -211,7 +219,7 @@ function gitLine(cwd: string, args: string[]): string | null {
 const ENV_TTL_MS = 30_000
 const envCache = new Map<string, { text: string; expires: number }>()
 
-function environmentText(cwd: string): string {
+export function environmentText(cwd: string): string {
   const cached = envCache.get(cwd)
   if (cached !== undefined && cached.expires > Date.now()) return cached.text
   const now = new Date()
@@ -260,7 +268,7 @@ export function buildSystemPrompt(cwd: string, options: SystemPromptOptions = {}
   const contributions = options.contributions ?? []
   // 段的候选清单先摆出来，再交给 keep 决定留哪些；keep 一个都不去时下面走的
   // 就是原先那条路（同样的段、同样的顺序），所以默认档的提示词逐字节不变。
-  const ids = ['identity', 'behavior', 'tool-rules', ...contributions.map((section) => section.id), 'instructions', 'skills', 'environment']
+  const ids = ['identity', 'behavior', 'tool-rules', ...contributions.map((section) => section.id), 'instructions', 'skills']
   const keep = options.keep
   const kept = keep === undefined ? null : new Set(keep(ids))
   const wants = (id: string): boolean => kept === null || kept.has(id)
@@ -273,6 +281,5 @@ export function buildSystemPrompt(cwd: string, options: SystemPromptOptions = {}
   // 指令文件与技能目录要现算（读盘 + git），被去掉时连算都不算
   if (wants('instructions')) sections.push({ id: 'instructions', order: 200, text: instructionsText(cwd, budget) })
   if (wants('skills')) sections.push({ id: 'skills', order: 210, text: (options.skills ?? '').trim() })
-  if (wants('environment')) sections.push({ id: 'environment', order: 900, text: environmentText(cwd) })
   return composePrompt(sections)
 }

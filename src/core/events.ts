@@ -47,7 +47,12 @@ export type CoreEvent =
   | { type: 'turn/diff'; files: FileChangeSummary[] }
   /** 这次模型请求失败、正要重试（对照 dsh 的 `model-retry` 节点）。 */
   | { type: 'model/retry'; attempt: number; reason: string }
-  | { type: 'usage'; inputTokens: number; outputTokens: number }
+  /**
+   * 一次请求的用量。cacheHit/cacheMiss 是输入里的前缀缓存明细（端点上报时才有）：
+   * 命中率是「请求前缀有没有被改写」的直接读数——改一个字节就会让整段历史全价重读，
+   * 用量统计页把它展示出来（2026-10-03 起）。
+   */
+  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheHitTokens?: number; cacheMissTokens?: number }
   | { type: 'error'; message: string }
   | { type: 'turn/start' }
   | { type: 'turn/end'; reason: 'completed' | 'aborted' | 'error' }

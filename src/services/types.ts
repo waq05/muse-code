@@ -529,7 +529,7 @@ export interface PromptService {
    * @param id - 归属键（例如插件名），同名后注册者顶掉先注册的。
    * @param text - 每次组装请求时调用，所以插件改内容不用重启。
    * @param options.order - 段落位置：小的排前面。内置刻度是身份 0、做事方式 10、
-   *   工具规范 20、模式条款 30、插件贡献 60（缺省）、指令文件 200、技能目录 210、模型信息 890、环境事实 900。
+   *   工具规范 20、模式条款 30、插件贡献 60（缺省）、指令文件 200、技能目录 210、模型信息 890。
    *   易变的内容请往大数值放，前面的稳定段才能一直命中服务端提示缓存。
    */
   register(id: string, text: () => string, options?: { order?: number }): () => void
@@ -556,14 +556,17 @@ export interface PromptService {
    *
    * @param id - 投影名（诊断与文档用）。`fold-system`、`drop-images` 是内核保留名。
    * @param options.order - 应用次序，小的先做。内置刻度：插件投影 60（缺省）、
-   *   fold-system 500（多条 system 并进头部一条）、drop-images 900（模型没勾照片时兜底）。
+   *   fold-system 500（多条 system 并进头部一条）、env-facts 600（环境事实快照附在请求末尾）、
+   *   drop-images 900（模型没勾照片时兜底）。
    */
   registerProjection(id: string, fn: (messages: ChatMessage[]) => ChatMessage[], options?: { order?: number }): () => void
   /** 已注册段（带顺序），拼提示词时与内核自己的段合并；外部插件一般不必直接调。 */
   sections(): PromptContribution[]
   /**
-   * 拼出这一轮要用的完整系统提示词（内置骨架 + 各注册段 + 指令文件 + 技能目录 + 环境事实）。
-   * @param cwd - 会话工作目录（决定读哪份 AGENTS.md，以及环境事实那一段）。
+   * 拼出这一轮要用的完整系统提示词（内置骨架 + 各注册段 + 指令文件 + 技能目录）。
+   * 环境事实不在这份提示词里（2026-10-03 起）：内核的 env-facts 投影把它作为
+   * 请求末尾的 user 快照附上——它每天都会变，放提示词里会把服务端前缀缓存整段打掉。
+   * @param cwd - 会话工作目录（决定读哪份 AGENTS.md）。
    */
   systemPrompt(cwd: string): string
   /**

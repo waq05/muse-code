@@ -86,6 +86,12 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
         return startupNote
       },
       async open(filePath?: string) {
+        // 已经在看这条会话：no-op（对齐 dsh 的会话实例常驻 + openState 短路）。
+        // 重开一遍不是无害的刷新——它会重建 Session（加载时的中断修复给还在跑的回合
+        // 补「结果未知」合成件），紧接着 session-open 又中断这一轮、让 loop 把真实
+        // 结果也补上，日志里同一 callId 就留下两条结果（请求侧因此 400，见 llm.ts 的
+        // sanitizeToolOrphans）。点击自己正在看的会话要老老实实什么都不做。
+        if (filePath !== undefined && filePath === session.filePath) return
         try {
           const next = filePath === undefined ? Session.create(cwd) : Session.load(filePath)
           session = next

@@ -13,6 +13,7 @@
 | 要改代码，API 怎么对应 | **§3 映射表** |
 | 为什么我的插件挂不上/行为不对 | **§4 实测坑** |
 | 交付前跑什么 | **§5 验证清单** |
+| dsh 的请求组装/上下文管理内部机制（源码级） | [dsh-request-assembly.md](dsh-request-assembly.md) |
 
 ## 1. 判定流程：三种结局
 
@@ -119,7 +120,7 @@ dsc 的等价扩展点重挂，找不到就砍掉那个功能**——个人版�
 | `ctx.tools.register(defineTool({...}))` | 原样（兼容面转换） | `exec` 缩水为 `{ signal, cwd }`；加 risk 配置（§2.5）；`presentCall`/`presentResult`/`isConcurrencySafe` 被忽略（dsc 工具卡通用渲染） |
 | `ctx.logger.warn('… %s', x)` | 原样 | `info`/`debug` 不落地；warn/error 进对话流 |
 | `export const Config = z.object({...})` | 原样 | 挂载期校验、失败回滚 |
-| `ctx.systemPrompt` 的 provider / waterfall 贡献段 | `ctx.prompt.register(id, () => text, { order })` | dsc 是"每次组装取文本"的段注册表；order 刻度 0~900（身份 0 / 插件 60 / 指令文件 200 / 环境事实 900），易变内容往后放 |
+| `ctx.systemPrompt` 的 provider / waterfall 贡献段 | `ctx.prompt.register(id, () => text, { order })` | dsc 是"每次组装取文本"的段注册表；order 刻度 0~890（身份 0 / 插件 60 / 指令文件 200 / 模型信息 890），易变内容往后放；环境事实不进提示词，由 env-facts 投影附在请求末尾（2026-10-03 起） |
 | 改写发给模型的消息 | `ctx.prompt.registerProjection(id, fn, { order })` | dsc v6 的**命名纯投影**：必须是纯函数；往请求里加日志外内容必须配 `ctx.session.current().appendNote(id, text)` |
 | `ctx.sessionProjections.register({ key, init, apply })` | `ctx.session.appendState(id, payload)` + `ctx.session.current().state(id)` | dsc 无投影 schema 与状态版本；语义是"最后一条生效"（latest-wins）；键要先在 `src/core/session.ts` 的 `SessionStateMap` 上声明合并（那是内核文件，随包插件才改得了） |
 | `ctx.goals`（目标服务） | `ctx.goal.goalAction(action, …)` | dsc 的目标挂当前会话、跨轮自动续跑；无 dsh 的 agent 绑定语义 |

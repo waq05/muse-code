@@ -133,6 +133,11 @@ export interface SessionStateMap {
    * 恢复会话后最后一条就是当前生效的那份（Model-visible ⟺ logged 的提示词半边）。
    */
   'system-prompt': { hash: string; text: string }
+  /**
+   * 最近一次请求附给模型的环境快照全文（prompt 插件的 env-facts 投影写，hash 去重）。
+   * 2026-10-03 起环境事实不再进系统提示词，这份条目就是「模型当时看到的环境」的留痕。
+   */
+  'env-facts': { hash: string; text: string }
 }
 
 /**
@@ -349,6 +354,8 @@ export class Session {
     const messages: ChatMessage[] = []
     const toolErrors = new Map<string, string>()
     const fileChanges = new Map<string, FileChangeSummary>()
+    /** 已应答过的 callId（首条为准）。 */
+    const repliedCalls = new Set<string>()
     const state = new Map<string, unknown>()
     const notes: SessionNote[] = []
     for (const line of lines) {
@@ -395,6 +402,11 @@ export class Session {
           break
         }
         case 'tool': {
+          // 同一个 callId 只应答一次：重复记录（中断修复的合成件 + 被打断回合晚到的
+          // 真实结果，见 plugins/session 的同路径短路）从第二条起整个跳过——内存与
+          // 之后的每一次请求都不再见到它；日志保持 append-only，不改写历史。
+          if (repliedCalls.has(record.callId)) break
+          repliedCalls.add(record.callId)
           const content: ChatContentPart[] | string =
             record.images !== undefined && record.images.length > 0
               ? [
@@ -531,6 +543,10 @@ export class Session {
     output: string | { text: string; images?: string[]; changes?: FileChangeSummary },
     error?: string,
   ): void {
+    // 同一个 callId 已经有结果就不落第二条：中断修复补过「结果未知」合成件之后，
+    // 被打断那一轮晚到的真实结果会走到这里——写下去就是协议上的重复应答（下一次
+    // 请求被网关 400）。界面上的实时结果照常由调用方的 tool/result 事件展示。
+    if (this.messages.some((message) => message.role === 'tool' && message.tool_call_id === callId)) return
     const ts = Date.now()
     const text = typeof output === 'string' ? output : output.text
     const images = typeof output === 'string' ? undefined : output.images

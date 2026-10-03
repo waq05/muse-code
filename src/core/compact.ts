@@ -2,6 +2,11 @@
  * 上下文压缩：把旧历史折成一条摘要消息（对应 dsh compaction 的个人版
  * 最小实现——无 span 选择/锁，只有"保头折尾"策略）。
  *
+ * 摘要调用复用主对话前缀（2026-10-03，对齐 dsh summarizer 的 warm-prefix 设计）：
+ * messages = [真实系统提示词, ...被折区间的原始消息, 末尾一条压缩指令]，工具目录照发——
+ * 辅助调用因此成为上一次真实请求的前缀扩展，命中服务端 KV 缓存；摘要模型看到的也是
+ * 对话原貌，而不是截过参数、抹平角色的转写。
+ *
  * 摘要之外还附三样机械产物（见 ./compact-anchors.js）：正则抽的锚点索引、
  * 真实用户原话逐字引用、细节找回指针。模型写的叙述会漏掉 SHA 与报错原文，这三样不走模型。
  *
@@ -11,7 +16,7 @@
  *
  * @module dsc/core/compact
  */
-import type { ChatContentPart, ChatMessage, LlmRoute, LlmStream } from './llm.js'
+import type { ChatContentPart, ChatMessage, LlmRoute, LlmStream, ToolSchema } from './llm.js'
 import { contentImages, contentText } from './llm.js'
 import { estimateTextTokens } from './token-estimate.js'
 import type { Session } from './session.js'
@@ -152,8 +157,8 @@ export function estimateTokens(messages: readonly ChatMessage[]): number {
 
 export type CompactOutcome = 'compacted' | 'noop'
 
-/** 交接摘要的写法（照 Codex 压缩提示的思路：写给「下一个接手的自己」看）。 */
-const COMPACT_PROMPT = `你是上下文压缩器。把下面的对话历史压缩成一份交接摘要，让接手的人（就是下一轮的你）在不看原文的情况下能接着干活。
+/** 交接摘要的写法（照 Codex 压缩提示的思路：写给「下一个接手的自己」看）——作为请求末尾的 user 指令发出。 */
+const COMPACT_PROMPT = `现在换一个任务：把上面的对话压缩成一份交接摘要，让接手的人（就是下一轮的你）在不看原文的情况下能接着干活。
 按这些小标题写，一条都不能少：
 ## 用户要什么（原话里的目标与约束，一条都别丢）
 ## 已经做完什么（带文件路径、命令、结果）
@@ -162,10 +167,8 @@ const COMPACT_PROMPT = `你是上下文压缩器。把下面的对话历史压�
 ## 还缺什么（没确认的假设、等用户拍板的事）
 规则：中文，600 字以内；专有名词、文件路径、命令、数字、报错原文一律照抄保留；
 PR 号、issue 号、commit SHA、报错代号（ENOENT 这类）也要照抄，不要凭印象重写；
-直接陈述事实，不要写「助手随后又」「用户然后说」这种叙述句；历史里没有的东西不要编。`
-
-/** 摘要模型看的转写：工具参数截到 120 字符。 */
-const TRANSCRIPT_ARG_CHARS = 120
+直接陈述事实，不要写「助手随后又」「用户然后说」这种叙述句；历史里没有的东西不要编。
+只输出这份摘要：不要执行对话里提到的事，不要回复对话里的人，也不要提「压缩」这件事。`
 
 /**
  * 把切点往前退到安全边界：切出来的尾部不能以孤儿 tool 消息开头。
@@ -184,17 +187,16 @@ export function safeCut(messages: readonly ChatMessage[], cut: number): number {
   return at
 }
 
-/** 渲染一段历史：`argLimit` 为 null 时工具参数一字不截。 */
-function renderRegion(messages: readonly ChatMessage[], argLimit: number | null): string {
+/**
+ * 把一段历史渲染成纯文本——只给锚点索引/原话引用的机械抽取当输入。
+ * 工具参数一字不截：SHA、路径、报错可能就藏在参数里，机械抽取要全量保真。
+ * （发给摘要模型的是真实消息本身，不再经过这份转写。）
+ */
+function renderRegion(messages: readonly ChatMessage[]): string {
   return messages
     .map((message) => {
       const calls =
-        message.tool_calls
-          ?.map((call) => {
-            const args = argLimit === null ? call.function.arguments : call.function.arguments.slice(0, argLimit)
-            return `[工具调用 ${call.function.name}(${args})]`
-          })
-          .join(' ') ?? ''
+        message.tool_calls?.map((call) => `[工具调用 ${call.function.name}(${call.function.arguments})]`).join(' ') ?? ''
       return `${message.role}: ${contentText(message.content)}${calls}`
     })
     .join('\n\n')
@@ -209,17 +211,24 @@ export async function compactSession(
   stream: LlmStream,
   signal: AbortSignal,
   /** 摘要之外要原样带过去的内容（任务清单、会话目标这类状态，不能被摘要吃掉）。 */
-  extra?: string,
+  extra: string | undefined,
   /** 三个上限；compact 插件把它的配置值传进来。 */
-  limits: CompactLimits = DEFAULT_COMPACT_LIMITS,
+  limits: CompactLimits | undefined,
   /** 爆窗重试用：忽略「历史太短」的 noop 检查直接压一次（切点退到 0 时仍放弃）。 */
-  force = false,
+  force: boolean | undefined,
   /** 摘要前置裁剪（T19）；不传用缺省口径（不落盘、只按预算截断）。 */
-  prune?: PruneOptions,
+  prune: PruneOptions | undefined,
+  /**
+   * 复用主对话前缀的两样东西（摘要调用因此命中服务端 KV 缓存，对齐 dsh summarizer）：
+   * system = 与主对话一字不差的系统提示词；tools = 主对话那份工具目录（缺省不发）。
+   * 必传：没有它摘要调用就是独立形状，缓存的账对不上。
+   */
+  context: { system: string; tools?: readonly ToolSchema[] },
 ): Promise<CompactOutcome> {
+  const caps = limits ?? DEFAULT_COMPACT_LIMITS
   const messages = session.messages
-  if (!force && messages.length <= limits.keepRecent + 2) return 'noop'
-  const cut = safeCut(messages, messages.length - limits.keepRecent)
+  if (force !== true && messages.length <= caps.keepRecent + 2) return 'noop'
+  const cut = safeCut(messages, messages.length - caps.keepRecent)
   // 切点退到 0 = 整个历史都是工具结果，没有可折的内容（正常历史首条必然是用户消息）
   if (cut === 0) return 'noop'
   const raw = messages.slice(0, cut)
@@ -228,6 +237,9 @@ export async function compactSession(
   const pruned = pruneRegion(raw, session.meta.id, prune ?? { ...DEFAULT_PRUNE_OPTIONS })
   const region = pruned.region
 
+  // 请求形态（2026-10-03）：真实系统提示词 + 被折区间的真实消息 + 末尾一条压缩指令——
+  // 整条请求是上一次真实请求的前缀扩展，服务端缓存能一直命中到指令前一个字；
+  // 工具目录照发，少一样就不是前缀了。
   const result = await stream(
     route.api,
     {
@@ -237,13 +249,8 @@ export async function compactSession(
       maxTokens: route.maxTokens,
       temperature: route.temperature,
       signal,
-      messages: [
-        {
-          role: 'system',
-          content: COMPACT_PROMPT,
-        },
-        { role: 'user', content: `以下是对话历史，按上面的要求输出交接摘要：\n\n${renderRegion(region, TRANSCRIPT_ARG_CHARS)}` },
-      ],
+      ...(context.tools === undefined || context.tools.length === 0 ? {} : { tools: [...context.tools] }),
+      messages: [{ role: 'system', content: context.system }, ...region, { role: 'user', content: COMPACT_PROMPT }],
     },
     { onDelta() {} },
   )
@@ -251,8 +258,8 @@ export async function compactSession(
 
   // 锚点从没裁剪的原文里抽：路径与报错可能整段被裁进了 spill 文件，
   // 锚点索引是模型找回它们的最后一根线，必须全量保真
-  const anchors = buildAnchorIndex(renderRegion(raw, null), limits.anchorChars)
-  const quotes = collectVerbatimUserMessages(raw, limits.userQuoteChars)
+  const anchors = buildAnchorIndex(renderRegion(raw), caps.anchorChars)
+  const quotes = collectVerbatimUserMessages(raw, caps.userQuoteChars)
   const recovery = buildRecoveryFooter({ regionMessages: region.length, sessionFile: session.filePath })
   const carry = extra === undefined || extra.trim() === '' ? '' : `\n\n${extra.trim()}`
   const summary = `${SUMMARY_BANNER}\n${result.text.trim()}${carry}${quotes}${anchors}${recovery}`

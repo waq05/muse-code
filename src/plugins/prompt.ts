@@ -5,7 +5,9 @@
  *   - 各功能点往这里登记自己那一段话（模式条款、外部插件的附加说明……），
  *     段落顺序由各段自己声明，稳定内容往前放、易变内容往后放（服务端提示缓存只认前缀）；
  *   - 要改写发给模型那份消息的功能点登记**命名纯投影**（registerProjection），
- *     内核的 fold-system / drop-images 两条护栏与插件投影走同一条按次序的管道；
+ *     内核的 fold-system / env-facts / drop-images 三条护栏与插件投影走同一条按次序的管道；
+ *   - 环境事实（env-facts 投影，order 600）：日期/分支/脏标不再进系统提示词，作为
+ *     请求末尾的 user 快照附上——缓存只认字节前缀，易变内容不能放头部（2026-10-03）；
  *   - 本插件自己兜底一件事：指令文件的字符预算（`prompt.instructionBudget`）。
  *
  * 「模型看见什么」可以从会话日志完整重建：日志存原文，投影链是命名且可复算的
@@ -15,10 +17,11 @@
  *
  * @module dsc/plugins/prompt
  */
-import type { Plugin } from '@deepseek-ai/cordis'
+import { createHash } from 'node:crypto'
+import type { Context, Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
 import { dropImageParts, foldSystemMessages, type ChatMessage } from '../core/llm.js'
-import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET, type PromptContribution } from '../core/prompt.js'
+import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '../core/prompt.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import type { PromptService } from '../services/types.js'
 
@@ -47,7 +50,7 @@ function readBudget(passed: unknown): number {
 
 export const promptPlugin: Plugin.Object = {
   name: 'prompt',
-  inject: ['llm', 'skills'],
+  inject: ['llm', 'skills', 'session'],
   provide: 'prompt',
   apply(ctx, passed) {
     let budget = readBudget(passed)
@@ -76,7 +79,22 @@ export const promptPlugin: Plugin.Object = {
     // system」，历史中间再冒一条就 400。放在插件投影之后（500）：插件往末尾补的
     // system 话术在这里被并进头部。
     projections.set('fold-system', { order: 500, fn: foldSystemMessages })
-    // 内置投影二（永远最后）：模型没勾照片输入时把图像换成一句说明。留着图像会让
+    // 内置投影二：环境事实快照（2026-10-03）。日期/分支/脏标这类东西每天都变，
+    // 放进系统提示词等于每次变化都重写前缀——服务端前缀缓存从改写点之后整段失效
+    // （dsh 的 agent-loop README 把这条规律写得很直白）。改成追加在请求末尾的 user
+    // 快照：前缀原样命中，变化只落在尾巴这一点；每次请求都带当前值，模型手里
+    // 不会有过期环境。它补的是 user 消息，与 fold-system（只动 system）互不干扰。
+    projections.set('env-facts', {
+      order: 600,
+      fn: (messages) => {
+        const snapshot = environmentSnapshot(ctx.session.current().meta.cwd)
+        // 落一条状态（hash 去重，变了才写）：重放会话时最后一条就是模型当时看到的环境
+        //（Model-visible ⟺ logged 的环境半边，与 agent 插件的 system-prompt 条目同套做法）。
+        noteEnvFacts(ctx, snapshot)
+        return [...messages, { role: 'user', content: snapshot }]
+      },
+    })
+    // 内置投影三（永远最后）：模型没勾照片输入时把图像换成一句说明。留着图像会让
     // 端点整条请求报错，而电脑操作插件的截图、用户贴进来的图都可能落在这里。
     projections.set('drop-images', {
       order: 900,
@@ -162,4 +180,17 @@ export const promptPlugin: Plugin.Object = {
     }
     ctx.provide('prompt', service)
   },
+}
+
+/** 环境快照消息的全文（发给模型与写进日志状态条目是同一份文本）。 */
+function environmentSnapshot(cwd: string): string {
+  return `${environmentText(cwd)}\n（本条是程序在每次请求时自动附上的当前环境快照，不是用户发言）`
+}
+
+/** 环境快照落盘（hash 去重）：变了才写一条状态，恢复会话时最后一条就是当前环境。 */
+function noteEnvFacts(ctx: Context, text: string): void {
+  const hash = createHash('sha256').update(text).digest('hex').slice(0, 16)
+  const current = ctx.session.current()
+  if (current.state('env-facts')?.hash === hash) return
+  current.appendState('env-facts', { hash, text })
 }

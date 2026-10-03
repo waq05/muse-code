@@ -130,5 +130,7 @@ scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scrip
 | [docs/harness-benchmark-roadmap.md](docs/harness-benchmark-roadmap.md) | 对标计划书：对照 codex / hermes / dsh 的差距矩阵、可移植项与落地顺序、红线 |
 | [docs/plugin-development.md](docs/plugin-development.md) | 插件 API 与开发规范 |
 | [docs/dsh-plugin-porting.md](docs/dsh-plugin-porting.md) | **dsh 插件适配指南**：判定能不能直接挂、挂载步骤、API 映射表、实测坑、验证清单 |
+| [docs/dsh-request-assembly.md](docs/dsh-request-assembly.md) | **dsh 请求组装拆解**（源码级，带行号快照）：system prompt 注册表、环境/AGENTS.md 的注入与差分、压缩的 warm-prefix 设计、请求前规范化分层 |
+| [docs/codex-request-assembly.md](docs/codex-request-assembly.md) | **codex 请求组装拆解**（源码级，带行号快照）：按模型的 instructions 模板、WorldState 快照 diff、for_prompt 规范化、压缩与 prompt 缓存设计 |
 | [docs/presets.md](docs/presets.md) | **模式（Agent 预设）**：模式文件怎么写、出厂四个各是什么、可去掉哪些提示段、四条硬规矩、PTC 的诚实说明 |
 | [docs/ui-design.md](docs/ui-design.md) | 界面开发规范：设计原则、令牌体系、原语层、布局与反馈、键盘与动效、主题与 hermes 主题引擎对照 |

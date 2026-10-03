@@ -329,6 +329,14 @@ export function UsagePanel(props: { proxy: RuntimeProxy }): JSX.Element {
     { label: '当前连续', value: `${String(stats.currentStreakDays)} 天` },
     { label: '最长连续', value: `${String(stats.longestStreakDays)} 天` },
   ]
+  // 前缀缓存明细（端点上报过才有）：命中率 = 命中 /（命中 + 未命中），只统计上报了的请求
+  const cacheReported = stats.totalCacheHitTokens + stats.totalCacheMissTokens
+  if (cacheReported > 0) {
+    cards.push({
+      label: '前缀缓存命中',
+      value: `${String(Math.round((stats.totalCacheHitTokens / cacheReported) * 100))}%`,
+    })
+  }
 
   return (
     <div className="usage">

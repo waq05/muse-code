@@ -8,12 +8,31 @@
  *
  * @module dsc/plugins/llm
  */
-import type { Plugin } from '@deepseek-ai/cordis'
+import type { Plugin, Context } from '@deepseek-ai/cordis'
 import type { ModelInfo, DscCoreConfig } from '../core/config.js'
 import { DEFAULT_CAPS, clampEffort, effortToWire, hasEffortLevel, THINKING_LEVEL_LABELS, type ModelCaps } from '../core/model-caps.js'
-import { OPENAI_COMPLETIONS_API, streamChat, type LlmAdapter } from '../core/llm.js'
+import { OPENAI_COMPLETIONS_API, streamChat, type LlmAdapter, type ToolOrphanReport } from '../core/llm.js'
 import type { EffortLevel, ModelChoiceView, Modality } from '../contract.js'
 import type { LlmRoute, LlmService } from '../services/types.js'
+
+/** 请求侧清洗提醒的账：会话 id → 上次报过的报告形状（同形状不重复报，形状变了再报一次）。 */
+const sanitizeNotices = new Map<string, string>()
+
+/** 历史有协议残留、请求侧兜底清洗过：给用户说一声（同一个会话同一种残留只报一次）。 */
+function noticeSanitize(ctx: Context, report: ToolOrphanReport): void {
+  const sid = ctx.session.current().meta.id
+  const shape = `${String(report.droppedResults)}/${String(report.droppedCalls)}/${String(report.droppedMessages)}`
+  if (sanitizeNotices.get(sid) === shape) return
+  sanitizeNotices.set(sid, shape)
+  const parts: string[] = []
+  if (report.droppedResults > 0) parts.push(`丢弃重复/孤儿的工具结果 ${String(report.droppedResults)} 条`)
+  if (report.droppedCalls > 0) parts.push(`剔掉没有回应的工具调用 ${String(report.droppedCalls)} 个`)
+  if (report.droppedMessages > 0) parts.push(`整条删除已无内容的回复 ${String(report.droppedMessages)} 条`)
+  ctx.emit(
+    'dsc/notice',
+    `会话日志里有协议残留（多半来自上一次中断），这次请求已自动清洗：${parts.join('、')}。只影响发给模型的这一份，日志文件不动。`,
+  )
+}
 
 export const llmPlugin: Plugin.Object<DscCoreConfig> = {
   name: 'llm',
@@ -122,7 +141,7 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
               '检查 config.yaml 里这个端点的 api 字段，或启用提供该协议的插件。',
           )
         }
-        return adapter.stream(request, handlers)
+        return adapter.stream(request, { ...handlers, onSanitize: (report) => noticeSanitize(ctx, report) })
       },
       setEffort(effort) {
         const caps = capsFor(currentProvider, currentModel)

@@ -214,9 +214,10 @@ export const lifecycleHooksPlugin: Plugin.Object = {
       if (pending.length === 0) return messages
       const blocks = pending
       pending = []
+      // 补在末尾、user 角色（2026-10-03）：system 段会被 fold-system 并进头部、改写前缀缓存；
+      // user 只往历史尾巴追加。内容自带 <external_content source="hook:…"> 围栏，出处已标明。
       ctx.session.current().appendNote('lifecycle-hooks', blocks.join('\n\n'))
-      // 补在末尾是安全的：fold-system 投影（order 500）会把散落的 system 并进头部那一条。
-      return [...messages, { role: 'system', content: blocks.join('\n\n') }]
+      return [...messages, { role: 'user', content: blocks.join('\n\n') }]
     })
 
     /** 认出这次请求里新的那条用户消息，跑一遍 UserPromptSubmit（只能把话留到下一次请求）。 */

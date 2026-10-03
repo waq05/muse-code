@@ -157,10 +157,36 @@ export function dropImageParts(messages: ChatMessage[], note: string): ChatMessa
  * 配对按全文 id 集合判断，不要求 tool 消息紧邻：正常历史里 call id 唯一，全文判断
  * 不会误删；而「调用与回应隔着别的消息」的畸形顺序本身就只在损坏日志里出现。
  *
+ * 同一 callId 只放行第一条结果：一条 tool_call 在协议上只能被应答一次，第二条在
+ * 网关眼里就是「没有前置 tool_calls 可应答的 tool 消息」（DeepSeek 的 400 原文）。
+ * 重复从哪来：中断修复先落盘「结果未知」合成件，紧接着被打断的那一轮又把真实结果
+ * 写了进来（两件事在 session.open 重开同一会话时先后必然发生，见 plugins/session）。
+ * 保留首条而不是末条是刻意的保守取舍：首条是合成件时模型会先去核查副作用，不会
+ * 被后到的「用户取消」之类措辞误导成「什么都没发生」。
+ *
  * @param messages - 组装好的请求消息；原数组不动。
  * @returns 配对完整（或已剔除孤儿）的消息数组。
  */
 export function sanitizeToolOrphans(messages: ChatMessage[]): ChatMessage[] {
+  return sanitizeToolOrphansWithReport(messages).messages
+}
+
+/** {@link sanitizeToolOrphansWithReport} 这次实际剔了什么（全 0 = 原样通过）。 */
+export interface ToolOrphanReport {
+  /** 删掉的 tool 结果条数（孤儿与重复都算）。 */
+  droppedResults: number
+  /** 从 assistant 消息上剔掉的未应答 tool_calls 个数。 */
+  droppedCalls: number
+  /** 剔空 tool_calls 又没正文、整条删掉的 assistant 消息数。 */
+  droppedMessages: number
+}
+
+/**
+ * {@link sanitizeToolOrphans} 的带账版本：清洗逻辑完全一样，另报「动了哪里」。
+ * 为什么要有账：清洗一直是静默的，2026-10-03 那次 400 事故就是它补不上且没人知道。
+ * llm 插件把这份报告接成 `dsc/notice`，「日志有病、请求侧兜底」就不再是暗箱。
+ */
+export function sanitizeToolOrphansWithReport(messages: ChatMessage[]): { messages: ChatMessage[]; report: ToolOrphanReport } {
   const called = new Set<string>()
   const answered = new Set<string>()
   for (const message of messages) {
@@ -170,17 +196,31 @@ export function sanitizeToolOrphans(messages: ChatMessage[]): ChatMessage[] {
       answered.add(message.tool_call_id)
     }
   }
-  return messages.flatMap((message): ChatMessage[] => {
+  const replied = new Set<string>()
+  const report: ToolOrphanReport = { droppedResults: 0, droppedCalls: 0, droppedMessages: 0 }
+  const cleaned = messages.flatMap((message): ChatMessage[] => {
     if (message.role === 'tool') {
-      return message.tool_call_id !== undefined && !called.has(message.tool_call_id) ? [] : [message]
+      if (message.tool_call_id === undefined) return [message]
+      if (!called.has(message.tool_call_id) || replied.has(message.tool_call_id)) {
+        report.droppedResults += 1
+        return []
+      }
+      replied.add(message.tool_call_id)
+      return [message]
     }
     if (message.role !== 'assistant' || message.tool_calls === undefined) return [message]
     const kept = message.tool_calls.filter((call) => answered.has(call.id))
     if (kept.length === message.tool_calls.length) return [message]
+    report.droppedCalls += message.tool_calls.length - kept.length
     if (kept.length > 0) return [{ ...message, tool_calls: kept }]
     // 调用全被剔掉、正文又是空的：这条 assistant 已经不表达任何内容，整条删
-    return contentText(message.content) === '' ? [] : [{ ...message, tool_calls: undefined }]
+    if (contentText(message.content) === '') {
+      report.droppedMessages += 1
+      return []
+    }
+    return [{ ...message, tool_calls: undefined }]
   })
+  return { messages: cleaned, report }
 }
 
 export interface StreamHandlers {
@@ -207,13 +247,28 @@ export interface StreamHandlers {
    * @param reason 触发重试的原因（错误原文，界面上只作说明）
    */
   onRetry?(nextAttempt: number, reason: string): void
+  /**
+   * 发请求前发现历史里有协议残留（重复/孤儿的工具消息），已自动清洗：这里报一声剔了什么。
+   * 有它，「日志有病、请求侧兜底」才不是静默修补（2026-10-03 那次 400 事故就是没人知道）。
+   */
+  onSanitize?(report: ToolOrphanReport): void
 }
 
 export interface StreamResult {
   text: string
   reasoning: string
   toolCalls: ToolCall[]
-  usage: { inputTokens: number; outputTokens: number } | null
+  /**
+   * 输入/输出 tokens；端点还上报了前缀缓存明细时带上 cacheHit/cacheMiss
+   * （DeepSeek 的 prompt_cache_hit_tokens、OpenAI 的 prompt_tokens_details.cached_tokens；
+   * 老端点没有这项就是 undefined，不做假数据）。
+   */
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    cacheHitTokens?: number
+    cacheMissTokens?: number
+  } | null
   finishReason: string | null
 }
 
@@ -299,13 +354,17 @@ export async function streamChat(request: StreamRequest, handlers: StreamHandler
 }
 
 async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult> {
+  // 工具孤儿是协议层面的硬伤（配不上对就 400），在这里——离 wire 最近的
+  // 一站——统一守门，循环轮次与压缩等所有调用方都自动受益；剔了什么报给上层。
+  const sanitized = sanitizeToolOrphansWithReport(request.messages)
+  if (sanitized.report.droppedResults + sanitized.report.droppedCalls + sanitized.report.droppedMessages > 0) {
+    handlers.onSanitize?.(sanitized.report)
+  }
   const body: Record<string, unknown> = {
     model: request.model,
     // 消息按调用方给的原样发：历史里混进多条 system 的合并是 prompt 层的
     // 命名投影（fold-system）该做的事，协议适配器只认一条流水线形状。
-    // 工具孤儿是协议层面的硬伤（配不上对就 400），在这里——离 wire 最近的
-    // 一站——统一守门，循环轮次与压缩等所有调用方都自动受益。
-    messages: serializeMessages(sanitizeToolOrphans(request.messages)),
+    messages: serializeMessages(sanitized.messages),
     stream: true,
     stream_options: { include_usage: true },
   }
@@ -386,7 +445,15 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
           }
           finish_reason?: string | null
         }[]
-        usage?: { prompt_tokens?: number; completion_tokens?: number } | null
+        usage?: {
+          prompt_tokens?: number
+          completion_tokens?: number
+          /** DeepSeek 系：前缀缓存命中 / 未命中的输入 tokens。 */
+          prompt_cache_hit_tokens?: number
+          prompt_cache_miss_tokens?: number
+          /** OpenAI 系：缓存明细。 */
+          prompt_tokens_details?: { cached_tokens?: number } | null
+        } | null
       }
       try {
         chunk = JSON.parse(data)
@@ -427,9 +494,15 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
       }
       if (choice?.finish_reason != null) result.finishReason = choice.finish_reason
       if (chunk.usage != null) {
+        const input = chunk.usage.prompt_tokens ?? 0
+        // 前缀缓存明细：DeepSeek 直接给 hit/miss 两个数；OpenAI 只给 cached_tokens，miss 自己减。
+        const hit = chunk.usage.prompt_cache_hit_tokens ?? chunk.usage.prompt_tokens_details?.cached_tokens
+        const miss = chunk.usage.prompt_cache_miss_tokens ?? (hit === undefined ? undefined : Math.max(input - hit, 0))
         result.usage = {
-          inputTokens: chunk.usage.prompt_tokens ?? 0,
+          inputTokens: input,
           outputTokens: chunk.usage.completion_tokens ?? 0,
+          ...(hit === undefined ? {} : { cacheHitTokens: hit }),
+          ...(miss === undefined ? {} : { cacheMissTokens: miss }),
         }
       }
     }

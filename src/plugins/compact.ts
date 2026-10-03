@@ -8,6 +8,9 @@
  * 「哪些内容不许被摘要模型改写」由功能点自己登记（`registerCarry`）：任务清单与会话目标
  * 各登记一段文本，这个插件因此不认识任何具体功能。
  *
+ * 摘要调用复用主对话前缀（2026-10-03）：系统提示词取自 prompt 服务、工具目录取自 tools 服务，
+ * 摘要请求因此是上一次真实请求的前缀扩展，命中服务端 KV 缓存（见 core/compact.ts 的 context 参数）。
+ *
  * 四个可调值（保留条数、自动压缩触发线、锚点索引字符预算、用户原话字符预算）读自己的插件配置，
  * 并以设置分区的面目交给界面；保存后本插件立刻重读，下一次压缩就用新值。
  *
@@ -16,6 +19,7 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { compactSession, DEFAULT_KEEP_RECENT, DEFAULT_PRUNE_OPTIONS, estimateTokens } from '../core/compact.js'
 import type { CompactLimits, PruneOptions } from '../core/compact.js'
+import type { ToolSchema } from '../core/llm.js'
 import { readSpillConfig } from '../core/spill.js'
 import { DEFAULT_ANCHOR_BUDGET_CHARS, DEFAULT_USER_QUOTE_BUDGET_CHARS } from '../core/compact-anchors.js'
 import { errText } from '../adapter/transcript.js'
@@ -81,7 +85,7 @@ function readConfig(passed?: unknown): CompactConfig {
 
 export const compactPlugin: Plugin.Object = {
   name: 'compact',
-  inject: ['llm', 'session', 'commands', 'settings'],
+  inject: ['llm', 'session', 'commands', 'settings', 'prompt', 'tools'],
   provide: 'compact',
   apply(ctx) {
     let config = readConfig()
@@ -101,7 +105,24 @@ export const compactPlugin: Plugin.Object = {
     /** T19 前置裁剪口径：spill 配置复用 spill 插件的那份（目录与上限一致，模型可照常 read）。 */
     const prune = (): PruneOptions => ({
       ...DEFAULT_PRUNE_OPTIONS,
+      // 模型不收图时区域里的图全部卸载：摘要调用复用主对话前缀、发的是真实消息，
+      // 留下 image_url 会被端点直接 400（以前转写成纯文本，没这个问题）。
+      imageBudget: ctx.llm.inputModalities.includes('image') ? DEFAULT_PRUNE_OPTIONS.imageBudget : 0,
       spill: readSpillConfig(resolvePluginConfig('spill')),
+    })
+
+    /**
+     * 复用主对话前缀的两样东西（对齐 dsh summarizer 的 warm-prefix 设计）：
+     * 与主对话一字不差的系统提示词 + 主对话那份工具目录，让摘要调用成为
+     * 上一次真实请求的严格前缀扩展，服务端缓存能一直命中到压缩指令前一个字。
+     */
+    const requestContext = (): { system: string; tools: readonly ToolSchema[] } => ({
+      system: ctx.prompt.systemPrompt(ctx.session.current().meta.cwd),
+      tools: ctx.tools.visible().map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      })),
     })
 
     /** 摘要之外必须原样带过去的文本：由各功能点登记，按登记顺序拼接。 */
@@ -144,6 +165,7 @@ export const compactPlugin: Plugin.Object = {
           limits(),
           undefined,
           prune(),
+          requestContext(),
         )
         const compacted = outcome === 'compacted'
         // 只有真压出结果才打压缩标记：noop 时这条提示照旧发（文案不动），
@@ -163,6 +185,7 @@ export const compactPlugin: Plugin.Object = {
           limits(),
           true,
           prune(),
+          requestContext(),
         )
         if (outcome === 'compacted') {
           // 打上 'compaction' 类别：transcript 据此把这条通知标成压缩落点（轨迹页切区段）
@@ -195,6 +218,7 @@ export const compactPlugin: Plugin.Object = {
             limits(),
             undefined,
             prune(),
+            requestContext(),
           )
           const compacted = outcome === 'compacted'
           ctx.emit(

@@ -48,7 +48,7 @@ export const runtimeApiPlugin: Plugin.Object = {
         .map((section) => `- ${String(section.order).padStart(4)} ${section.id}｜${section.text.split('\n')[0].slice(0, 60)}`)
       return [
         `当前注册的提示段 ${rows.length} 个（order 小的排前面）：\n${rows.join('\n')}`,
-        '内置骨架段（不在上面这张表里，由 core/prompt.ts 拼）：0 identity、10 behavior、20 tool-rules、200 指令文件、210 技能目录、890 模型信息、900 环境事实。',
+        '内置骨架段（不在上面这张表里，由 core/prompt.ts 拼）：0 identity、10 behavior、20 tool-rules、200 指令文件、210 技能目录、890 模型信息。环境事实不在提示词里（2026-10-03 起）：env-facts 投影把它附在每次请求末尾。',
         `模式能去掉的段：${DROPPABLE_SECTIONS.join('、')}。`,
       ].join('\n')
     }

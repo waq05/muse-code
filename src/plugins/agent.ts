@@ -19,7 +19,8 @@ import type { AgentService } from '../services/types.js'
 /**
  * 系统提示词落盘（Model-visible ⟺ logged 的提示词半边）：系统提示不进 user/assistant
  * 消息流，这里在每次请求组装时把用到的全文写进会话的 `system-prompt` 状态条目——
- * hash 变了才写（换模型、换模式、改 AGENTS.md、跨天都会变），重放会话时最后一条
+ * hash 变了才写（换模型、换模式、改 AGENTS.md 才会变；环境事实已搬出提示词，
+ * 由 prompt 插件的 env-facts 投影附在请求末尾），重放会话时最后一条
  * 就是模型当前看到的提示词。
  */
 function noteSystemPrompt(ctx: Context, text: string): void {
@@ -58,6 +59,8 @@ export const agentPlugin: Plugin.Object = {
               model: ctx.llm.model,
               i: event.inputTokens,
               o: event.outputTokens,
+              ...(event.cacheHitTokens === undefined ? {} : { ch: event.cacheHitTokens }),
+              ...(event.cacheMissTokens === undefined ? {} : { cm: event.cacheMissTokens }),
               sid: ctx.session.current().meta.id,
             })
           }

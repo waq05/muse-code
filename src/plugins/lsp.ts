@@ -193,9 +193,13 @@ export const lspPlugin: Plugin.Object = {
       if (pendingDiagnostics.length === 0) return messages
       const blocks = pendingDiagnostics
       pendingDiagnostics = []
-      ctx.session.current().appendNote('lsp-write-diagnostics', blocks.join('\n\n'))
-      // 补在末尾是安全的：fold-system 投影（order 500）会把散落的 system 并进头部那一条。
-      return [...messages, { role: 'system', content: blocks.join('\n\n') }]
+      // 补在末尾、user 角色（2026-10-03）：原先补 system 段会被 fold-system 并进头部那一条，
+      // 头部字节一变，服务端前缀缓存从变化点之后整段失效（下一次请求诊断消失、头部还原，
+      // 再失效一次）。user 角色只往历史尾巴追加，前缀原样命中缓存——codex 的
+      // environment_context、dsh 的运行时快照都是这个形状；点明出处防模型误认作用户发言。
+      const text = `【LSP 诊断】以下诊断由程序在刚才写入文件后自动附上（不是用户发言）：\n\n${blocks.join('\n\n')}`
+      ctx.session.current().appendNote('lsp-write-diagnostics', text)
+      return [...messages, { role: 'user', content: text }]
     })
     const offSection = ctx.settings.registerSection(buildSection())
     const offPrompt = ctx.prompt.register(

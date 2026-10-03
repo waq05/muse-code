@@ -268,7 +268,13 @@ export class MiniAgent {
           finishReason: result.finishReason,
         })
         if (result.usage !== null) {
-          this.deps.emit({ type: 'usage', inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens })
+          this.deps.emit({
+            type: 'usage',
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            ...(result.usage.cacheHitTokens === undefined ? {} : { cacheHitTokens: result.usage.cacheHitTokens }),
+            ...(result.usage.cacheMissTokens === undefined ? {} : { cacheMissTokens: result.usage.cacheMissTokens }),
+          })
         }
         return result
       } catch (error) {

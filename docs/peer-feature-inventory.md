@@ -6,6 +6,7 @@
 | --- | --- |
 | 这些清单怎么用、差距怎么排 | [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) |
 | **本文档** | **三家各有什么（按能力域分组，带源码出处）** |
+| dsh / codex 的请求组装细节（源码级拆解） | [dsh-request-assembly.md](dsh-request-assembly.md) · [codex-request-assembly.md](codex-request-assembly.md) |
 
 取材方法与口径：
 

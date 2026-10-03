@@ -5810,11 +5810,11 @@ body.resizing iframe {
   margin: 0;
 }
 
-/* 汇总卡：五个一排，宽度不足自动换行 */
+/* 汇总卡：一排铺满，宽度不足自动换行（2026-10-03 起「前缀缓存命中」卡有明细时才出，可能是六张） */
 .usage-cards {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
 }
 
 .usage-card {
@@ -7526,9 +7526,11 @@ body.resizing iframe {
 
    两处挂点共用这一套（dsh 那边两处都套 TextShimmer）：
    - 思考行的摘要（.think-summary-text，跑动中「正在想什么」的那句）；
-   - 阶段组头的标题（.step-fold-label，跑动中「正在干什么」的那句）。 */
+   - 阶段组头的标题与实时详情（.step-fold-label / .step-fold-detail，跑动中「正在干什么」
+     的那两行）。 */
 .think-summary-text[data-shimmer]::after,
-.step-fold-label[data-shimmer]::after {
+.step-fold-label[data-shimmer]::after,
+.step-fold-detail[data-shimmer]::after {
   animation: dsc-think-shimmer 1.5s steps(48, end) 0.3s infinite;
   background-clip: text;
   -webkit-background-clip: text;
@@ -7597,7 +7599,8 @@ body.resizing iframe {
   }
 
   .think-summary-text[data-shimmer]::after,
-  .step-fold-label[data-shimmer]::after {
+  .step-fold-label[data-shimmer]::after,
+  .step-fold-detail[data-shimmer]::after {
     animation: none;
     opacity: 0;
   }
@@ -8022,19 +8025,48 @@ body.resizing iframe {
   opacity: 1;
 }
 
+/* 组头的文本柱：类别标题一行、实时详情一行（0.6.46 起分开——详情原来用「 · 」接在标题后，
+   直播思考一长就把整行撑出会话）。柱自己放开收缩下限，详情才能截在组头的宽度里。 */
+.step-fold-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  /* flex 子项默认 min-width: auto——内容多长子项就多宽，不显式放开，下面的截断永远不生效 */
+  min-width: 0;
+  overflow: hidden;
+}
+
 .step-fold-label {
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-ui);
-  /* flex:none + nowrap：与 .think-label 那两条同一个道理（见上面「竖排字」那段注释）——
-     标题不许被压成一列字。组头标题里有「，」，断行风险比「思考过程」还高。 */
-  flex: none;
+  /* nowrap + 溢出截断：与 .think-label 那两条同一个道理（见上面「竖排字」那段注释）——
+     标题不许被压成一列字；侧栏收到极窄时标题自己收进省略号，也不许顶开柱。 */
+  overflow: hidden;
   /* 跑动中的扫光是 ::after 绝对定位叠在字形上（见下面那条共用规则），要一个定位父级 */
   position: relative;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .step-fold:hover .step-fold-label {
   color: var(--dsc-text-primary);
+}
+
+/* 实时详情（直播思考预览 / 工具参数）：比标题暗一档——标题才是这一行的主语，详情是补充
+   （对照 .think-label 与 .think-summary-text 的分层）。详情只在直播中出现，恒用右缘渐隐
+   收口、不用省略号：末尾几个字一直在变，省略号会一闪一闪（.think-summary[data-streaming]
+   同款，ReasoningRow.module.css:65-72）。 */
+.step-fold-detail {
+  color: var(--dsc-text-tertiary);
+  display: block;
+  font-size: var(--dsc-fs-ui);
+  mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent);
+  overflow: hidden;
+  /* 扫光 ::after 的定位父级，同 .step-fold-label */
+  position: relative;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 /* 展开时组头与组体之间留 8px（对照 dsh 的 .title[aria-expanded="true"] { padding-bottom: 8px }）：

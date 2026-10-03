@@ -9,6 +9,7 @@
 | 为什么长成这样、踩过哪些坑 | [development-log.md](development-log.md) |
 | **对标三家的差距、可移植项、落地顺序** | **本文档** |
 | 三家（dsh / codex / Muse Code）功能清单全文（差距的证据底料） | [peer-feature-inventory.md](peer-feature-inventory.md) |
+| dsh / codex 的请求组装细节（源码级拆解） | [dsh-request-assembly.md](dsh-request-assembly.md) · [codex-request-assembly.md](codex-request-assembly.md) |
 
 本文档只读三家源码得出，未改动任何一家代码。引用一律给到 `文件:行号`；三家是外部项目，用完整路径，dsc 自己用仓库相对路径。
 
