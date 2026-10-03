@@ -266,6 +266,14 @@ function registerIpc(): void {
   // 最近用过的工作目录（侧栏切换菜单与「有会话的目录」合并成候选清单）
   ipcMain.handle('dsc:recent-cwds', (): string[] => readState().recentCwds ?? [])
 
+  // 从最近工作目录里移除一条（侧栏「删除工作区」：会话归档后把空组从侧栏撤下）。
+  // 只动 recentCwds 不碰会话数据；目录切回来时由 dsc:switch-cwd 重新前插。
+  ipcMain.handle('dsc:remove-recent-cwd', (_event, path: string): void => {
+    const target = String(path ?? '')
+    if (target === '') return
+    writeState({ recentCwds: (readState().recentCwds ?? []).filter((entry) => entry !== target) })
+  })
+
   // 当前会话的累计用量（底部状态栏第二段与上下文悬浮卡的数据源）。
   // 只读宿主写的用量日志，按会话 id 汇总；没有记录时返回 null，由渲染层省略那两段。
   ipcMain.handle('dsc:session-usage', (_event, sessionId: unknown) => readSessionUsage(String(sessionId ?? '')))

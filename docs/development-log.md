@@ -1431,3 +1431,17 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **验证**：新探针 `shots/ws-add-groups-check.mjs` 5 断言全绿——先经 esbuild 打包（`sidebar-groups.ts` 带 `.js` 别名依赖，node 裸跑解析不了；esbuild 在 `desktop/node_modules/.pnpm` 里没挂 .bin，探针自己找）再 import 产物：既有会话分组回归、recentCwds 新目录出现为空组、空组无会话、既有组不受影响、归档 only 档空组不出现。走查 `shots/ws-add-check.ps1`：加号按钮 DOM 断言（tip + IconPlus 两条线段 path）+ footer 文件夹图标未被误伤，截图目检。typecheck + build 绿；探针电池 43/44（browser-check 沿用已知记录）。
 
 **走查配方的坑（重要，记住）**：本想走 `switchCwd('C:\Windows')` + `openSession` 端到端断言「组立即出现 + 侧栏不闪空」，但 **restartHost 链路绕过 USERPROFILE 覆盖**——主进程状态文件 `~/.dsc/desktop.json`（lastCwd/recentCwds/windowBounds）经 Electron 主进程的 `app.getPath('home')`/`readState()` 走**真实 HOME**（os.homedir() 不吃 env），`dsc:switch-cwd` 成功路径里 `writeState({ lastCwd, recentCwds })` 把走查值写进了真实档案（实测 `lastCwd` 被写成 `C:\Windows`、recentCwds 被前插；会话库本身无污染——19 点后真实库零新 jsonl）。已还原 desktop.json（recentCwds 去掉 C:\Windows、lastCwd 回 D:\codex\codex）。教训：**desktop.json 是走查环境与真实档案的唯一交叉点**——纯启动走查不写它（前后 mtime 一致实测），凡涉及切工作区的走查一律不许真调 switchCwd/chooseDirectory，跑前后比对 desktop.json mtime。走查实例侧栏看到的「真实工作区名」（codex/System32 等）只是 recentCwds 空组镜像（只读），配置/会话仍隔离在 sound-home（顶栏 fake/fake-chat 可证）。end-to-end 的「选目录 → 组出现」留给装包人工验证。重打包 + pkg-smoke 绿。bump 0.6.44。
+
+## 阶段 66：删除工作区——空组也有移除入口（0.6.45）
+
+用户报（附截图：codex 空组的 ··· 菜单只有「在资源管理器中打开」「重命名显示名」）：「如果没有会话，就删不了工作区了。把归档所有会话按钮，改成删除工作区按钮，点击后提示是否全部归档。」
+
+**根因**：组菜单的「归档这 N 个会话」包在 `sessions.length > 0` 里——只切过来还没发过消息的空组（recentCwds 镜像出来的组）没有任何移除入口，工作区一旦不想要了就永远挂在侧栏。归档本是唯一的「撤下」路径，对空组失效。
+
+**修法（按用户口径换语义）**：组菜单（普通视图）的「归档这 N 个会话」整体换成**「删除工作区」**（`IconTrash`，danger 红字，常驻不再看会话数）；归档视图的「恢复这 N 个会话」不动。删除 = 归档该组全部会话 + 把目录从 recentCwds 撤下：
+
+- **确认框**（`deleteWorkspaceWithConfirm`，Sidebar）：文案按会话数分档——有会话：「其下 N 个会话会全部归档（移进「设置 → 归档」，消息一个字不删，可恢复），工作区从侧栏移除。」；无会话：「该工作区还没有会话，将从侧栏移除。」；目标是宿主当前目录再附一句「新建会话后会重新出现在侧栏」。归档可恢复、目录切一次就回 recentCwds，都属可逆，主按钮**不走红色危险档**（沿用 `archiveWithConfirm` 的口径），confirmLabel「删除」。
+- **执行**（App 的 `onDeleteWorkspace`）：先 `setRecentCwds` 本地过滤 + `dsc.removeRecentCwd`（新 IPC `dsc:remove-recent-cwd`，主进程 `writeState({ recentCwds: filtered })` 只动 recentCwds 不碰会话）——空组即刻消失、不等归档回包；再 `proxy.archiveSessions(ids)`，toast 回执。归档失败时组会随会话行重新出现（分桶按会话 cwd 兜底），不会丢数据。删除的是宿主当前 cwd 也放行——工作区重新出现的路径（新建会话/再切一次）都自然生效。
+- IPC 三层：preload `removeRecentCwd` + bridge `DscBridge.removeRecentCwd` + 主进程 handler（入参 `String(path ?? '')`，空串直接返回）。
+
+**验证**：新走查 `shots/ws-del-check.ps1`（无污染约束写在头注释：确认框**只点「取消」**——点确认会经 `dsc:remove-recent-cwd` 写真实 HOME 的 desktop.json，0.6.44 的交叉点坑）全绿：空组菜单含「删除工作区」且无「归档这 N 个会话」、空组确认框走「还没有会话」档（带当前目录附注）、有会话组确认框走「全部归档」档、两框取消后弹层正常关闭。截图目检（ws-del-check.png）：codex 空组菜单第三项红色「删除工作区」。回归：ws-add-check / ws-active-check 绿（0.6.43/0.6.44 功能未伤）、menu-check 不受影响（只量裁剪不钉文案）、根探针 38/39（browser-check 环境态沿用既有记录）、typecheck + build + pkg-smoke 绿。bump 0.6.45。

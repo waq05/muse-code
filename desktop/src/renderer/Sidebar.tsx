@@ -55,6 +55,7 @@ import {
   IconSidebar,
   IconSort,
   IconSwap,
+  IconTrash,
   IconTriangleRightFill,
   IconTree,
 } from './icons.js'
@@ -64,7 +65,6 @@ export type SidebarView = 'chat' | 'plugins' | 'skills'
 
 /** 归档确认框里那句后果说明：写清去向与「消息不删」，免得用户把归档当成删除。 */
 const ARCHIVE_DETAIL_ONE = '会话会离开侧栏，移进「设置 → 归档」的归档区；消息一个字不删，想回来去归档里点「恢复」。'
-const ARCHIVE_DETAIL_MANY = '这些会话会离开侧栏，移进「设置 → 归档」的归档区；消息一个字不删，想回来去归档里点「恢复」。'
 
 export function Sidebar(props: {
   sessions: SessionSummary[]
@@ -85,6 +85,11 @@ export function Sidebar(props: {
   onChooseDir(): void
   /** 切到另一个工作目录（宿主重启并换 cwd）。 */
   onSwitchCwd(cwd: string): void
+  /**
+   * 删除工作区（组菜单）：参数是该组 cwd 与组内会话 id 清单。归档会话、
+   * 从最近目录撤下、回执 toast 都在 App 做——Sidebar 只负责确认框。
+   */
+  onDeleteWorkspace(cwd: string, sessionIds: string[]): void
   /** 改界面偏好（会话排序、工作区顺序、显示名别名）：写盘与状态更新都在 App。 */
   onUiPrefs(patch: Partial<UiPrefsView>): void
   /** 侧栏收成 56px 图标窄栏（Ctrl+B，或点窄栏最上面那颗 logo）。 */
@@ -181,6 +186,28 @@ export function Sidebar(props: {
   const archiveWithConfirm = (paths: string[], title: string, detail: string): void => {
     void confirmAction({ title, detail, confirmLabel: '归档' }).then((yes) => {
       if (yes) void run(props.proxy.archiveSessions(paths))
+    })
+  }
+
+  /**
+   * 删除工作区 = 该组会话全部归档 + 从最近目录里撤下，组从侧栏消失。原来的
+   * 「归档这 N 个会话」只对有会话的组出现，切过来还没发过消息的空组没有任何
+   * 移除入口（0.6.45 报障）——统一成「删除工作区」后无会话时就只做撤下一步。
+   * 归档可恢复、目录切一次就回 recentCwds，都属可逆，主按钮不走红色危险档
+   * （同 archiveWithConfirm 的口径）；执行与回执在 App 的 onDeleteWorkspace。
+   */
+  const deleteWorkspaceWithConfirm = (cwd: string, sessions: SessionSummary[]): void => {
+    const count = sessions.length
+    const detail = count > 0
+      ? `其下 ${count} 个会话会全部归档（移进「设置 → 归档」，消息一个字不删，可恢复），工作区从侧栏移除。`
+      : '该工作区还没有会话，将从侧栏移除。'
+    const current = cwd === props.cwd ? '它仍是当前目录，新建会话后会重新出现在侧栏。' : ''
+    void confirmAction({
+      title: `删除工作区「${displayName(cwd, aliases)}」？`,
+      detail: detail + current,
+      confirmLabel: '删除',
+    }).then((yes) => {
+      if (yes) props.onDeleteWorkspace(cwd, sessions.map((session) => session.id))
     })
   }
 
@@ -1087,10 +1114,10 @@ export function Sidebar(props: {
                           <IconClose size={15} /> 恢复真实目录名
                         </button>
                       )}
-                      {sessions.length > 0 && (
-                        <>
-                          <div className="menu-sep" />
-                          {archived === 'only' ? (
+                      {archived === 'only' ? (
+                        sessions.length > 0 && (
+                          <>
+                            <div className="menu-sep" />
                             <button
                               className="menu-item"
                               onClick={() => {
@@ -1100,21 +1127,22 @@ export function Sidebar(props: {
                             >
                               <IconRefresh size={15} /> 恢复这 {sessions.length} 个会话
                             </button>
-                          ) : (
-                            <button
-                              className="menu-item danger"
-                              onClick={() => {
-                                setMenu(null)
-                                archiveWithConfirm(
-                                  sessions.map((session) => session.id),
-                                  `归档这 ${sessions.length} 个会话？`,
-                                  ARCHIVE_DETAIL_MANY,
-                                )
-                              }}
-                            >
-                              <IconArchive size={15} /> 归档这 {sessions.length} 个会话
-                            </button>
-                          )}
+                          </>
+                        )
+                      ) : (
+                        <>
+                          <div className="menu-sep" />
+                          {/* 删除工作区（原「归档这 N 个会话」）：空组也显示，否则
+                              只切过来还没发消息的工作区删不掉（0.6.45 报障）。 */}
+                          <button
+                            className="menu-item danger"
+                            onClick={() => {
+                              setMenu(null)
+                              deleteWorkspaceWithConfirm(cwd, sessions)
+                            }}
+                          >
+                            <IconTrash size={15} /> 删除工作区
+                          </button>
                         </>
                       )}
                     </div>

@@ -67,6 +67,11 @@ const api = {
     return ipcRenderer.invoke('dsc:recent-cwds')
   },
 
+  /** 从最近工作目录里移除一条（删除工作区时把空组从侧栏撤下）。 */
+  removeRecentCwd(path: string): Promise<void> {
+    return ipcRenderer.invoke('dsc:remove-recent-cwd', path)
+  },
+
   /** 当前会话在宿主用量日志里的累计（只读；这个会话没有记录时为 null）。 */
   sessionUsage(sessionId: string): Promise<SessionUsageView | null> {
     return ipcRenderer.invoke('dsc:session-usage', sessionId) as Promise<SessionUsageView | null>

@@ -63,6 +63,8 @@ export interface DscBridge {
   switchCwd(path: string): Promise<{ ok: true; cwd: string } | { ok: false; error: string }>
   /** 最近用过的工作目录（最新的排最前）。 */
   recentCwds(): Promise<string[]>
+  /** 从最近工作目录里移除一条（删除工作区时把空组从侧栏撤下）。 */
+  removeRecentCwd(path: string): Promise<void>
   /** 当前会话的累计用量（底部状态栏第二段与上下文卡的数据源；只读）。 */
   sessionUsage(sessionId: string): Promise<SessionUsageView | null>
   installPlugin(): Promise<string[]>

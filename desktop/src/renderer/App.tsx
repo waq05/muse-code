@@ -662,6 +662,21 @@ export function App(): JSX.Element {
             if (next !== null) switchCwd(next)
           })
         }}
+        onDeleteWorkspace={(target, ids) => {
+          // 删除工作区（确认框在 Sidebar）：先把目录从最近列表撤下，空组立即
+          // 消失、不用等归档回包；再归档该组全部会话。归档失败时组会随会话行
+          // 重新出现（分组按会话 cwd 兜底），不会丢数据。
+          setRecentCwds((list) => list.filter((item) => item !== target))
+          void dsc.removeRecentCwd(target)
+          if (ids.length === 0) {
+            toastOk('已从侧栏移除该工作区')
+            return
+          }
+          void proxy.archiveSessions(ids).then(
+            () => toastOk(`工作区已删除，${ids.length} 个会话已归档`),
+            () => toastErr('会话归档失败，工作区随会话保留在侧栏'),
+          )
+        }}
         recentCwds={recentCwds}
         uiPrefs={uiPrefs}
         proxy={proxy}
