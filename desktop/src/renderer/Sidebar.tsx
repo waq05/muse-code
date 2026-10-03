@@ -206,6 +206,19 @@ export function Sidebar(props: {
   )
 
   const isActiveGroup = (cwd: string): boolean => cwd === props.cwd
+
+  // 组行的活动指示跟选中会话走（dsh 的 containsCurrent：组 active = 含当前会话）——
+  // 跨工作区点开历史会话时，会话行高亮了，所属工作区的图标也得跟着亮，不然看不出
+  // 这条会话挂在哪个组下。没有选中会话（新会话空态）或它被搜索/归档筛出列表时回落
+  // 宿主 cwd，保住「你现在跑在哪个工作区」的指示。
+  const activeCwd = useMemo(() => {
+    if (props.activeSessionId !== null) {
+      const suffix = `${props.activeSessionId}.jsonl`
+      const owner = groups.find((item) => item.sessions.some((session) => session.id.endsWith(suffix)))
+      if (owner !== undefined) return owner.cwd
+    }
+    return props.cwd
+  }, [groups, props.activeSessionId, props.cwd])
   /** 树里带子分组的行（折叠它要连带收起后代，且默认展开）。 */
   const parents = useMemo(() => new Set(groups.filter((item) => item.hasChildren).map((item) => item.cwd)), [groups])
 
@@ -925,7 +938,7 @@ export function Sidebar(props: {
           groups.filter((item) => !hiddenByAncestor(item)).map(({ cwd, sessions, depth }) => {
           const key = `w:${cwd}`
           const expanded = isExpanded(cwd)
-          const active = isActiveGroup(cwd)
+          const active = cwd === activeCwd
           // 拖拽排序只属于「按工作区」这一档：树顺序由目录层级决定，单列表没有工作区行
           const sortable = group === 'workspace'
           // 每组条数预算（dsh 的 sessionLimits）：搜索时全量放开；收组即重置（toggle 里做了）

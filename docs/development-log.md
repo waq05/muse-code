@@ -1409,3 +1409,13 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **走查**（`shots/composer-check.ps1` 三断言全绿）：①空态组中心 495 vs 中点 456（容差 60 内）；②切到非空会话 composerBottom 882 = thread-main 底 882（零缝隙贴底）；③往 `.chat-inner` 注入 30 条假内容（+2700px）composer 纹丝不动（882→882）、`.chat` 自己滚（scrollHeight 3434 vs clientHeight 686）。截图目检：同样的短对话，输入框贴窗口底部。menu-check 回归绿（CSS 改动不涉菜单）。重打包 + pkg-smoke 绿。bump 0.6.42。
 
 **诚实边界**：dsh 的 settling 中间态（防加载闪烁）与 hero 的 WorkspaceChip/AgentPreset 槽位没搬——dsc 空态只有 Welcome 引导没有工作区选择（工作区在侧栏切），settling 场景（会话恢复瞬间）在 dsc 表现为短暂 Welcome 闪一下，实机走查未见明显闪烁，不动；composer 顶部渐变遮罩没抄（dsc 的 composer 在滚动容器外，没有内容从它底下滚过，渐变无用武之地）。
+
+## 阶段 64：工作区图标 active 跟选中会话所属组走（0.6.43）
+
+用户报（附截图）：选中某个会话后，对应工作区的图标颜色不会改变——侧栏里 waq 组下的会话高亮了，但工作区行（文件夹图标）不亮/亮的不是它。
+
+**根因**：组行 active 判定用错参照系。`Sidebar.tsx` 的 `isActiveGroup(cwd) => cwd === props.cwd`——`props.cwd` 是**宿主进程**工作目录（启动读一次、切工作区才变），而会话行的 active 是 `activeSessionId`。跨工作区点开历史会话（比如宿主跑在 D:\dsc、点开 C:\Users\waq 下的会话）时：会话行高亮 ✓，但它所属的 waq 组图标不亮 ✗，亮的（如果有）是宿主 cwd 那个组——两个高亮各跟各的，视觉上「会话所属工作区没有被指示出来」。dsh 的语义（ui-workspace `tree.ts` deriveGroups）：`containsCurrent = (组 key === 当前会话所属组)`，组行 `active = containsCurrentDescendant || (expanded && containsCurrent)`——**跟当前会话走**，无选中会话时没有任何组亮。
+
+**修法（语义拆分）**：`newSessionIn`（组行「+」）对 `isActiveGroup` 的依赖**必须保持宿主 cwd 语义**（活动组直接 `onNew`；非活动组要先 `switchCwd` 换宿主目录再建会话——新会话的 cwd 是宿主进程目录，误判会把会话建错工作区）。所以拆成两个概念：保留 `isActiveGroup`（宿主 cwd）给 `newSessionIn`；新增 `activeCwd`（useMemo：有选中会话 → 在 groups 里找含它的组返回其 cwd；无选中会话或被搜索/归档筛出列表 → 回落 `props.cwd`）给组行 className。回落 cwd 而非照抄 dsh 的「无会话不亮」，是保住 dsc「你现在跑在哪个工作区」的空态指示（dsc 顶栏之外侧栏是唯一的工作区方位感）。树模式的祖先链高亮（dsh containsCurrentDescendant）没搬——dsc 树模式此前也没有祖先行高亮，不是本 bug 范围，避免视觉回归。
+
+**走查**（`shots/ws-active-check.ps1`，sound-home 塞一条 C-Users-waq 假会话造出第二组，固定保留作回归依赖）：①跨组点 waq 会话 → active 组变 waq、图标色 = `--dsc-accent`（rgb(86,134,254)）；②点「新会话」→ activeSessionId 置空回落宿主 cwd（tip 显示 D:\dsc 的 dsc 组亮回）。截图目检（ws-active-shot.png）：waq 图标蓝、dsc 图标灰、会话行高亮——正是用户要的指示。探针电池 42/43 绿（browser-check 12.x 环境态失败沿用既有记录）。typecheck + build 绿。bump 0.6.43。
