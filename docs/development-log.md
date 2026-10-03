@@ -1395,3 +1395,17 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **根因二（贴底被裁）**：工作区「···」菜单 absolute 就地展开（`top: calc(100% - 2px)`），挂在 `.group-row`（position:relative）里，被滚动区 `overflow-y: auto` 裁掉——viewMenu 当年正是这个坑（注释 116-118 写着「就地定位会被 overflow-y: auto 裁掉」），改成视口坐标时工作区「···」没一起改。修法：对齐 viewMenu 先例，`···` 按钮点击时 `getBoundingClientRect()` 记按钮坐标，菜单改 fixed 贴按钮（left = 按钮右缘 − 200、`Math.max(8, …)` 防窄窗出左缘）；底部空间 < 240（菜单最高约 5 项 ≈ 180px 留余量）翻到按钮上方（CSS `bottom`，不用估菜单高度）。state 从 `{key,x?,y?}` 扩成 `{key,x?,y?,left?,top?,bottom?}`。顺手：会话右键菜单的垂直夹取 300→240（菜单实际高约 160，300 会让靠底行的菜单与指针脱开一大截）；dock 页签菜单加同款左右下夹取（原来完全无夹取，dock 贴窗口底缘会伸出窗外）。
 
 **走查**（`desktop/shots/menu-check.ps1`，复用 sound-home、无假端点）：三场景数值断言全绿——右键菜单宽 190px（min-width 收缩，修复前 ≈ 视口宽 − left ≈ 1700+）且完整在视口内；空间充足时菜单贴按钮下方 6px（downOk）；贴底翻转用「patch 按钮实例 getBoundingClientRect 成贴视口底缘的假矩形」构造（真实内容不足一屏、窗口有 640 下限构造不出真实贴底；判定与 CSS bottom 同源自洽，真实 innerHeight 不动）——菜单底边精确贴锚点 top−6（846 = 852−6）且完整可见（flipOk）。**走查脚本的三个坑记录在案**：① `.row-actions` 隐藏时按钮 rect 全 0——`body.classList.add('shot-reveal')` 让按钮组常驻（与用户 hover 后点击等价）；② patch `window.innerHeight` 后 `delete` 会让布局代码读到 undefined、渲染层崩（capturePage UnknownVizError + 宿主 invoke 报退出）——要么不 patch、要么恢复原值，本例换成自洽的按钮 rect patch；③ pwsh 相对路径跟 cwd 漂移（/d/dsc 与 /d/dsc/desktop 之间），跑前先 cd。sound-notify.ps1 对照重跑全绿（应用本身没坏，纯属脚本问题）。typecheck + build + sound 探针 + 重打包 + pkg-smoke 全绿。bump 0.6.41。
+
+## 阶段 63：输入框位置对齐 dsh——空会话居中、对话时恒贴底（0.6.42）
+
+用户报：短对话后输入框吊在内容下方（半空），要求参考 dsh（`D:\deepseek-harness`）——初始居中、对话后保持底部。
+
+**dsh 做法**（ui-conversation skeleton）：`phase = settling | hero | active`（`hero = 无会话或空白会话`，settling 是加载中间态、seat 挂载但 visibility:hidden 防闪烁）；布局是 `scrollBody`（flex column 滚动容器）内消息列表 + composerSeat 两个 flex 子项——hero 态 `scrollBody { justify-content: center }` + `.composerHero { align-self: center; padding-bottom: 32px }`（整组居中、略高于正中心）；active 态 `viewArea { flex: 1 0 auto }` 把 seat 推到底 + `.composerSeat { position: sticky; bottom: 0; z-index: 7 }` 钉底 + 顶部 36px 渐变遮罩（transcript 从 seat 顶渐隐）。
+
+**dsc 现状诊断**（`shots/composer-diag.ps1` 注入式实测）：空态居中**本来就是对**（`.thread-main-empty` 的上下 auto margin 夹持，数据：组中心 495 vs 视口中点 456）——坏的只是非空态：`.thread-main` 普通态在 CSS 里**没有任何规则**（裸 div），`chat-wrap` 的 `flex: 1` 落空 → composer 跟内容流：短对话吊半空（用户截图）、内容超屏时**滚出视口外**（注入 12 行实测 composer top 1189 vs 视口 912）。
+
+**修法（一行规则，比 dsh 还省）**：dsc 的结构本来就是 composer 在 `.chat` 滚动容器**之外**（chat-wrap 兄弟节点），不需要 dsh 的 sticky/渐变那套——给 `.thread-main` 补上 flex column 骨架（与既有 `.thread-zone[data-review] .thread-main` 变体同款），`chat-wrap` 的 `flex: 1` 即刻生效：内容不足一屏时撑满把 composer 推到底，超屏时 `.chat` 内滚、composer 恒贴底可见。空态的 auto margin 居中与 flex 天然兼容，零改动。审批卡/计划卡/目标条都在 composer-zone 里，跟着恒贴底——比之前跟流更合理（审批挂起时永远看得到）。
+
+**走查**（`shots/composer-check.ps1` 三断言全绿）：①空态组中心 495 vs 中点 456（容差 60 内）；②切到非空会话 composerBottom 882 = thread-main 底 882（零缝隙贴底）；③往 `.chat-inner` 注入 30 条假内容（+2700px）composer 纹丝不动（882→882）、`.chat` 自己滚（scrollHeight 3434 vs clientHeight 686）。截图目检：同样的短对话，输入框贴窗口底部。menu-check 回归绿（CSS 改动不涉菜单）。重打包 + pkg-smoke 绿。bump 0.6.42。
+
+**诚实边界**：dsh 的 settling 中间态（防加载闪烁）与 hero 的 WorkspaceChip/AgentPreset 槽位没搬——dsc 空态只有 Welcome 引导没有工作区选择（工作区在侧栏切），settling 场景（会话恢复瞬间）在 dsc 表现为短暂 Welcome 闪一下，实机走查未见明显闪烁，不动；composer 顶部渐变遮罩没抄（dsc 的 composer 在滚动容器外，没有内容从它底下滚过，渐变无用武之地）。

@@ -1155,6 +1155,18 @@
    居中用上下 auto 边距而不是 justify-content: center——system 提示多、窗口矮、
    内容高过容器时 auto 边距退回普通流（顶着排、容器可滚），flex 居中则会把
    顶部溢出的内容裁到滚不回来。 */
+.thread-main {
+  /* 非空态的骨架（对照 dsh active 态：viewArea flex:1 把输入区推到底）：
+     之前普通态没有任何规则（裸 div），chat-wrap 的 flex:1 落空——composer
+     跟内容流，短对话吊在半空、长对话直接滚出视口。composer 在 .chat 滚动
+     容器之外，flex 撑开后自然恒贴底，不需要 dsh 那层 sticky。 */
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
 .thread-main-empty {
   display: flex;
   flex: 1;
