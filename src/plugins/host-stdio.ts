@@ -52,8 +52,8 @@ export type RuntimeToHostMessage =
   | { type: 'result'; id: number; ok: true; value: unknown }
   | { type: 'result'; id: number; ok: false; error: string }
   | { type: 'snapshot'; snapshot: RuntimeSnapshot }
-  /** 宿主 UI 动作请求（命令 handler 里的 openPicker 等）。 */
-  | { type: 'ui'; action: 'open-picker' }
+  /** 宿主 UI 动作请求（命令 handler 里的 openPicker / openModels 等）。 */
+  | { type: 'ui'; action: 'open-picker' | 'open-models' }
   /** dock 终端输出流（desktop-dock 服务 → 桌面端面板）。 */
   | { type: 'dock-data'; id: string; data: string }
 
@@ -215,6 +215,11 @@ export const hostStdioPlugin: Plugin.Object = {
     // 命令 handler 请求打开 UI 面板（如 /resume）——转发给宿主壳
     ctx.on('dsc/open-picker', () => {
       transport.send({ type: 'ui', action: 'open-picker' })
+    })
+
+    // /model 无参数打开模型选择面板——同样转发（桌面端自行映射或忽略）
+    ctx.on('dsc/open-models', () => {
+      transport.send({ type: 'ui', action: 'open-models' })
     })
 
     // dock 终端输出流

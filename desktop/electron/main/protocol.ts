@@ -29,7 +29,7 @@ type RuntimeToHostMessage =
   | { type: 'result'; id: number; ok: true; value: unknown }
   | { type: 'result'; id: number; ok: false; error: string }
   | { type: 'snapshot'; snapshot: RuntimeSnapshot }
-  | { type: 'ui'; action: 'open-picker' }
+  | { type: 'ui'; action: 'open-picker' | 'open-models' }
   | { type: 'dock-data'; id: string; data: string }
 
 type HostToRuntimeMessage =
@@ -46,7 +46,7 @@ export class HostProtocol {
   private snapshotListeners = new Set<(snapshot: RuntimeSnapshot) => void>()
   private helloListeners = new Set<(protocolVersion: number) => void>()
   private closeListeners = new Set<(info: { code: number | null }) => void>()
-  private uiListeners = new Set<(action: 'open-picker') => void>()
+  private uiListeners = new Set<(action: 'open-picker' | 'open-models') => void>()
   private dockDataListeners = new Set<(data: { id: string; data: string }) => void>()
   private exitForwarded = false
 
@@ -127,7 +127,7 @@ export class HostProtocol {
     this.closeListeners.add(listener)
   }
   /** 宿主 UI 动作（命令 handler 里的 openPicker 等）。 */
-  onUi(listener: (action: 'open-picker') => void): void {
+  onUi(listener: (action: 'open-picker' | 'open-models') => void): void {
     this.uiListeners.add(listener)
   }
   /** dock 终端输出流（desktop-dock 服务）。 */

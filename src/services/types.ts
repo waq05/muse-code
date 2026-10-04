@@ -438,6 +438,8 @@ export interface CompletionItem {
 /** 命令执行期 UI 回调。 */
 export interface CommandContext {
   openPicker(): void
+  /** 打开模型选择面板（/model 无参数时；桌面端可映射到自己的模型面板，无可忽略）。 */
+  openModels(): void
   notice(text: string): void
 }
 
@@ -1064,6 +1066,8 @@ declare module '@deepseek-ai/cordis' {
     'dsc/exit'(): void
     /** 命令 handler 请求打开会话选择面板（/resume；UI 桥转发给宿主壳）。 */
     'dsc/open-picker'(): void
+    /** 命令 handler 请求打开模型选择面板（/model 无参数；桌面端可自行映射或忽略）。 */
+    'dsc/open-models'(): void
     /** dock 终端输出流（desktop-dock 服务 → 桌面端面板）。 */
     'dsc/dock-data'(id: string, data: string): void
     /** 技能清单或启停状态变化（agent 据此重算模型可见目录）。 */

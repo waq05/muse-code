@@ -9,6 +9,7 @@
  * @module dsc/plugins/commands
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type {
@@ -95,11 +96,16 @@ export const commandsPlugin: Plugin.Object = {
       ({ ui }) => ui.openPicker(),
     )
     service.register(
-      { name: 'model', args: '<[端点/]模型名>', description: '切换模型，下一次请求生效' },
+      {
+        name: 'model',
+        args: '<[端点/]模型名>',
+        description: '切换模型，下一次请求生效（无参数打开选择器）',
+      },
       ({ args, runtime, ui }) => {
         const model = args[0]
         if (model === undefined || model === '') {
           ui.notice('用法：/model [端点/]模型名')
+          ui.openModels()
           return
         }
         void runtime.setModel(model)
@@ -199,6 +205,49 @@ export const commandsPlugin: Plugin.Object = {
           .catch((cause: unknown) => {
             ui.notice(`/review 失败：${cause instanceof Error ? cause.message : String(cause)}`)
           })
+      },
+    )
+    service.register(
+      { name: 'diff', args: '[文件]', description: '查看工作区未提交改动的 diff' },
+      ({ args, runtime, ui }) => {
+        const file = args[0]
+        void runtime
+          .dock('git-diff', file === undefined ? {} : { file })
+          .then((result) => {
+            const diff = (result as { diff?: string }).diff ?? ''
+            ui.notice(diff === '' ? '工作区没有未提交的改动（或这里不是 git 仓库）。' : diff)
+          })
+          .catch((cause: unknown) =>
+            ui.notice(`/diff 失败：${cause instanceof Error ? cause.message : String(cause)}`),
+          )
+      },
+    )
+    service.register(
+      { name: 'copy', args: '', description: '复制上一条回复到剪贴板' },
+      ({ runtime, ui }) => {
+        const entries = runtime.getSnapshot().entries
+        let text: string | null = null
+        for (let index = entries.length - 1; index >= 0; index -= 1) {
+          const entry = entries[index]
+          if (entry !== undefined && entry.kind === 'text' && entry.text.trim() !== '') {
+            text = entry.text
+            break
+          }
+        }
+        if (text === null) {
+          ui.notice('还没有可复制的回复。')
+          return
+        }
+        const command =
+          process.platform === 'darwin' ? 'pbcopy' : process.platform === 'win32' ? 'clip' : 'wl-copy'
+        try {
+          const child = spawn(command, [], { stdio: ['pipe', 'ignore', 'ignore'] })
+          child.on('error', () => ui.notice(`复制失败：找不到 ${command} 命令`))
+          child.stdin?.end(text)
+          ui.notice(`已复制上一条回复（${text.length} 字符）到剪贴板`)
+        } catch (error) {
+          ui.notice(`复制失败：${errText(error)}`)
+        }
       },
     )
     service.register(

@@ -22,6 +22,7 @@ import { ApprovalCard } from './ApprovalCard.js'
 import { AskCard, SKIPPED_ANSWER } from './AskCard.js'
 import { ChatView } from './ChatView.js'
 import { Composer, type DirLister } from './Composer.js'
+import { ModelPicker } from './ModelPicker.js'
 import { PlanReviewCard } from './PlanReviewCard.js'
 import { SessionPicker } from './SessionPicker.js'
 import { StatusBar } from './StatusBar.js'
@@ -65,6 +66,10 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
   const [pickerQuery, setPickerQuery] = useState('')
   const [pickerBuffer, setPickerBuffer] = useState<string | null>(null)
   const [pickerArmed, setPickerArmed] = useState(false)
+  /** 模型选择浮层（/model 无参数打开；输入即筛选）。 */
+  const [modelPicker, setModelPicker] = useState(false)
+  const [modelIndex, setModelIndex] = useState(0)
+  const [modelQuery, setModelQuery] = useState('')
   const lastCtrlC = useRef(0)
   /** 可切换模型列表：进程内静态，取一次即可。 */
   const models = useMemo(() => runtime.listModels(), [runtime])
@@ -79,6 +84,31 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
 
   const askQuestions = question?.questions ?? (question !== null ? [question] : [])
   const currentQuestion = askQuestions[askIndex]
+
+  /** 模型浮层的筛选结果（value/description 子串匹配）。 */
+  const modelList = useMemo(() => {
+    const q = modelQuery.trim().toLowerCase()
+    if (q === '') return models
+    return models.filter(
+      (choice) =>
+        choice.value.toLowerCase().includes(q) || choice.description.toLowerCase().includes(q),
+    )
+  }, [models, modelQuery])
+
+  /** 回合跑动 → 空闲时响一声 BEL：长任务跑完人不在终端前也能听见。 */
+  const previousTurn = useRef(snapshot.status.turnState)
+  useEffect(() => {
+    const current = snapshot.status.turnState
+    const wasActive = previousTurn.current !== 'idle'
+    previousTurn.current = current
+    if (wasActive && current === 'idle') {
+      try {
+        stdout?.write('\x07')
+      } catch {
+        // 管道里写不进去就算了，提示音是锦上添花
+      }
+    }
+  }, [snapshot.status.turnState, stdout])
 
   // 卡片换人（或消失）时复位对应的本地状态。
   useEffect(() => setApprovalExpanded(false), [approval?.id])
@@ -364,6 +394,29 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       }
       return
     }
+    if (modelPicker) {
+      if (key.escape) setModelPicker(false)
+      else if (key.return) {
+        const choice = modelList[modelIndex]
+        if (choice !== undefined) {
+          setModelPicker(false)
+          void runtime.setModel(choice.value)
+        }
+      } else if (key.upArrow) setModelIndex((current) => Math.max(0, current - 1))
+      else if (key.downArrow)
+        setModelIndex((current) => Math.min(modelList.length - 1, current + 1))
+      else if (key.backspace || key.delete) {
+        setModelQuery((current) => current.slice(0, -1))
+        setModelIndex(0)
+      } else if (!key.ctrl && !key.meta) {
+        const printable = input.replace(/[\r\n\t]+/g, '')
+        if (printable !== '') {
+          setModelQuery((current) => current + printable)
+          setModelIndex(0)
+        }
+      }
+      return
+    }
     // 空闲无浮层：Esc 打断当前回合（对齐 codex / dsh）。补全面板开着时 Esc 只关面板。
     if (key.escape && !panelOpen && snapshot.status.turnState !== 'idle') {
       runtime.interrupt()
@@ -396,6 +449,11 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
           setPickerPage('active')
           void runtime.refreshSessions()
         },
+        openModels: () => {
+          setModelPicker(true)
+          setModelIndex(0)
+          setModelQuery('')
+        },
         notice: setNotice,
       })
       return
@@ -412,6 +470,7 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
     question !== null ||
     picker ||
     transcriptOpen ||
+    modelPicker ||
     (plan !== null && !planFeedback)
 
   return (
@@ -464,6 +523,8 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
           armed={pickerArmed}
           sessionStates={snapshot.sessionStates}
         />
+      ) : modelPicker ? (
+        <ModelPicker models={modelList} index={modelIndex} query={modelQuery} />
       ) : (
         <Composer
           disabled={modal}

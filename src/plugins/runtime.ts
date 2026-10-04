@@ -232,6 +232,7 @@ export const runtimePlugin: Plugin.Object = {
         return ctx.commands.run(input, this, {
           notice: (text) => ctx.transcript.system(text),
           openPicker: () => ctx.emit('dsc/open-picker'),
+          openModels: () => ctx.emit('dsc/open-models'),
         })
       },
 
