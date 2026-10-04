@@ -12,11 +12,10 @@
 import { DSC_VERSION } from './version.js'
 
 /**
- * 更新源地址。占位为空 = 未配置：按钮点了会如实提示，不会瞎报「已是最新」。
- * 发布后填 GitHub Releases API（`https://api.github.com/repos/<owner>/<repo>/releases/latest`）
- * 或任意返回 `{version, url}` 的 JSON 地址，即启用。
+ * 更新源地址：GitHub Releases API（0.6.50 首次对外发布时回填，「检查更新」自此启用）。
+ * 换自托管时给任意返回 `{version, url}` 的 JSON 地址即可。
  */
-export const UPDATE_CHECK_URL = ''
+export const UPDATE_CHECK_URL = 'https://api.github.com/repos/waq05/muse-code/releases/latest'
 
 /** fetch 的超时：更新源卡住也不能把设置动作挂死。 */
 const TIMEOUT_MS = 10_000

@@ -307,10 +307,10 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           {
             type: 'info',
             label: '更新源',
-            text: UPDATE_CHECK_URL === '' ? '未配置' : UPDATE_CHECK_URL,
+            text: UPDATE_CHECK_URL,
             mono: true,
-            copyable: UPDATE_CHECK_URL !== '',
-            help: '在 src/core/update-check.ts 里填 Releases 地址即启用检查',
+            copyable: true,
+            help: 'GitHub Releases API；换自托管时改 src/core/update-check.ts（认 {version, url} JSON 回包）',
           },
           { type: 'info', label: '内核 API 版本', text: String(KERNEL_API_VERSION), help: '外部插件声明的 apiVersion 高于此值时会被自动停用' },
           { type: 'info', label: '配置目录', text: DSC_HOME, mono: true, copyable: true },

@@ -1,0 +1,99 @@
+# Muse Code 发行流水线——对齐 dsh 的「演练 / 发布分离」，这里用触发器区分：
+#   - 推 v* tag → 真发布：npm 发 CLI 内核 + GitHub Release 挂 Windows 安装器；
+#   - 手动 workflow_dispatch → 只做打包演练，安装器留在 workflow artifacts，不外发。
+# 前置 secret：NPM_TOKEN（npm publish 用；未配置时 npm 作业如实跳过并警告，不瞎报成功）。
+# 版本号约定：根与 desktop 两处 package.json 必须同版本，tag 必须等于该版本（verify 作业把关）。
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # tag 触发时创建 Release 并上传安装器
+
+jobs:
+  verify:
+    name: 校验 tag 与两处 package.json 版本一致
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 版本三方对账（tag / 根 / desktop）
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          root="$(node -p "require('./package.json').version")"
+          desktop="$(node -p "require('./desktop/package.json').version")"
+          if [ "$tag" != "$root" ] || [ "$tag" != "$desktop" ]; then
+            echo "::error::版本不一致：tag v$tag / 根 $root / desktop $desktop —— 两处 package.json 与 tag 必须同版"
+            exit 1
+          fi
+
+  npm:
+    name: npm 发布 CLI 内核
+    runs-on: ubuntu-latest
+    needs: verify
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - name: 安装并编译
+        run: |
+          pnpm install --frozen-lockfile --dangerously-allow-all-builds
+          pnpm build
+      - name: 发布（未配 NPM_TOKEN 则跳过）
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::warning::secret NPM_TOKEN 未配置，跳过 npm 发布；到仓库 Settings → Secrets and variables → Actions 配置后重跑 npm 作业，或本地 npm publish"
+            exit 0
+          fi
+          npm publish
+
+  desktop:
+    name: Windows 安装器 + GitHub Release
+    runs-on: windows-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 构建内核（prepare-runtime 要吃根包 lib）
+        shell: bash
+        run: |
+          pnpm install --frozen-lockfile --dangerously-allow-all-builds
+          pnpm build
+      - name: 打包安装器（nsis + portable）
+        working-directory: desktop
+        shell: bash
+        run: |
+          pnpm install --frozen-lockfile --dangerously-allow-all-builds
+          pnpm exec electron-vite build
+          node scripts/prepare-runtime.mjs
+          pnpm exec electron-builder --publish never
+      - name: 发布 GitHub Release（tag 触发才执行）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/dist/muse-code-*.exe
+          generate_release_notes: true
+      - name: 演练产物上传 artifacts（手动触发才执行）
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: muse-code-installers
+          path: desktop/dist/muse-code-*.exe
+          if-no-files-found: error

@@ -1,16 +1,28 @@
 # Muse Code — 独立终端 AI harness
 
-参考 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的核心组件设计、**全自研**的个人版终端 harness：自写 ReAct loop + 会话落盘 + 工具栈 + 审批，UI 用 ink（React for CLI）。**不依赖 dsh 宿主**，零 `@deepseek-ai/*` 依赖。
+参考 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的核心组件设计、**全自研**的个人版终端 harness：自写 ReAct loop + 会话落盘 + 工具栈 + 审批，UI 用 ink（React for CLI）。**不加载 dsh 宿主**，复用的只有其开源内核件（cordis 上下文系统等）。
 
-## 安装与运行
+## 安装
+
+**桌面端**（自带运行时，无需装 Node）：到 [Releases](https://github.com/waq05/muse-code/releases) 下载
+安装版 `muse-code-setup-x.y.z.exe`（可选安装目录）或免安装单文件 `muse-code-portable-x.y.z.exe`。
+
+**CLI**（`msc` 命令，需要 Node.js ≥ 22.19）：
 
 ```sh
-cd D:\dsc && pnpm install && pnpm build   # 首次
-npm i -g file:D:\dsc                      # 一次，得到全局 msc 命令
-msc                                       # 独立启动（新会话）
-msc --resume                              # 恢复上次会话
-msc --resume <会话jsonl路径>              # 恢复指定会话
+npm i -g muse-code    # 或免安装：npx muse-code
+msc                   # 独立启动（新会话）
 ```
+
+**从源码跑**：
+
+```sh
+git clone https://github.com/waq05/muse-code
+cd muse-code && pnpm install && pnpm build
+npm i -g file:.       # 全局 msc 命令指向本地构建
+```
+
+`msc --resume` 恢复上次会话；`msc --resume <会话jsonl路径>` 恢复指定会话。
 
 ## 交互
 
