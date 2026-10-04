@@ -6,6 +6,9 @@
  * 思考强度、会话累计用量（in/out + 前缀缓存命中率）、会话短 id。第三行只在有后台
  * 会话（常驻 agent / 队友）时出现：每个会话一枚状态点，后台干活这件事终端里看得见。
  *
+ * 行内文本一律 `truncate-end` 保证每行不折行：行数是选择器整屏几何的组成部分
+ * （App 按 statusbarLines 给选择器凑帧高，折一行鼠标命中就偏一行）。
+ *
  * @module dsc-tui/app/StatusBar
  */
 import { Box, Text } from 'ink'
@@ -83,25 +86,25 @@ export function StatusBar({
       gap={0}
     >
       <Box gap={PAD.field}>
-        <Text {...TEXT.label} color={TURN_COLOR[status.turnState]}>
+        <Text {...TEXT.label} color={TURN_COLOR[status.turnState]} wrap="truncate-end">
           {status.turnState === 'idle' ? '●' : '◐'} {TURN_LABEL[status.turnState]}
         </Text>
-        <Text {...TEXT.secondary}>模式 {modeLabel}</Text>
-        <Text {...TEXT.secondary}>权限 {policyLabel}</Text>
+        <Text {...TEXT.secondary} wrap="truncate-end">模式 {modeLabel}</Text>
+        <Text {...TEXT.secondary} wrap="truncate-end">权限 {policyLabel}</Text>
       </Box>
       <Box gap={PAD.field}>
         {status.cwd !== undefined && status.cwd !== '' ? (
-          <Text {...TEXT.secondary}>{shortCwd(status.cwd)}</Text>
+          <Text {...TEXT.secondary} wrap="truncate-end">{shortCwd(status.cwd)}</Text>
         ) : null}
-        <Text {...TEXT.secondary}>模型 {status.model}</Text>
-        <Text {...TEXT.secondary}>effort {status.effort ?? '-'}</Text>
+        <Text {...TEXT.secondary} wrap="truncate-end">模型 {status.model}</Text>
+        <Text {...TEXT.secondary} wrap="truncate-end">effort {status.effort ?? '-'}</Text>
         {usage !== null ? (
-          <Text {...TEXT.secondary}>
+          <Text {...TEXT.secondary} wrap="truncate-end">
             tok {fmtTokens(usage.inputTokens)}↑ {fmtTokens(usage.outputTokens)}↓
             {cacheTotal > 0 ? ` 缓存${Math.round((cacheHit / cacheTotal) * 100)}%` : ''}
           </Text>
         ) : null}
-        <Text {...TEXT.secondary}>
+        <Text {...TEXT.secondary} wrap="truncate-end">
           {status.sessionId === null ? '未打开会话' : `会话 ${status.sessionId.slice(0, 8)}`}
         </Text>
       </Box>

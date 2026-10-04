@@ -177,6 +177,40 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
     )
   }, [pickerPage, snapshot.sessions, archivedList, pickerQuery])
 
+  // ---- 选择器整屏几何（0.6.55）：帧高精确凑满「终端行数 − 1」----
+  // 以前列表全量渲染、聊天流也还挂在画面里，帧比终端高——ink 每次重绘都把画面顶回
+  // 底部（↑↓ 每敲一键就跳底）。选择器打开时让它独占整屏：ink 的帧带一个尾随换行
+  //（光标停帧尾下一行），内容写满终端行数时那个换行每次重绘都滚一行，所以凑的是
+  //「行数 − 1」：内容贴屏顶、末行留给光标，重绘永远从顶行擦写，一次滚动都不发生；
+  // 屏幕行与帧行一一对应，鼠标点击的行号映射因此是纯构造计算（对齐 codex / dsh-TUI
+  // 整屏浮层的做法，但不进 alternate screen、不 fork ink）。所有块行数都是构造的：
+  // 行内文本一律截断保证不折行。
+  const termRows = stdout?.rows ?? 24
+  /** 帧内容可用行数：终端行数 − 1（末行是 ink 帧尾随换行的光标落点）。 */
+  const frameRows = Math.max(1, termRows - 1)
+  /** 状态栏行数：描边 2 + 两行内容；有后台会话时第三行状态点。 */
+  const statusbarLines = 4 + (Object.keys(snapshot.sessionStates).length > 0 ? 1 : 0)
+  /** 提示条（单行文本的描边框）行数，选择器打开时才参与凑帧。 */
+  const noticeLines = notice !== null ? 3 : 0
+  /** 空列表占位行（「没有匹配的会话」）。 */
+  const emptyLines = pickerList.length === 0 && !snapshot.sessionsLoading ? 1 : 0
+  /** 选择器框固定行数：外边距 1 + 描边 2 + 标题 1 + 筛选行 1 + 提示行 1（改名时提示行换改名行，净 0）。 */
+  const pickerFixedLines = 6
+  /** 列表窗口行数：除固定框架外全部让给列表；终端矮到连框架都放不下时保底 1 行。 */
+  const maxListRows = Math.max(1, frameRows - statusbarLines - noticeLines - emptyLines - pickerFixedLines)
+  const listRows = Math.min(pickerList.length, maxListRows)
+  /** 窗口起点：选中项尽量居中（fzf 式），两端夹住；列表放得下时等于 0。 */
+  const pickerStart = Math.min(
+    Math.max(0, pickerIndex - Math.floor((listRows - 1) / 2)),
+    Math.max(0, pickerList.length - listRows),
+  )
+  const visibleSessions = pickerList.slice(pickerStart, pickerStart + listRows)
+  /** 列表上方的填充行：短列表时把选择器框压到屏幕底，帧高才恰好凑满。 */
+  const pickerFiller = Math.max(
+    0,
+    frameRows - statusbarLines - noticeLines - (pickerFixedLines + listRows + emptyLines),
+  )
+
   /** 归档页的数据加载（Tab 切页时拉一次；动作之后刷新也走这里）。 */
   const reloadArchived = useCallback((): void => {
     void runtime
@@ -212,7 +246,59 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       )
   }
 
+  // 鼠标跟踪（DECSET 1000+1006，SGR 编码）只跟选择器同开同关：终端这时才上报
+  // 点击/滚轮（\x1b[<b;x;yM 按下、…m 释放）。ink 的 keypress 解析器不认识这个
+  // 序列，剥掉 ESC 头后原样送进 useInput（input='[<b;x;yM'、无任何键位标志）——
+  // 在键盘路由最顶层拦截。跟踪开着时终端原生前缀选区要走 Shift+拖拽，这是
+  // 全终端 TUI 的统一取舍；关闭后立即还原，聊天态完全不受影响。
+  useEffect(() => {
+    if (!picker) return
+    stdout?.write('\x1b[?1000;1006h')
+    return () => {
+      try {
+        stdout?.write('\x1b[?1000;1006l')
+      } catch {
+        // 卸载收尾时写不进就放弃，别让退出路径再抛错
+      }
+    }
+  }, [picker, stdout])
+
+  /** 打开当前选中会话（Enter 与「点击已选中行」共用）：归档页先恢复回活动区再打开。 */
+  const openSelectedSession = (): void => {
+    const selected = pickerList[pickerIndex]
+    if (selected === undefined) return
+    setPicker(false)
+    if (pickerPage === 'archived') {
+      pickerAction(() => runtime.restoreSessions([selected.id]))
+      void runtime.openSession(selected.id)
+    } else {
+      void runtime.openSession(selected.id)
+    }
+  }
+
   useInput((input, key) => {
+    // SGR 鼠标事件最顶层拦截（选择器开着时终端才上报；ink 传进来的形状是 '[<b;x;yM|m'）。
+    const mouse = /^\[<(\d+);(\d+);(\d+)([Mm])$/.exec(input)
+    if (mouse !== null) {
+      if (!picker || pickerBuffer !== null) return // 改名输入态不响应鼠标
+      const [, button, , row, phase] = mouse
+      if (button === '64' || button === '65') {
+        // 滚轮：与 ↑↓ 同义，窗口由居中规则自动跟随。
+        const step = button === '64' ? -1 : 1
+        setPickerIndex((current) => Math.max(0, Math.min(current + step, pickerList.length - 1)))
+        return
+      }
+      if (button !== '0' || phase !== 'M') return // 只认左键按下；释放与右/中键忽略
+      // 点击行 → 列表下标：帧内容 = 终端行数 − 1 且从屏顶排，从内容底往上数
+      //（状态栏 + 底描边 + 提示行）再加窗口内余行；落到框外（标题/筛选/状态栏）无效。
+      const listTop = frameRows - statusbarLines - 1 - (pickerBuffer !== null ? 0 : 1) - listRows
+      const row0 = Number(row) - 1 - listTop
+      if (row0 < 0 || row0 >= listRows) return
+      const hit = pickerStart + row0
+      if (hit === pickerIndex) openSelectedSession()
+      else setPickerIndex(hit)
+      return
+    }
     if (key.ctrl && input === 'c') {
       const now = Date.now()
       if (now - lastCtrlC.current < EXIT_WINDOW_MS) {
@@ -324,16 +410,7 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
         return
       }
       if (key.return) {
-        if (selected !== undefined) {
-          setPicker(false)
-          if (pickerPage === 'archived') {
-            // 归档会话先恢复回活动区再打开
-            pickerAction(() => runtime.restoreSessions([selected.id]))
-            void runtime.openSession(selected.id)
-          } else {
-            void runtime.openSession(selected.id)
-          }
-        }
+        openSelectedSession()
         return
       }
       if (key.upArrow) {
@@ -475,66 +552,83 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
 
   return (
     <Box flexDirection="column" width="100%" gap={GAP.none}>
-      {transcriptOpen ? (
-        <TranscriptOverlay
-          entries={snapshot.entries}
-          offset={scrollOffset}
-          visible={Math.max(6, (stdout?.rows ?? 24) - 8)}
-        />
-      ) : (
-        <ChatView
-          entries={snapshot.entries}
-          turnState={snapshot.status.turnState}
-          expandThinking={expandThinking}
-        />
-      )}
-      <TaskStrips goal={snapshot.surfaces.goal} todos={snapshot.surfaces.todos} />
-      {approval !== null ? (
-        <ApprovalCard request={approval} expanded={approvalExpanded} />
-      ) : null}
-      {approval === null && question !== null ? (
-        <AskCard
-          ask={question}
-          index={askIndex}
-          checked={askChecked}
-          highlight={askHighlight}
-          text={askText}
-        />
-      ) : null}
-      {approval === null && question === null && plan !== null ? (
-        <PlanReviewCard plan={plan} expanded={planExpanded} feedbacking={planFeedback} />
-      ) : null}
-      {notice !== null ? (
-        <Box borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline} marginTop={GAP.tight}>
-          <Text {...TEXT.label} color={STATUS_COLOR.waiting}>
-            {notice}
-          </Text>
-        </Box>
-      ) : null}
       {picker ? (
-        <SessionPicker
-          sessions={pickerList}
-          loading={snapshot.sessionsLoading}
-          index={pickerIndex}
-          onIndex={setPickerIndex}
-          page={pickerPage}
-          query={pickerQuery}
-          buffer={pickerBuffer}
-          armed={pickerArmed}
-          sessionStates={snapshot.sessionStates}
-        />
-      ) : modelPicker ? (
-        <ModelPicker models={modelList} index={modelIndex} query={modelQuery} />
+        // 整屏选择器：遮掉聊天流/任务条/卡片（surface 状态原样保留，关掉即回来），
+        // 帧高精确凑满终端行数——重绘零滚动，鼠标命中的几何也靠它成立。
+        <>
+          {notice !== null ? (
+            <Box borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline}>
+              <Text {...TEXT.label} color={STATUS_COLOR.waiting} wrap="truncate-end">
+                {notice}
+              </Text>
+            </Box>
+          ) : null}
+          <Box height={pickerFiller} />
+          <SessionPicker
+            sessions={visibleSessions}
+            total={pickerList.length}
+            start={pickerStart}
+            index={pickerIndex}
+            page={pickerPage}
+            query={pickerQuery}
+            buffer={pickerBuffer}
+            armed={pickerArmed}
+            loading={snapshot.sessionsLoading}
+            sessionStates={snapshot.sessionStates}
+          />
+        </>
       ) : (
-        <Composer
-          disabled={modal}
-          models={models}
-          placeholder={planFeedback ? '反馈原话（Enter 退回计划，Esc 取消）' : undefined}
-          completionsEnabled={!planFeedback}
-          lister={dockLister}
-          onPanelOpenChange={setPanelOpen}
-          onSubmit={handleSubmit}
-        />
+        <>
+          {transcriptOpen ? (
+            <TranscriptOverlay
+              entries={snapshot.entries}
+              offset={scrollOffset}
+              visible={Math.max(6, (stdout?.rows ?? 24) - 8)}
+            />
+          ) : (
+            <ChatView
+              entries={snapshot.entries}
+              turnState={snapshot.status.turnState}
+              expandThinking={expandThinking}
+            />
+          )}
+          <TaskStrips goal={snapshot.surfaces.goal} todos={snapshot.surfaces.todos} />
+          {approval !== null ? (
+            <ApprovalCard request={approval} expanded={approvalExpanded} />
+          ) : null}
+          {approval === null && question !== null ? (
+            <AskCard
+              ask={question}
+              index={askIndex}
+              checked={askChecked}
+              highlight={askHighlight}
+              text={askText}
+            />
+          ) : null}
+          {approval === null && question === null && plan !== null ? (
+            <PlanReviewCard plan={plan} expanded={planExpanded} feedbacking={planFeedback} />
+          ) : null}
+          {notice !== null ? (
+            <Box borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline} marginTop={GAP.tight}>
+              <Text {...TEXT.label} color={STATUS_COLOR.waiting}>
+                {notice}
+              </Text>
+            </Box>
+          ) : null}
+          {modelPicker ? (
+            <ModelPicker models={modelList} index={modelIndex} query={modelQuery} />
+          ) : (
+            <Composer
+              disabled={modal}
+              models={models}
+              placeholder={planFeedback ? '反馈原话（Enter 退回计划，Esc 取消）' : undefined}
+              completionsEnabled={!planFeedback}
+              lister={dockLister}
+              onPanelOpenChange={setPanelOpen}
+              onSubmit={handleSubmit}
+            />
+          )}
+        </>
       )}
       <StatusBar
         status={snapshot.status}
