@@ -9,15 +9,21 @@
  * 屏幕行一一对应，点击即命中。
  *
  * 键盘优先级：Ctrl+C（打断/退出）→ 审批卡（四档）→ 提问卡（模态作答）→ 计划反馈
- * 输入 → 计划评审卡（批准/拒绝/带反馈）→ 回看浮层（Ctrl+O）→ 会话选择器（含筛选
- * 输入与 Ctrl 组合动作）→ 模型浮层 → Esc 打断 → PgUp/PgDn 滚动 → Ctrl+O/Ctrl+T →
- * 其余交给 Composer（↑↓ 在输入框里仍是历史回忆，对齐 dsh-TUI）。
+ * 输入 → 计划评审卡（批准/拒绝/带反馈）→ 图片预览浮层 → 子代理浮层 → 回看浮层
+ * （Ctrl+O）→ 会话选择器 → 模型浮层 → Esc（打断 / 双击撤回上一轮）→ PgUp/PgDn
+ * 滚动 → Ctrl+O/Ctrl+T → 其余交给 Composer（↑↓ 在输入框里仍是历史回忆，对齐
+ * dsh-TUI）。
  *
  * 鼠标（0.6.56）：进程存活期间开启 SGR 跟踪（DECSET 1000+1006），卸载时关闭。
  * ink 的按键解析不认识 SGR 序列，剥掉 ESC 头后以 `'[<b;x;yM|m'` 原样进 useInput——
  * 在最顶层拦截：滚轮按状态路由（浮层/聊天/两个选择器）；左键点击派发给命中区注册表
- * （卡片页脚按钮、提问选项、回底提示条——组件用 yoga 绝对行自报几何，见 click.ts），
- * 列表则用构造行号直接映射。跟踪开着时终端原生选区要走 Shift+拖拽，全终端 TUI 通例。
+ * （卡片页脚按钮、提问选项、回底提示条、附件芯片、后台芯片、图片行——组件用 yoga
+ * 绝对行自报几何，见 click.ts），列表则用构造行号直接映射。跟踪开着时终端原生选区
+ * 要走 Shift+拖拽，全终端 TUI 通例。
+ *
+ * 光标停靠（0.6.57）：App 包一层 stdout.write，帧（含 `\x1b[2K`）写完追加一条
+ * CUP 把物理光标送回 Composer 声明的 caret（cursor.ts）——Windows Terminal 的
+ * IME 拼音预览因此画在输入框里；无声明时隐藏光标。
  *
  * @module dsc-tui/app/App
  */
@@ -29,28 +35,38 @@ import type {
   ArchivedSessionView,
   DscRuntime,
   SessionSummary,
+  TranscriptEntry,
 } from '../contract.js'
 import { runCommand } from '../plugins/commands.js'
+import { AgentsOverlay, buildAgentRows } from './AgentsOverlay.js'
 import { absoluteTop, measuredHeight, useClickRegion, type ClickEntry, type RegisterClick } from './click.js'
 import { ApprovalCard, type ApprovalAction } from './ApprovalCard.js'
 import { AskCard, SKIPPED_ANSWER } from './AskCard.js'
+import { readClipboardImage, type ClipboardResult } from './clipboard-image.js'
 import { ChatView } from './ChatView.js'
-import { Composer, type DirLister } from './Composer.js'
+import { Composer, type ComposerAttachment, type DirLister } from './Composer.js'
+import { renderImageBlock, type ImageSource } from './image-blocks.js'
 import { ModelPicker } from './ModelPicker.js'
 import { PlanReviewCard, type PlanAction } from './PlanReviewCard.js'
+import { PreviewOverlay } from './PreviewOverlay.js'
 import { SessionPicker } from './SessionPicker.js'
-import { StatusBar } from './StatusBar.js'
+import { shortId, StatusBar } from './StatusBar.js'
 import { TaskStrips } from './TaskStrips.js'
 import { TranscriptOverlay } from './TranscriptOverlay.js'
-import { extractImages } from './attach.js'
+import { Welcome } from './Welcome.js'
+import { extractImages, readImageAsDataUrl } from './attach.js'
 import { BORDER, GAP, PAD, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 双击 Ctrl+C 的判定窗口。 */
 const EXIT_WINDOW_MS = 2000
+/** 双击 Esc 撤回上一轮的判定窗口（对齐 dsh 的 3 秒）。 */
+const REWIND_WINDOW_MS = 3000
 /** 聊天视口一次渲染的条目窗口（帧内放不下会被裁掉，窗口只约束 reconcile 量）。 */
 const CHAT_WINDOW = 80
 /** 回看浮层的条目窗口（全量 transcript，窗口随滚动偏移滑动）。 */
 const OVERLAY_WINDOW = 200
+/** 欢迎页只挂在短会话顶上（resume 长会话再画只是把历史往下顶，dsh skipIntro 同款）。 */
+const WELCOME_MAX_ENTRIES = 30
 /** 选择器框的固定行数：上下边框 2 + 标题 1 + 筛选行 1 + 提示行 1（改名行与提示行 1:1 互换）。 */
 const PICKER_CHROME = 5
 
@@ -79,7 +95,17 @@ function TailIndicator({
   )
 }
 
-export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
+export function App({
+  runtime,
+  clipboardReader,
+  imageRenderer,
+}: {
+  runtime: DscRuntime
+  /** 剪贴板读取（测试注入口；省略用 PowerShell 真实现）。 */
+  clipboardReader?: () => Promise<ClipboardResult>
+  /** 图片→半块字符画渲染（测试注入口；省略用 PowerShell 真实现）。 */
+  imageRenderer?: typeof renderImageBlock
+}): JSX.Element {
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot)
   const approval = snapshot.surfaces.pendingApproval
   const question = snapshot.surfaces.pendingQuestion
@@ -107,6 +133,27 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
   const [chatAnchor, setChatAnchor] = useState<number | null>(null)
   /** Composer 补全面板开合（Esc 打断与「关面板」的分流依据）。 */
   const [panelOpen, setPanelOpen] = useState(false)
+  /** ---- 0.6.57：双击 Esc 撤回 / 剪贴板贴图 / 子代理浮层 / 图片预览 ---- */
+  /** 上一次 Esc 的时刻（撤回的 prime 判定；任何非 Esc 按键清零）。 */
+  const lastEsc = useRef(0)
+  /** Composer 草稿镜像（撤回要判断输入框是否为空；不进状态避免多余重渲染）。 */
+  const draftRef = useRef('')
+  /** 外部灌入 Composer 的草稿（token 变化即生效）。 */
+  const [composerPreset, setComposerPreset] = useState<{ text: string; token: number }>({ text: '', token: 0 })
+  /** 剪贴板贴图暂存的附件芯片。 */
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
+  const attachmentSeq = useRef(0)
+  /** 子代理浮层：名单 / 某个代理的只读转录（null = 关闭）。 */
+  const [agentView, setAgentView] = useState<
+    { mode: 'list' } | { mode: 'transcript'; file: string; title: string } | null
+  >(null)
+  const [agentEntries, setAgentEntries] = useState<TranscriptEntry[] | null>(null)
+  const [agentIndex, setAgentIndex] = useState(0)
+  /** 图片预览浮层（半块真彩；block 由 effect 现算）。 */
+  const [preview, setPreview] = useState<{ title: string; sources: ImageSource[]; index: number } | null>(null)
+  const [previewBlock, setPreviewBlock] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   // ---- 会话选择器：页 / 筛选 / 改名 / 删除确认 ----
   const [pickerPage, setPickerPage] = useState<'active' | 'archived'>('active')
   const [archivedList, setArchivedList] = useState<ArchivedSessionView[]>([])
@@ -176,6 +223,42 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       }
     }
   }, [stdout])
+
+  /** Composer 草稿镜像（双击 Esc 撤回判断输入框是否为空）。 */
+  const handleDraftChange = useCallback((text: string) => {
+    draftRef.current = text
+  }, [])
+
+  // 图片预览的字符画现算：preview（含 index）一变就重渲染当前那张。
+  useEffect(() => {
+    if (preview === null) {
+      setPreviewBlock(null)
+      setPreviewError(null)
+      setPreviewLoading(false)
+      return
+    }
+    const source = preview.sources[preview.index]
+    if (source === undefined) return
+    let cancelled = false
+    setPreviewLoading(true)
+    setPreviewError(null)
+    const render = imageRenderer ?? renderImageBlock
+    render(source, Math.max(10, (stdout?.columns ?? 80) - 4), Math.max(4, (stdout?.rows ?? 24) - 10))
+      .then((block) => {
+        if (cancelled) return
+        setPreviewBlock(block)
+        setPreviewLoading(false)
+      })
+      .catch((cause: unknown) => {
+        if (cancelled) return
+        setPreviewBlock(null)
+        setPreviewLoading(false)
+        setPreviewError(cause instanceof Error ? cause.message : String(cause))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [preview, imageRenderer, stdout])
 
   // 卡片换人（或消失）时复位对应的本地状态。
   useEffect(() => setApprovalExpanded(false), [approval?.id])
@@ -248,8 +331,8 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
   const termRows = stdout?.rows ?? 24
   /** 帧内容行数：终端行数 − 1（ink 帧自带尾随换行，末行留给光标落点）。 */
   const frameRows = Math.max(1, termRows - 1)
-  /** 状态栏行数：描边 2 + 两行内容；有后台会话时第三行状态点。 */
-  const statusbarLines = 4 + (Object.keys(snapshot.sessionStates).length > 0 ? 1 : 0)
+  /** 状态栏行数（0.6.57 去掉描边框后固定两行）。 */
+  const statusbarLines = 2
   /** 选择器列表窗口：框内除固定框架外全部让给列表（点击行号映射按它 1:1 对齐）。 */
   const pickerListRows = Math.min(
     Math.max(pickerList.length, 0),
@@ -339,6 +422,117 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
     void runtime.setModel(choice.value)
   }
 
+  // ---- 0.6.57：双击 Esc 撤回上一轮 ----
+  /**
+   * 撤回上一轮（对齐 codex 的 backtrack 语义、dsh 的 fork 实现）：fork 出
+   * 「最后一条用户消息之前」的新会话并切换过去，原话放回输入框改完重发；
+   * 原会话原样保留（不删任何条目，/resume 里随时找回）。
+   */
+  const rewindLastTurn = (): void => {
+    const path = snapshot.status.sessionId
+    if (path === null || path === '') {
+      setNotice('还没有对话可撤回')
+      return
+    }
+    void runtime
+      .listUserMessages(path)
+      .then(async (messages) => {
+        const last = messages[messages.length - 1]
+        if (last === undefined) return '这个会话还没有用户消息，没得撤'
+        const fork = await runtime.forkSession(path, messages.length - 1)
+        if (!fork.ok) return fork.error === '' ? '撤回失败' : fork.error
+        await runtime.openSession(fork.path)
+        setComposerPreset((current) => ({ text: last, token: current.token + 1 }))
+        setChatAnchor(null)
+        setAttachments([])
+        return '已撤回上一轮，原话已放回输入框（原会话保留在 /resume）'
+      })
+      .then((message) => {
+        if (typeof message === 'string') setNotice(message)
+      })
+      .catch((cause: unknown) => setNotice(cause instanceof Error ? cause.message : String(cause)))
+  }
+
+  // ---- 0.6.57：剪贴板贴图与附件芯片 ----
+  /** Ctrl+V：剪贴板里是图就挂芯片（提交时读成 data URL），是文本就并入草稿。 */
+  const handlePaste = (): void => {
+    const read = clipboardReader ?? readClipboardImage
+    void read()
+      .then((result) => {
+        if (result.kind === 'image') {
+          attachmentSeq.current += 1
+          const id = attachmentSeq.current
+          setAttachments((current) => [
+            ...current,
+            {
+              id,
+              path: result.path,
+              name: result.path.split(/[\\/]/).pop() ?? result.path,
+            },
+          ])
+          setNotice(`已附加图片 #${id}（点击芯片预览，Enter 随消息发送）`)
+          return
+        }
+        if (result.kind === 'text' && result.text.trim() !== '') {
+          setComposerPreset((current) => ({
+            text: draftRef.current + result.text,
+            token: current.token + 1,
+          }))
+          return
+        }
+        setNotice('剪贴板里没有图片（文字粘贴交给终端，Ctrl+V 只接图）')
+      })
+      .catch(() => setNotice('剪贴板读取失败'))
+  }
+
+  /** 摘下一枚附件芯片。 */
+  const removeAttachment = (id: number): void => {
+    setAttachments((current) => current.filter((att) => att.id !== id))
+  }
+
+  /** 点附件芯片：开这张图的预览。 */
+  const previewAttachment = (id: number): void => {
+    const att = attachments.find((item) => item.id === id)
+    if (att === undefined) return
+    setPreview({ title: att.name, sources: [{ path: att.path }], index: 0 })
+  }
+
+  /** 点会话流里的图片行：预览历史消息带的图（data URL 现场落临时文件解码）。 */
+  const handlePreviewImages = useCallback((images: string[]) => {
+    setPreview({
+      title: `图片（${images.length} 张）`,
+      sources: images.map((dataUrl) => ({ dataUrl })),
+      index: 0,
+    })
+  }, [])
+
+  // ---- 0.6.57：子代理查看 ----
+  /** 打开某个代理/后台会话的只读转录（peek 不改文件）。 */
+  const openAgentTranscript = useCallback(
+    (file: string, title: string) => {
+      setAgentView({ mode: 'transcript', file, title })
+      setAgentEntries(null)
+      setScrollOffset(0)
+      void runtime
+        .peekTranscript(file)
+        .then((entries) => setAgentEntries(entries))
+        .catch(() => setAgentEntries([]))
+    },
+    [runtime],
+  )
+
+  /** /agents 打开名单浮层（命令 ui 回调）。 */
+  const openAgents = useCallback(() => {
+    setAgentView({ mode: 'list' })
+    setAgentIndex(0)
+  }, [])
+
+  /** 名单浮层的行（队友在前、后台会话在后；与渲染同一条装配规则）。 */
+  const agentRows =
+    agentView !== null && agentView.mode === 'list'
+      ? buildAgentRows(runtime.listTeammates(), snapshot.sessionStates)
+      : []
+
   // ---- 卡片鼠标动作（与按键一一等价；键盘路由仍是唯一真源，这里只是映射）----
   const handleApprovalAction = (action: ApprovalAction): void => {
     if (approval === null) return
@@ -388,6 +582,13 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
           setPickerIndex((current) => Math.max(0, Math.min(current + step, pickerList.length - 1)))
         } else if (modelPicker) {
           setModelIndex((current) => Math.max(0, Math.min(current + step, modelList.length - 1)))
+        } else if (agentView !== null) {
+          if (agentView.mode === 'list') {
+            setAgentIndex((current) => Math.max(0, Math.min(current + step, agentRows.length - 1)))
+          } else {
+            const maxOffset = Math.max(0, (agentEntries?.length ?? 0) - 1)
+            setScrollOffset((current) => Math.max(0, Math.min(current - step, maxOffset)))
+          }
         } else if (transcriptOpen) {
           const maxOffset = Math.max(0, snapshot.entries.length - 1)
           setScrollOffset((current) => Math.max(0, Math.min(current - step, maxOffset)))
@@ -415,14 +616,21 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
         else setModelIndex(row0)
         return
       }
-      // 卡片页脚按钮 / 提问选项 / 回底提示条：点击时现量几何（避免节流渲染导致的
-      // 滞后），再询问判定函数；谁命中谁消费。
+      // 卡片页脚按钮 / 提问选项 / 回底提示条 / 附件与后台芯片 / 图片行：点击时现量
+      // 几何（避免节流渲染导致的滞后），再询问判定函数；谁命中谁消费。
       for (const entry of clickRegions.current) {
         const top = absoluteTop(entry.node.current)
         const height = measuredHeight(entry.node.current)
         if (top === null || height === null) continue
         if (entry.hit(col - 1, row - 1, top, height)) return
       }
+      return
+    }
+    // 任何非 Esc 按键都取消「再按一次 Esc」的 prime 态（对齐 codex 的 backtrack）。
+    if (!key.escape) lastEsc.current = 0
+    // Ctrl+V 贴图：终端把粘贴限定成文本，纯图片剪贴板不发任何字节——按键层自己接。
+    if (key.ctrl && input === 'v' && !modal) {
+      handlePaste()
       return
     }
     if (key.ctrl && input === 'c') {
@@ -491,6 +699,44 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       else if (input === 'n' || input === 'N' || key.escape) runtime.answerPlan('rejected')
       else if (input === 'e' || input === 'E') setPlanFeedback(true)
       else if (input === 'v' || input === 'V') setPlanExpanded((current) => !current)
+      return
+    }
+    // 图片预览浮层：Esc / 点击关闭，←→ 在同一批图里切换。
+    if (preview !== null) {
+      if (key.escape) setPreview(null)
+      else if (key.leftArrow)
+        setPreview((current) =>
+          current === null ? current : { ...current, index: Math.max(0, current.index - 1) },
+        )
+      else if (key.rightArrow)
+        setPreview((current) =>
+          current === null
+            ? current
+            : { ...current, index: Math.min(current.sources.length - 1, current.index + 1) },
+        )
+      return
+    }
+    // 子代理浮层：名单（Enter/点击看转录）与转录（回看浮层同款滚动）两种形态。
+    if (agentView !== null) {
+      if (agentView.mode === 'list') {
+        if (key.escape) setAgentView(null)
+        else if (key.return) {
+          const row = agentRows[agentIndex]
+          if (row !== undefined) openAgentTranscript(row.file, row.title)
+        } else if (key.upArrow) setAgentIndex((current) => Math.max(0, current - 1))
+        else if (key.downArrow)
+          setAgentIndex((current) => Math.min(agentRows.length - 1, current + 1))
+        return
+      }
+      const agentTotal = agentEntries?.length ?? 0
+      const maxOffset = Math.max(0, agentTotal - 1)
+      if (key.escape || input === 'q') setAgentView(null)
+      else if (key.upArrow || input === 'k')
+        setScrollOffset((current) => Math.min(maxOffset, current + 1))
+      else if (key.downArrow || input === 'j')
+        setScrollOffset((current) => Math.max(0, current - 1))
+      else if (key.pageUp) setScrollOffset((current) => Math.min(maxOffset, current + 10))
+      else if (key.pageDown) setScrollOffset((current) => Math.max(0, current - 10))
       return
     }
     if (transcriptOpen) {
@@ -612,9 +858,24 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       }
       return
     }
-    // 空闲无浮层：Esc 打断当前回合（对齐 codex / dsh）。补全面板开着时 Esc 只关面板。
-    if (key.escape && !panelOpen && snapshot.status.turnState !== 'idle') {
-      runtime.interrupt()
+    // Esc（对齐 codex）：回合跑着 = 打断；空闲且输入框为空 = prime 撤回——双击
+    // Esc 把上一轮撤掉、原话放回输入框（dsh 同款 3 秒窗口）。补全面板开着时
+    // Esc 只关面板。
+    if (key.escape && !panelOpen) {
+      if (snapshot.status.turnState !== 'idle') {
+        runtime.interrupt()
+        return
+      }
+      if (draftRef.current === '') {
+        const now = Date.now()
+        if (now - lastEsc.current < REWIND_WINDOW_MS) {
+          lastEsc.current = 0
+          rewindLastTurn()
+        } else {
+          lastEsc.current = now
+          setNotice('再按一次 Esc：撤回上一轮对话')
+        }
+      }
       return
     }
     // 聊天回看（对齐 codex 的 PgUp/PgDn；滚轮同义，↑↓ 留给输入框历史）。
@@ -659,15 +920,30 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
           setModelIndex(0)
           setModelQuery('')
         },
+        openAgents,
         notice: setNotice,
       })
       return
     }
-    const attached = extractImages(text)
-    if (attached.failed.length > 0) {
-      setNotice(`图片读取失败（太大或 IO 错误）：${attached.failed.join('、')}`)
+    // 图片合流：附件芯片（剪贴板贴图）先读成 data URL，正文里的图片路径交给
+    // extractImages；两类失败一起提示。发完即清空芯片。
+    const fromChips: string[] = []
+    const failedChips: string[] = []
+    for (const att of attachments) {
+      try {
+        fromChips.push(readImageAsDataUrl(att.path))
+      } catch {
+        failedChips.push(att.name)
+      }
     }
-    runtime.submit(attached.text, attached.images.length > 0 ? attached.images : undefined)
+    setAttachments([])
+    const attached = extractImages(text)
+    const failed = [...failedChips, ...attached.failed]
+    if (failed.length > 0) {
+      setNotice(`图片读取失败（太大或 IO 错误）：${failed.join('、')}`)
+    }
+    const images = [...fromChips, ...attached.images]
+    runtime.submit(attached.text, images.length > 0 ? images : undefined)
   }
 
   const modal =
@@ -676,11 +952,38 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
     picker ||
     transcriptOpen ||
     modelPicker ||
+    preview !== null ||
+    agentView !== null ||
     (plan !== null && !planFeedback)
+
+  /** 子代理转录的窗口切片（与回看浮层同一套「条」滚动）。 */
+  const agentTotal = agentEntries?.length ?? 0
+  const agentEnd = Math.max(1, agentTotal - Math.min(scrollOffset, Math.max(0, agentTotal - 1)))
+  const agentWindow = (agentEntries ?? []).slice(Math.max(0, agentEnd - OVERLAY_WINDOW), agentEnd)
 
   return (
     <Box height={frameRows} width="100%" flexDirection="column" overflow="hidden">
-      {picker ? (
+      {preview !== null ? (
+        <PreviewOverlay
+          title={preview.title}
+          index={preview.index}
+          total={preview.sources.length}
+          block={previewBlock}
+          loading={previewLoading}
+          error={previewError}
+          registerClick={registerClick}
+          onClose={() => setPreview(null)}
+        />
+      ) : agentView !== null && agentView.mode === 'list' ? (
+        <AgentsOverlay rows={agentRows} index={agentIndex} />
+      ) : agentView !== null && agentView.mode === 'transcript' ? (
+        <TranscriptOverlay
+          entries={agentWindow}
+          start={Math.max(0, agentEnd - agentWindow.length)}
+          total={agentTotal}
+          title={agentView.title}
+        />
+      ) : picker ? (
         <SessionPicker
           sessions={visibleSessions}
           total={pickerList.length}
@@ -705,6 +1008,17 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
               turnState={snapshot.status.turnState}
               expandThinking={expandThinking}
               empty={snapshot.entries.length === 0}
+              header={
+                snapshot.entries.length < WELCOME_MAX_ENTRIES ? (
+                  <Welcome
+                    model={snapshot.status.model}
+                    effort={snapshot.status.effort ?? '-'}
+                    cwd={snapshot.status.cwd}
+                  />
+                ) : undefined
+              }
+              onPreviewImages={handlePreviewImages}
+              registerClick={registerClick}
             />
           </Box>
           <Box flexShrink={0} flexDirection="column">
@@ -758,6 +1072,12 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
               completionsEnabled={!planFeedback}
               lister={dockLister}
               onPanelOpenChange={setPanelOpen}
+              onDraftChange={handleDraftChange}
+              preset={composerPreset}
+              attachments={attachments}
+              onRemoveAttachment={removeAttachment}
+              onPreviewAttachment={previewAttachment}
+              registerClick={registerClick}
               onSubmit={handleSubmit}
             />
           </Box>
@@ -768,6 +1088,8 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
           status={snapshot.status}
           surfaces={snapshot.surfaces}
           sessionStates={snapshot.sessionStates}
+          onOpenAgent={(sessionPath) => openAgentTranscript(sessionPath, shortId(sessionPath))}
+          registerClick={registerClick}
         />
       </Box>
     </Box>

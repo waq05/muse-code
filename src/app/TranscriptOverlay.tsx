@@ -16,6 +16,7 @@ export function TranscriptOverlay({
   entries,
   start,
   total,
+  title,
 }: {
   /** 可见窗口切片（App 按滚动偏移算好传入）。 */
   entries: TranscriptEntry[]
@@ -23,6 +24,8 @@ export function TranscriptOverlay({
   start: number
   /** 全量条数。 */
   total: number
+  /** 标题（省略 = 本会话回看；子代理转录复用同一浮层时传它的名字）。 */
+  title?: string
 }): JSX.Element {
   return (
     <Box
@@ -37,7 +40,9 @@ export function TranscriptOverlay({
     >
       <Box flexShrink={0} flexDirection="column" gap={GAP.none}>
         <Text {...TEXT.label} color={ACCENT} wrap="truncate-end">
-          回看全文（共 {total} 条 · 第 {start + 1}-{start + entries.length} 条）
+          {title === undefined
+            ? `回看全文（共 ${total} 条 · 第 ${start + 1}-${start + entries.length} 条）`
+            : `${title} · ${total} 条`}
         </Text>
         {entries.map((entry) => (
           <Entry key={entry.id} entry={entry} streaming={false} expandThinking={false} />

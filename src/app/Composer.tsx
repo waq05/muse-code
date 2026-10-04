@@ -17,6 +17,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Text, useInput } from 'ink'
+import type { DOMElement } from 'ink'
 import type { JSX } from 'react'
 import type { ModelChoiceView } from '../contract.js'
 import { completionsFor, expandCommand } from '../core/commands-completion.js'
@@ -27,11 +28,20 @@ import {
   rankMentionCandidates,
   type MentionQuery,
 } from '../core/mention.js'
+import { useParkedCursor } from './cursor.js'
+import { displayWidth, measuredSpan, useClickRegion, type RegisterClick } from './click.js'
 import { loadHistory, recordHistory } from './history-store.js'
-import { ACCENT, BORDER, GAP, MARK, PAD, SEP, TEXT } from './theme.js'
+import { ACCENT, BORDER, GAP, MARK, PAD, SEP, STATUS_COLOR, TEXT } from './theme.js'
 
 /** fs-list 透传回包的最小形状（desktop-dock 插件定义，这里只认形状）。 */
 export type DirLister = (dir: string) => Promise<{ entries: { name: string; dir: boolean }[] }>
+
+/** 输入框上方的图片附件芯片（Ctrl+V 剪贴板贴图；路径不进正文，提交时统一读取）。 */
+export interface ComposerAttachment {
+  id: number
+  path: string
+  name: string
+}
 
 export interface ComposerProps {
   disabled: boolean
@@ -45,7 +55,76 @@ export interface ComposerProps {
   lister?: DirLister
   /** 补全面板开合变化（App 需要：Esc 打断与「关面板」的分流）。 */
   onPanelOpenChange?: (open: boolean) => void
+  /** 草稿变化上报（App 的双击 Esc 撤回要判断输入框是否为空）。 */
+  onDraftChange?: (text: string) => void
+  /**
+   * 外部灌入的草稿（token 变化即生效）：双击 Esc 撤回把上一轮的原话放回来编辑、
+   * 剪贴板读到的是文本时并入草稿。
+   */
+  preset?: { text: string; token: number }
+  /** 图片附件芯片（App 持有状态；省略 = 不渲染芯片行）。 */
+  attachments?: ComposerAttachment[]
+  onRemoveAttachment?: (id: number) => void
+  onPreviewAttachment?: (id: number) => void
+  registerClick?: RegisterClick
   onSubmit: (text: string) => void
+}
+
+/** 附件芯片：主体点击 = 预览，尾部的 ✕ 点击 = 摘下。 */
+function AttachmentChip({
+  att,
+  onRemove,
+  onPreview,
+  registerClick,
+}: {
+  att: ComposerAttachment
+  onRemove?: (id: number) => void
+  onPreview?: (id: number) => void
+  registerClick?: RegisterClick
+}): JSX.Element {
+  const bodyRef = useRef<DOMElement | null>(null)
+  const closeRef = useRef<DOMElement | null>(null)
+  useClickRegion(
+    bodyRef,
+    onPreview === undefined ? undefined : registerClick,
+    onPreview === undefined
+      ? undefined
+      : (col, row, top, height) => {
+          if (row < top || row >= top + height) return false
+          const span = measuredSpan(bodyRef.current)
+          if (span === null || col < span.left || col >= span.left + span.width) return false
+          onPreview(att.id)
+          return true
+        },
+  )
+  useClickRegion(
+    closeRef,
+    onRemove === undefined ? undefined : registerClick,
+    onRemove === undefined
+      ? undefined
+      : (col, row, top, height) => {
+          if (row < top || row >= top + height) return false
+          const span = measuredSpan(closeRef.current)
+          if (span === null || col < span.left || col >= span.left + span.width) return false
+          onRemove(att.id)
+          return true
+        },
+  )
+  return (
+    <Box>
+      <Box ref={bodyRef}>
+        <Text color={ACCENT} wrap="truncate-end">
+          [图#{att.id}] {att.name}
+        </Text>
+      </Box>
+      <Box ref={closeRef}>
+        <Text {...TEXT.label} color={STATUS_COLOR.failed}>
+          {' '}
+          ✕
+        </Text>
+      </Box>
+    </Box>
+  )
 }
 
 export function Composer({
@@ -55,6 +134,12 @@ export function Composer({
   completionsEnabled = true,
   lister,
   onPanelOpenChange,
+  onDraftChange,
+  preset,
+  attachments,
+  onRemoveAttachment,
+  onPreviewAttachment,
+  registerClick,
   onSubmit,
 }: ComposerProps): JSX.Element {
   const [value, setValue] = useState('')
@@ -100,6 +185,29 @@ export function Composer({
       .then((files) => setMentionFiles(files))
       .catch(() => setMentionFiles([]))
   }, [mention, lister])
+
+  // 草稿上报（App 判断「输入框为空」的依据）；preset 灌入（撤回文本回框）。
+  useEffect(() => {
+    onDraftChange?.(value)
+  }, [value, onDraftChange])
+  useEffect(() => {
+    if (preset === undefined || preset.token === 0) return
+    setValue(preset.text)
+    setCaret(preset.text.length)
+    setHistoryIndex(-1)
+    setSuppressedFor(null)
+  }, [preset])
+
+  // IME 光标停靠（0.6.57，ink useCursor）：声明 caret 的逻辑行列，帧尾光标停到
+  // 输入框内——Windows Terminal 的拼音预览因此画在输入框里。
+  const inputBoxRef = useRef<DOMElement | null>(null)
+  const caretBefore = value.slice(0, caret).split('\n')
+  useParkedCursor(
+    inputBoxRef,
+    caretBefore.length - 1,
+    displayWidth(caretBefore[caretBefore.length - 1] ?? ''),
+    !disabled,
+  )
 
   /** 修改输入并把光标带到位（函数式更新：同批多次按键不丢状态）。 */
   const update = (next: string, nextCaret: number): void => {
@@ -263,18 +371,27 @@ export function Composer({
           <Text {...TEXT.secondary}>↑↓ 选择 · Tab 补全 · Esc 关闭</Text>
         </Box>
       ) : null}
-      <Box borderStyle="round" borderColor={disabled ? BORDER.frame : BORDER.active} paddingX={PAD.inline}>
+      {attachments !== undefined && attachments.length > 0 ? (
+        <Box gap={PAD.field} flexWrap="wrap">
+          {attachments.map((att) => (
+            <AttachmentChip
+              key={att.id}
+              att={att}
+              onRemove={onRemoveAttachment}
+              onPreview={onPreviewAttachment}
+              registerClick={registerClick}
+            />
+          ))}
+        </Box>
+      ) : null}
+      <Box ref={inputBoxRef} borderStyle="round" borderColor={disabled ? BORDER.frame : BORDER.active} paddingX={PAD.inline}>
         <Text color={ACCENT}>
           ❯{' '}
         </Text>
         {value === '' && placeholder !== undefined ? (
           <Text {...TEXT.secondary}>{placeholder}</Text>
         ) : (
-          <Text {...TEXT.body}>
-            {value.slice(0, caret)}
-            <Text color={ACCENT}>▏</Text>
-            {value.slice(caret)}
-          </Text>
+          <Text {...TEXT.body}>{value}</Text>
         )}
       </Box>
     </Box>

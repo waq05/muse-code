@@ -55,3 +55,14 @@ export function extractImages(text: string): AttachResult {
   })
   return { text: next, images, attached, failed }
 }
+
+/**
+ * 读一个图片文件成 data URL（附件芯片提交时用；格式/大小不合格直接抛错，由
+ * 调用方折成「读取失败」提示）。
+ */
+export function readImageAsDataUrl(path: string): string {
+  const mime = IMAGE_MIME[extname(path).toLowerCase()]
+  if (mime === undefined) throw new Error(`不是受支持的图片格式：${path}`)
+  if (statSync(path).size > MAX_IMAGE_BYTES) throw new Error(`图片超过 10MB：${path}`)
+  return `data:${mime};base64,${readFileSync(path).toString('base64')}`
+}

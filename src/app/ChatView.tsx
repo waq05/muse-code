@@ -12,10 +12,13 @@
  *
  * @module dsc-tui/app/ChatView
  */
+import { useRef } from 'react'
 import { Box, Text } from 'ink'
-import type { JSX } from 'react'
+import type { DOMElement } from 'ink'
+import type { JSX, ReactNode } from 'react'
 import type { TranscriptEntry } from '../contract.js'
 import { ToolCard } from './ToolCard.js'
+import { useClickRegion, type RegisterClick } from './click.js'
 import { ACCENT, DIFF_COLOR, GAP, INDENT, STATUS_COLOR, TEXT } from './theme.js'
 
 const oneLine = (text: string, limit: number): string => {
@@ -35,15 +38,51 @@ function CompactionRule({ count }: { count: number }): JSX.Element {
   )
 }
 
+/** 用户消息的图片行：整行可点，点了开半块真彩预览（没有回调时退化为纯说明）。 */
+function ImageLine({
+  count,
+  onPreview,
+  registerClick,
+}: {
+  count: number
+  onPreview?: () => void
+  registerClick?: RegisterClick
+}): JSX.Element {
+  const ref = useRef<DOMElement | null>(null)
+  useClickRegion(
+    ref,
+    onPreview === undefined ? undefined : registerClick,
+    onPreview === undefined
+      ? undefined
+      : (col, row, top, height) => {
+          if (row < top || row >= top + height) return false
+          onPreview()
+          return true
+        },
+  )
+  return (
+    <Box ref={ref} marginLeft={INDENT.detail}>
+      <Text {...TEXT.secondary} color={onPreview === undefined ? undefined : ACCENT}>
+        🖼 {count} 张图片{onPreview === undefined ? '' : ' · 点击预览'}
+      </Text>
+    </Box>
+  )
+}
+
 /** 单条条目的渲染（回看浮层复用同一份，直播光标由 streaming 控制）。 */
 export function Entry({
   entry,
   streaming,
   expandThinking,
+  onPreviewImages,
+  registerClick,
 }: {
   entry: TranscriptEntry
   streaming: boolean
   expandThinking: boolean
+  /** 用户消息图片行的点击回调（省略 = 图片行不可点）。 */
+  onPreviewImages?: (images: string[]) => void
+  registerClick?: RegisterClick
 }): JSX.Element | null {
   const cursor = streaming ? <Text color={ACCENT}> ▌</Text> : null
   switch (entry.kind) {
@@ -58,9 +97,13 @@ export function Entry({
             <Text {...TEXT.body}>{entry.text}</Text>
           </Box>
           {entry.images !== undefined && entry.images.length > 0 ? (
-            <Box marginLeft={INDENT.detail}>
-              <Text {...TEXT.secondary}>🖼 {entry.images.length} 张图片</Text>
-            </Box>
+            <ImageLine
+              count={entry.images.length}
+              onPreview={
+                onPreviewImages === undefined ? undefined : () => onPreviewImages(entry.images ?? [])
+              }
+              registerClick={registerClick}
+            />
           ) : null}
         </Box>
       )
@@ -77,12 +120,15 @@ export function Entry({
           </Box>
         )
       }
+      // 标签与内容分行（0.6.57）：同一行排的话长思考一折行，标签就混进正文里认不出。
       return (
-        <Box>
+        <Box flexDirection="column" gap={GAP.none}>
           <Text {...TEXT.label} color={STATUS_COLOR.pending}>
-            💭 思考中（ctrl+t 展开）：
+            💭 思考中（ctrl+t 展开）
           </Text>
-          <Text {...TEXT.secondary}>{oneLine(entry.text, 100)}</Text>
+          <Box marginLeft={INDENT.detail}>
+            <Text {...TEXT.secondary}>{oneLine(entry.text, 100)}</Text>
+          </Box>
         </Box>
       )
     }
@@ -177,6 +223,9 @@ export function ChatView({
   turnState,
   expandThinking,
   empty,
+  header,
+  onPreviewImages,
+  registerClick,
 }: {
   /** 可见窗口切片（App 按「帧底对齐 + 顶部裁剪」算好传入）。 */
   entries: TranscriptEntry[]
@@ -184,12 +233,21 @@ export function ChatView({
   expandThinking: boolean
   /** 全会话一条都没有（和「窗口恰好翻空」区分开，只有前者画开场提示）。 */
   empty: boolean
+  /**
+   * 挂在会话流最顶上的头部（启动欢迎页）：随内容一起从顶上滚走（对齐 codex 的
+   * session header / dsh 的 LogoHeader——不独占屏幕，也不永久占位）。
+   */
+  header?: ReactNode
+  /** 用户消息图片行的点击预览回调（省略 = 图片行不可点）。 */
+  onPreviewImages?: (images: string[]) => void
+  registerClick?: RegisterClick
 }): JSX.Element {
   const tail = entries
   // 直播尾（负 id）与最后定稿 text 条目才带光标闪烁位。
   const lastId = tail[tail.length - 1]?.id
   return (
     <Box flexDirection="column" flexShrink={0} gap={GAP.none}>
+      {header}
       {tail.map((entry) => (
         <Entry
           key={entry.id}
@@ -200,6 +258,8 @@ export function ChatView({
             (turnState === 'thinking' || turnState === 'working')
           }
           expandThinking={expandThinking}
+          onPreviewImages={onPreviewImages}
+          registerClick={registerClick}
         />
       ))}
       {empty ? (

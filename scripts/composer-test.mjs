@@ -80,14 +80,15 @@ check('输入 / 后面板出现', frame.includes('/new') && frame.includes('/res
 check('面板含参数提示', frame.includes('/model <[端点/]模型名>'))
 check('面板含操作提示', frame.includes('Tab 补全'))
 
-// 2. ↑↓ 选择移动
-frame = await press(KEY.down + KEY.down)
+// 2. ↑↓ 选择移动（/agents 插入后 /compact 顺延一位）
+frame = await press(KEY.down + KEY.down + KEY.down)
 const selected = frame.split('\n').find((line) => line.includes('❯') && line.includes('/'))
-check('↓↓ 后选中项变为 /compact', selected !== undefined && selected.includes('/compact'), `实际：${selected}`)
+check('↓↓↓ 后选中项变为 /compact', selected !== undefined && selected.includes('/compact'), `实际：${selected}`)
 
 // 3. Tab 补全无参命令（填满输入框）
 frame = await press(KEY.tab)
-check('Tab 补全为 /compact', frame.includes('❯ /compact▏') || frame.includes('❯ /compact '))
+// 0.6.57 起假光标 ▏ 换成 ink useCursor 的物理光标（帧尾 G 序列 + ?25h）
+check('Tab 补全为 /compact', frame.includes('❯ /compact'))
 
 // 4. Esc 关闭面板，且输入变化前不再出现
 frame = await press(KEY.esc)
@@ -110,7 +111,8 @@ frame = await press(KEY.down)
 const modelSelected = frame.split('\n').find((line) => line.includes('❯') && line.includes('ark/'))
 check('↓ 后选中 ark/glm-5.3-flash', modelSelected !== undefined && modelSelected.includes('ark/glm-5.3-flash'), `实际：${modelSelected}`)
 frame = await press(KEY.tab)
-check('Tab 补全为 /model ark/glm-5.3-flash', frame.includes('❯ /model ark/glm-5.3-flash▏'), JSON.stringify(frame.slice(-300)))
+check('Tab 补全为 /model ark/glm-5.3-flash', frame.includes('❯ /model ark/glm-5.3-flash'), JSON.stringify(frame.slice(-300)))
+check('物理光标停靠序列存在（IME 预览落输入框）', /\[\d+G/.test(frame) && frame.includes('[?25h'), JSON.stringify(frame.slice(-80)))
 check('补全后面板关闭', !frame.includes('hy3-a/hy3-a'))
 
 // 8. 模型名前缀过滤（/model deep → 只留 deepseek）

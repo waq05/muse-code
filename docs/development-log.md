@@ -1644,3 +1644,21 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **鼠标全时开启**（DECSET 1000+1006，卸载关闭）：滚轮按状态路由（浮层/聊天/两个选择器）；左键点击——选择器行映射（居中窗口 1:1）、模型浮层整屏化后同款（点选中、再点应用）、审批卡页脚按钮（y/a/p/n/v，列区间按显示宽度与渲染同源计算）、计划卡页脚 + 「…共 N 行」标记行、提问卡选项行（单选即答、多选勾选）、回底提示条。卡片/提示条几何走 click.ts 命中注册表；Composer 兜底吞掉鼠标序列不打进输入框；补全面板钉 8 行防挤压。
 
 **验证**：`scripts/session-picker-mouse-test.mjs` 重写为 28 项断言全绿（恒定帧四种状态、聊天裁剪方向、滚轮/PgUp·PgDn/提示条点击、选择器全流程、改名免疫、审批/提问卡点击派发、全时跟踪转义）；既有 10 检查脚本 0 FAIL（resident-agents 32/0）；双包 typecheck 绿；`node bin/dsc.js --version` → 0.6.56。已知取舍：鼠标跟踪开着时原生选区走 Shift+拖拽（全终端 TUI 通例）；↑↓ 仍为输入历史——要 codex 式「↑↓ 滚屏」改 scrollChat 一行即可；聊天回看按「条」粒度（比 codex 的按行粗），后续可在 Entry 内做行级切片。
+
+## 阶段 80：欢迎页 / IME 光标停靠 / 状态栏压缩 / 双击 Esc 撤回 / 子代理查看 / 贴图预览（0.6.57）
+
+**动因**：用户七连需求——① 启动欢迎页（对齐 dsh-TUI/codex）② TUI 贴图 + 点击预览 ③ 「思考中」标签与内容同排 ④ IME 拼音预览画在输入框外 ⑤ 底部状态栏占行太多 ⑥ 双击 Esc 撤回上一轮 ⑦ 子代理怎么查看。参考实现侦察：dsh-TUI 的 useDeclaredCursor（fork ink 每帧把物理光标 park 到输入 caret）、RewindPicker（双 Esc→fork 子会话，绝不删存储）、`[Image #N]` 原子 token + sixel/kitty；codex 的 session header（`>_ OpenAI Codex (vX)` + cwd + 命令提示，随 transcript 顶走）、Esc 回退状态机（prime→二次 Esc→回退→原话回框，本地 turns.truncate + 服务端 revert）、Ctrl+V 剪贴板位图→临时 PNG、`[Image #N]` chip。
+
+**欢迎页（Welcome.tsx）**：不是独立路由，是聊天内容的第 0 条——挂在 ChatView 顶部、随内容从顶上自然滚走（codex/dsh 同构），条目 ≥30 的 resume 长会话直接不画（dsh skipIntro 同款，别把历史往下顶）。内容三行：`◆ Muse Code v0.6.57`（标题加粗+版本暗淡）、目录·模型·effort、键位提示（/help、双击 Esc、Ctrl+O/T/V）。顺手修了一个真 bug：包名 scoped 化（@waq666/muse-code）后 version.ts 的包名白名单没跟上，`DSC_VERSION` 一路退化成 `0.0.0`（CLI 横幅、设置「关于」全受害）——改为取 `/` 后最后一段比对。
+
+**IME 光标停靠（cursor.ts，全案最大的惊喜）**：本想照 dsh 在 App 层包 stdout.write 给帧尾追 CUP，实测打不进——然后发现 **ink 6.8 原生自带 `useCursor`**（CursorContext + log-update 的 setCursorPosition，注释明写 "This is useful for IME support, where the composing character is displayed at the cursor location"）：渲染期声明 `{x,y}`（相对输出原点，0 基），帧尾自动 cursorUp+cursorTo+`?25h` 把可见光标停到目标位，声明 undefined 即隐藏，输出没变时还有 cursor-only 快路径。cursor.ts 收敛成十行薄封装 `useParkedCursor(node, line, col, enabled)`——Composer 传 caret 的逻辑行列（多行按 `\n` 数、列按显示宽度），几何渲染时现量（输入框贴底天然稳定，补全面板开合那一帧滞后一帧自愈）；TSF 组合期间按键全被 IME 吃掉、应用零事件，光标常驻 caret 正是预览画进输入框的充要条件。假光标 `▏` 移除（双光标冗余），物理光标即 caret。
+
+**状态栏压缩（StatusBar.tsx 重写）**：5 行（描边 2 + 内容 2 + 后台 1）→ **固定 2 行无框**——第一行状态+模式+权限+模型+effort+tok 用量，第二行目录+会话短 id+后台芯片；省出的 3 行全给聊天区。选择器几何随之更新（列表窗 30→32 行）。
+
+**双击 Esc 撤回上一轮**：codex 的状态机（空闲+空输入 Esc=prime 3 秒窗 → 二次 Esc 执行，任何非 Esc 键清零 prime；回合跑着 Esc 仍=打断）+ dsh 的实现哲学（**fork 不删**）。core 的 `forkSession(path, index)` 本来就是「复制日志到第 index 条用户消息之前」——撤回上一轮 = `forkSession(path, messages.length-1)` + openSession(新路径) + 原话经 Composer 的 preset 通道放回输入框改完重发；原会话原样保留在 /resume。零核心改动，纯 App 编排。
+
+**子代理查看（/agents）**：`CommandContext` 增可选 `openAgents`，命令注册表加 `/agents`（补全与 /help 自动带上）。AgentsOverlay 整屏浮层两段名单：队友在前（名字·状态·派活·轮数，数据 `runtime.listTeammates()`）、后台会话在后（sessionStates 状态芯片同款）；Enter/再点进只读转录（复用 TranscriptOverlay 加 `title` prop，数据 `peekTranscript(file)` 不改文件）。状态栏后台芯片同步可点直达转录。
+
+**贴图与预览**：终端把粘贴限定成文本、WT 对纯图片剪贴板不发字节——Ctrl+V 在按键层自接（`\x16`），PowerShell 读剪贴板三级降级：FileDrop（资源管理器复制的图片文件）→ 位图存 %TEMP% PNG → 纯文本并回草稿兜底（clipboard-image.ts）。附件以芯片行呈现（`[图#N] 名.png ✕`）：主体点击=预览、✕=摘下，提交时与正文路径提取（attach.ts）合流成 data URL 发出（发完清空）。预览浮层走**半块真彩兜底**（dsh 的 sixel/kitty 在 WT 未稳，`▀`+`38;2`/`48;2` SGR 一格双像素全终端可用）：image-blocks.ts 让 System.Drawing 高质量缩放后吐 BGRA 原始字节，Node 拼字符画（PNG/JPEG/GIF/BMP 全认，免原生图像依赖）；会话流里用户消息的图片行也升级为可点预览。App 增 `clipboardReader`/`imageRenderer` 注入口，测试不真调 PowerShell。
+
+**测试**：新 `scripts/tui-features-test.mjs` 29 项全绿（欢迎页出现/长会话不画、思考分行、状态栏两行合并+无框+帧恒定、光标停靠序列（G 序列+?25h）、图片行点击预览、Ctrl+V 芯片→提交合流 data URL→清空、芯片预览/✕ 摘下、双击 Esc 全链（prime 提示→fork 参数→切换分叉→原话回框→提示语）、/agents→转录→关闭）；session-picker-mouse-test 27 项全绿（窗口指示 1–32）；composer-test 更新到新现实（/agents 顺延一位、假光标 ▏ 断言改物理光标）；全电池 0 新增 FAIL（remote-e2e 72/74 的两项与基线 stash 对照一致，预存在问题）；双包 typecheck 绿；`node bin/dsc.js --version` → 0.6.57。已知取舍：预览的字符画宽高按 1:2 字符格近似；芯片/命中区按列分界依赖 measuredSpan（click.ts 新增 absoluteLeft）；IME 停靠在补全面板开合的一帧有滞后；FileDrop 非图片扩展名按文本并回草稿。

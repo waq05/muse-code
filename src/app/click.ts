@@ -59,10 +59,39 @@ export function absoluteTop(node: DOMElement | null | undefined): number | null 
   return y
 }
 
+/** 节点在帧内的绝对列（0 基）；量不到返回 null（同一行里多块区域分列命中用）。 */
+export function absoluteLeft(node: DOMElement | null | undefined): number | null {
+  let x = 0
+  let current: InkElement | null | undefined = node as InkElement | null | undefined
+  while (current !== null && current !== undefined) {
+    const left: number | undefined = current.yogaNode?.getComputedLeft()
+    if (typeof left !== 'number') return null
+    x += left
+    current = current.parentNode
+  }
+  return x
+}
+
+/** 节点在帧内的水平区间（0 基 [left, left+width)）；量不到返回 null。 */
+export function measuredSpan(
+  node: DOMElement | null | undefined,
+): { left: number; width: number } | null {
+  const left = absoluteLeft(node)
+  const width: number | null = measuredWidth(node)
+  if (left === null || width === null) return null
+  return { left, width }
+}
+
 /** 节点的渲染高度（行）；量不到返回 null。 */
 export function measuredHeight(node: DOMElement | null | undefined): number | null {
   const height: number | undefined = (node as InkElement | null | undefined)?.yogaNode?.getComputedHeight()
   return typeof height === 'number' ? height : null
+}
+
+/** 节点的渲染宽度（列）；量不到返回 null（芯片内部「主体 / 删除钮」分列用）。 */
+export function measuredWidth(node: DOMElement | null | undefined): number | null {
+  const width: number | undefined = (node as InkElement | null | undefined)?.yogaNode?.getComputedWidth()
+  return typeof width === 'number' ? width : null
 }
 
 /** 一个命中判定：点击发生时由 App 现量几何再询问；返回 true 表示消费了这次点击。 */

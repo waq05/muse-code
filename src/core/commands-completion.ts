@@ -17,6 +17,7 @@ export const BUILT_IN_COMMANDS: CommandSpec[] = [
   // compact 会和进行中的落库交错，运行中一律挡下；其余随时可用。
   { name: 'new', args: '', description: '新建会话', duringTask: 'deny' },
   { name: 'resume', args: '', description: '恢复历史会话', duringTask: 'deny' },
+  { name: 'agents', args: '', description: '查看子代理与后台会话（转录只读）' },
   { name: 'compact', args: '', description: '压缩上下文', duringTask: 'deny' },
   {
     name: 'model',

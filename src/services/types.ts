@@ -440,6 +440,11 @@ export interface CommandContext {
   openPicker(): void
   /** 打开模型选择面板（/model 无参数时；桌面端可映射到自己的模型面板，无可忽略）。 */
   openModels(): void
+  /**
+   * 打开子代理总览（/agents）。可选：桌面端可以映射到自己的面板，暂未接的端
+   * 忽略该回调（命令本身仍注册，/help 里可见）。
+   */
+  openAgents?(): void
   notice(text: string): void
 }
 

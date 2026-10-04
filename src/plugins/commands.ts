@@ -96,6 +96,10 @@ export const commandsPlugin: Plugin.Object = {
       ({ ui }) => ui.openPicker(),
     )
     service.register(
+      { name: 'agents', args: '', description: '查看子代理与后台会话（转录只读）' },
+      ({ ui }) => ui.openAgents?.(),
+    )
+    service.register(
       {
         name: 'model',
         args: '<[端点/]模型名>',

@@ -20,7 +20,13 @@ export const DSC_VERSION: string = (() => {
         name?: unknown
         version?: unknown
       }
-      if (typeof doc.name === 'string' && PACKAGE_NAMES.includes(doc.name) && typeof doc.version === 'string') {
+      // scoped 名（@waq666/muse-code）按最后一段比，发布改名不再踩同一个坑
+      const shortName = typeof doc.name === 'string' ? doc.name.split('/').pop() : undefined
+      if (
+        shortName !== undefined &&
+        PACKAGE_NAMES.includes(shortName) &&
+        typeof doc.version === 'string'
+      ) {
         return doc.version
       }
     } catch {
