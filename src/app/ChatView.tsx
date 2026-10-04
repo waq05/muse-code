@@ -38,7 +38,8 @@ function CompactionRule({ count }: { count: number }): JSX.Element {
   )
 }
 
-function Entry({
+/** 单条条目的渲染（回看浮层复用同一份，直播光标由 streaming 控制）。 */
+export function Entry({
   entry,
   streaming,
   expandThinking,
@@ -202,7 +203,7 @@ export function ChatView({
       ))}
       {tail.length === 0 ? (
         <Box marginLeft={INDENT.detail}>
-          <Text {...TEXT.secondary}>输入消息开始对话；/help 查看命令，Ctrl+C 两次退出。</Text>
+          <Text {...TEXT.secondary}>输入消息开始对话；/help 查看命令，Esc 打断回合，Ctrl+O 回看全文。</Text>
         </Box>
       ) : null}
     </Box>

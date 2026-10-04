@@ -5,7 +5,11 @@
  * 透传），探针在 node 里直测。路径一律 posix 相对形态（插入正文、被 chat/markdown-text
  * 的 matchMentionPath 识别成 chip、被轮尾改动卡按后缀匹配命中）。
  *
- * @module desktop/renderer/mention-complete
+ * 住在这里的原因：桌面端 renderer 与终端 TUI（src/app）共用同一份逻辑——桌面经
+ * vite alias `@dsc/runtime/core/mention.js` 引编译产物，TUI 直接 import 源码。
+ * 2026-10 自 desktop/src/renderer/mention-complete.ts 上移，函数与常量零改动。
+ *
+ * @module dsc/core/mention
  */
 
 /** 光标处的 @ 提及查询：token 是 @ 之后的已敲字符（可为空串），start 指向 @ 本身。 */

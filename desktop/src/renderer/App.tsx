@@ -15,7 +15,7 @@ import { ApprovalCard } from './ApprovalCard.js'
 import { AskCard, GoalBar, PlanReview, TaskDock } from './TaskDock.js'
 import { ChatView } from './ChatView.js'
 import { Composer } from './Composer.js'
-import { collectWorkspaceFiles } from './mention-complete.js'
+import { collectWorkspaceFiles } from '@dsc/runtime/core/mention.js'
 import { Dock } from './Dock.js'
 import {
   closeTab as dockCloseTab,

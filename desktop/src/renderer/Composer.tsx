@@ -20,7 +20,7 @@ import type {
 // vite 对 node 内置模块 externalize 即炸（0.6.26 白屏教训），渲染层只走 core 这份。
 import { completionsFor, expandCommand } from '@dsc/runtime/core/commands-completion.js'
 import type { CompletionItem } from '@dsc/runtime/services/types.js'
-import { insertMention, mentionQueryAt, rankMentionCandidates } from './mention-complete.js'
+import { insertMention, mentionQueryAt, rankMentionCandidates } from '@dsc/runtime/core/mention.js'
 import { toastErr } from './components/toast.js'
 import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconLayers, IconPlus, IconShield, IconStop } from './icons.js'
 
