@@ -1,9 +1,13 @@
 {
-  "name": "muse-code",
+  "name": "@waq666/muse-code",
   "version": "0.6.50",
   "description": "Muse Code（msc）— 独立的终端 AI harness（自研 ReAct loop + ink TUI）",
   "type": "module",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/waq05/muse-code.git"

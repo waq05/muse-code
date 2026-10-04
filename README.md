@@ -7,11 +7,11 @@
 **桌面端**（自带运行时，无需装 Node）：到 [Releases](https://github.com/waq05/muse-code/releases) 下载
 安装版 `muse-code-setup-x.y.z.exe`（可选安装目录）或免安装单文件 `muse-code-portable-x.y.z.exe`。
 
-**CLI**（`msc` 命令，需要 Node.js ≥ 22.19）：
+**CLI**（`msc` 命令，需要 Node.js ≥ 22.19；包名走 scope 是因为 npm 防 typosquat——无 scope 的 `muse-code` 与既有 `musecode` 太像被拒）：
 
 ```sh
-npm i -g muse-code    # 或免安装：npx muse-code
-msc                   # 独立启动（新会话）
+npm i -g @waq666/muse-code    # 或免安装：npx @waq666/muse-code
+msc                           # 独立启动（新会话）
 ```
 
 **从源码跑**：

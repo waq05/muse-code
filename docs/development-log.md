@@ -1594,3 +1594,13 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **做法**：filter-branch 连同 git 历史彻底抹除该文件，强推 main 与 v0.6.50；阶段 14 的报告路径引用同步清掉。安全审计同时确认：全历史（121 提交）无密钥形状/私钥块/密码赋值，配置类文件与运行期产物（会话 jsonl、audit jsonl、remote-e2e 临时 HOME）从未入库——key 三来源全在仓库外的 `~/.dsc`。
 
 **版本号**：未 bump（仍 0.6.50），随 0.6.50 发行收尾。
+
+## 阶段 76：npm 首发——typosquat 逼出 scope 包名（0.6.50）
+
+**动因**：用户注册 npm 账号（waq666）并生成 Granular token（勾 Bypass 2FA、Read and write、All packages）后首发。无 scope 的 `muse-code` 撞上 npm 的 typosquat 防护：既有包 `musecode` 与它太像，E403 拒发，npm 建议走 scope。
+
+**做了什么**：包名改 `@waq666/muse-code`（与 dsh 的 `@deepseek-ai/dsh` 同格局，bin 仍是 `msc`，产品名不变）；package.json 补 `publishConfig: {access: public, registry: 官方源}`——scope 包缺省 restricted 会发不出去，且本机默认 registry 是 npmmirror 镜像，两个坑一并钉死，CI 的 `npm publish` 无需任何参数。README 安装命令同步。
+
+**验证**：`npm publish` 回执 `+ @waq666/muse-code@0.6.50`；重复发布被拒「cannot publish over 0.6.50」坐实服务端收录；公开元数据接口对新包有几分钟 CDN 延迟，属正常。本地 `node bin/dsc.js --version` → `Muse Code msc 0.6.50`。
+
+**版本号**：未 bump（仍 0.6.50）。tag v0.6.50 仍指 c87f560（桌面安装器内容与包名无关，不重打）；0.6.51 起走新包名。
