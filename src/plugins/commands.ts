@@ -191,8 +191,68 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'effort', args: '', description: '推理强度，已移除' },
-      ({ ui }) => ui.notice('已移除 /effort，思考强度改在设置页调整'),
+      {
+        name: 'policy',
+        args: '[readonly|auto-edit|full-access|ai-review]',
+        description: '查看或切换权限模式',
+      },
+      ({ args, runtime, ui }) => {
+        const surface = runtime.getSnapshot().surfaces.policy
+        const query = args[0]?.toLowerCase() ?? ''
+        if (query === '') {
+          ui.notice(
+            [
+              `当前权限模式：${surface.current}`,
+              ...surface.options.map((option) => `· ${option.id} — ${option.label}：${option.hint}`),
+              '用法：/policy <档位>（支持前缀匹配，如 /policy full）',
+            ].join('\n'),
+          )
+          return
+        }
+        const matches = surface.options.filter((option) => option.id.startsWith(query))
+        if (matches.length !== 1) {
+          ui.notice(
+            matches.length === 0
+              ? `未知权限档位：${args[0]}（可选：${surface.options.map((option) => option.id).join(' / ')}）`
+              : `「${args[0]}」匹配到 ${matches.length} 个档位，请写全`,
+          )
+          return
+        }
+        runtime.setPolicy(matches[0].id)
+      },
+    )
+    service.register(
+      { name: 'effort', args: '[default|off|low|high|max]', description: '查看或切换思考强度' },
+      ({ args, runtime, ui }) => {
+        const levels = [
+          { id: 'default', label: '默认（不声明思考字段，跟随端点）' },
+          { id: 'off', label: '关闭思考' },
+          { id: 'low', label: '低' },
+          { id: 'high', label: '高' },
+          { id: 'max', label: '最大' },
+        ] as const
+        const query = args[0]?.toLowerCase() ?? ''
+        if (query === '') {
+          ui.notice(
+            [
+              `当前思考强度：${runtime.getSnapshot().status.effort}`,
+              ...levels.map((level) => `· ${level.id} — ${level.label}`),
+              '用法：/effort <档位>（当前模型不支持的档位会报错）',
+            ].join('\n'),
+          )
+          return
+        }
+        const matches = levels.filter((level) => level.id.startsWith(query))
+        if (matches.length !== 1) {
+          ui.notice(
+            matches.length === 0
+              ? `未知思考档位：${args[0]}（可选：${levels.map((level) => level.id).join(' / ')}）`
+              : `「${args[0]}」匹配到 ${matches.length} 个档位，请写全`,
+          )
+          return
+        }
+        void runtime.setEffort(matches[0].id)
+      },
     )
     service.register(
       { name: 'exit', args: '', description: '退出' },

@@ -19,6 +19,8 @@ export const BUILT_IN_COMMANDS: CommandSpec[] = [
   { name: 'resume', args: '', description: '恢复历史会话', duringTask: 'deny' },
   { name: 'compact', args: '', description: '压缩上下文', duringTask: 'deny' },
   { name: 'model', args: '<[端点/]模型名>', description: '切换模型，下一次请求生效' },
+  { name: 'policy', args: '[readonly|auto-edit|full-access|ai-review]', description: '查看或切换权限模式' },
+  { name: 'effort', args: '[default|off|low|high|max]', description: '查看或切换思考强度' },
   { name: 'status', args: '', description: '查看上下文占用与压缩余量' },
   { name: 'export', args: '[文件路径]', description: '导出当前会话为 markdown' },
   { name: 'review', args: '[关注点]', description: '审查工作区未提交改动' },

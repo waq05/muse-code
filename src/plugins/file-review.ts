@@ -363,7 +363,9 @@ export const fileReviewPlugin: Plugin.Object = {
       return lines.join('\n')
     }
     const offCommand = ctx.commands.register(
-      { name: 'review', args: '', description: '看文件更改预览的状态与最近几次预览' },
+      // 不叫 /review：那是内置的「审查工作区未提交改动」命令，同名注册会把它顶掉
+      // （registry 是 Map.set 覆盖语义，file-review 默认启用，曾把 /review 劫走）。
+      { name: 'file-review', args: '', description: '看文件更改预览的状态与最近几次预览' },
       ({ ui }) => ui.notice(describe()),
     )
 

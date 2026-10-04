@@ -86,6 +86,17 @@ export const SEP = {
   gap: '  ',
 } as const
 
+/**
+ * 差异渲染色：unified diff 的新增/删除行（审批卡「将做的改动」、轮尾文件更改卡共用）。
+ * 语义与完成/失败同源（绿/红），单独命名是免得语义漂移——diff 行不是状态。
+ */
+export const DIFF_COLOR = {
+  /** 新增行。 */
+  add: STATUS_COLOR.done,
+  /** 删除行。 */
+  del: STATUS_COLOR.failed,
+} as const
+
 /** 强调色：输入行提示符、光标、活动块的描边，对应渲染层的 `--dsc-accent`。 */
 export const ACCENT = 'cyan'
 

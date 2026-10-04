@@ -19,13 +19,23 @@ export interface ComposerProps {
   disabled: boolean
   /** 可切换模型列表（/model 参数阶段的候选）。 */
   models: readonly ModelChoiceView[]
+  /** 占位提示（输入为空时以暗淡色显示，例如计划卡的「带反馈退回」模式）。 */
+  placeholder?: string
+  /** false = 关掉 `/` 命令补全面板（反馈这类自由文本模式用，Esc 的语义归上层）。 */
+  completionsEnabled?: boolean
   onSubmit: (text: string) => void
 }
 
 /** 可打印输入统一压成单行。 */
 const flatten = (text: string): string => text.replace(/[\r\n]+/g, ' ')
 
-export function Composer({ disabled, models, onSubmit }: ComposerProps): JSX.Element {
+export function Composer({
+  disabled,
+  models,
+  placeholder,
+  completionsEnabled = true,
+  onSubmit,
+}: ComposerProps): JSX.Element {
   const [value, setValue] = useState('')
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
@@ -34,8 +44,8 @@ export function Composer({ disabled, models, onSubmit }: ComposerProps): JSX.Ele
   const [suppressedFor, setSuppressedFor] = useState<string | null>(null)
 
   const completions = useMemo(
-    () => (value === suppressedFor ? [] : completionsFor(value, models)),
-    [value, suppressedFor, models],
+    () => (completionsEnabled && value !== suppressedFor ? completionsFor(value, models) : []),
+    [completionsEnabled, value, suppressedFor, models],
   )
   const panelOpen = completions.length > 0
   const safeIndex = Math.max(0, Math.min(completionIndex, completions.length - 1))
@@ -141,7 +151,11 @@ export function Composer({ disabled, models, onSubmit }: ComposerProps): JSX.Ele
         <Text color={ACCENT}>
           ❯{' '}
         </Text>
-        <Text {...TEXT.body}>{value}</Text>
+        {value === '' && placeholder !== undefined ? (
+          <Text {...TEXT.secondary}>{placeholder}</Text>
+        ) : (
+          <Text {...TEXT.body}>{value}</Text>
+        )}
         <Text {...TEXT.secondary}>▏</Text>
       </Box>
     </Box>
