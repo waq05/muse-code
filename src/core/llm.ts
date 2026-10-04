@@ -179,6 +179,8 @@ export interface ToolOrphanReport {
   droppedCalls: number
   /** 剔空 tool_calls 又没正文、整条删掉的 assistant 消息数。 */
   droppedMessages: number
+  /** 后移到结果闭合之后的插队消息条数（user 等落在 tool_calls 与其结果中间）。 */
+  reordered: number
 }
 
 /**
@@ -197,7 +199,7 @@ export function sanitizeToolOrphansWithReport(messages: ChatMessage[]): { messag
     }
   }
   const replied = new Set<string>()
-  const report: ToolOrphanReport = { droppedResults: 0, droppedCalls: 0, droppedMessages: 0 }
+  const report: ToolOrphanReport = { droppedResults: 0, droppedCalls: 0, droppedMessages: 0, reordered: 0 }
   const cleaned = messages.flatMap((message): ChatMessage[] => {
     if (message.role === 'tool') {
       if (message.tool_call_id === undefined) return [message]
@@ -220,7 +222,39 @@ export function sanitizeToolOrphansWithReport(messages: ChatMessage[]): { messag
     }
     return [{ ...message, tool_calls: undefined }]
   })
-  return { messages: cleaned, report }
+  // 邻接修复：网关不光要求「有来有回」，还要求结果**紧跟** tool_calls。异步输入
+  // （作业完成通知、轮中途插话）在 0.6.46 及更早的日志里可能落在两者中间——重放后
+  // 每轮请求都带着这个夹层，网关 400 且重试无效（会话卡死）。这里把夹在中间的
+  // 消息整块后移到结果闭合之后（组间相对顺序不动），dsh 靠 inbox 从源头不产生
+  // 这种历史，它的 serialize 校验对应的就是这道兜底位。
+  const aligned: ChatMessage[] = []
+  let cursor = 0
+  while (cursor < cleaned.length) {
+    const message = cleaned[cursor]!
+    if (message.role === 'assistant' && (message.tool_calls?.length ?? 0) > 0) {
+      const pending = new Set(message.tool_calls!.map((call) => call.id))
+      aligned.push(message)
+      cursor += 1
+      const deferred: ChatMessage[] = []
+      while (cursor < cleaned.length && pending.size > 0) {
+        const next = cleaned[cursor]!
+        if (next.role === 'tool' && next.tool_call_id !== undefined && pending.delete(next.tool_call_id)) {
+          aligned.push(next)
+        } else {
+          deferred.push(next)
+        }
+        cursor += 1
+      }
+      if (deferred.length > 0) {
+        report.reordered += deferred.length
+        aligned.push(...deferred)
+      }
+      continue
+    }
+    aligned.push(message)
+    cursor += 1
+  }
+  return { messages: aligned, report }
 }
 
 export interface StreamHandlers {

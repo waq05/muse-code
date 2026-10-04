@@ -3,8 +3,13 @@
  *
  * 一个 turn = `while(true){ streamChat → 定稿 assistant → 无 tool_calls 则
  * 结束；有则逐个 审批 → 执行 → append tool 消息 → 下一轮 }`。与 dsh 的
- * 差异（个人版取舍）：无 step/inbox/steer/子代理/checkpoint 修复——单
- * 队列串行 turn，打断用 AbortController 贯穿 fetch 与工具执行。
+ * 差异（个人版取舍）：无 step/子代理/checkpoint 修复——单队列串行 turn，
+ * 打断用 AbortController 贯穿 fetch 与工具执行。
+ *
+ * 0.6.47 起补了 dsh inbox 的最小版：轮中途到达的输入（用户插话、作业完成
+ * 通知、定时补投）先进 `async-inbox` 状态条目排队，步骤边界/回合收尾才落库
+ * （drainInbox）——它们不能落在「还没落结果的 tool 调用」和结果中间，否则
+ * 网关按「tool 结果必须紧跟 tool_calls」判 400，会话从此卡死。
  *
  * 每个协议要求：assistant 带 tool_calls 时，后续必须为每个 call 补一条
  * tool 消息（包括被拒绝的调用——拒绝也 append "用户拒绝" 结果），
@@ -117,17 +122,27 @@ export class MiniAgent {
    * @param images - 随消息发送的图片（data URL 清单）；模型收不收图由请求前的改写决定。
    */
   followup(text: string, images?: string[]): void {
-    // 回合还没跑完就收到的消息算「轮中途插话」（对照 dsh 的 steering）：它会并进这一轮的
-    // 下一次模型请求（messages 是同一份，下一轮 for(;;) 重建请求时自然带上）。界面据此
-    // 锁住整轮折叠、也不把它当成新一轮的起点。要在 enqueueTurn 之前读 running——
-    // 那之后 running 会被置真，再来一条就分不出先后了。
-    const steering = this.running
+    // 回合还没跑完就收到的消息算「轮中途到达」（对照 dsh 的 steering/inject，生产者
+    // 有用户插话、后台作业完成、定时补投、goal 提醒……）。它们一律先进收件箱：
+    // 直接 appendUser 会落在「还没落结果的 tool 调用」和它的结果中间——比如调用正
+    // 等审批时作业完成通知插队——网关要求 tool 结果紧跟 tool_calls，从此每轮请求
+    // 都 400（0.6.46 那次卡死会话的新形状）。到达与入史拆成两段，见 drainInbox。
+    // 要在 enqueueTurn 之前读 running——那之后 running 会被置真，再来一条就分不出先后了。
+    if (this.running) {
+      this.session.enqueueAsync(text, images)
+      this.deps.emit({
+        type: 'user',
+        text,
+        ...(images !== undefined && images.length > 0 ? { images } : {}),
+        steering: true,
+      })
+      return
+    }
     this.session.appendUser(text, images)
     this.deps.emit({
       type: 'user',
       text,
       ...(images !== undefined && images.length > 0 ? { images } : {}),
-      ...(steering ? { steering: true } : {}),
     })
     this.enqueueTurn()
   }
@@ -146,11 +161,33 @@ export class MiniAgent {
       .catch(() => {})
       .finally(() => {
         this.running = false
+        // 关窗补出账：turn/end 事件发在 runTurn 内部，事件监听里紧跟的 followup
+        // （界面解锁后用户立刻发话、探针连发两条）会在 running 仍为 true 时入箱，
+        // 而上一轮的收尾出账已经跑过——这里不补一次，这条输入就永远没人出账。
+        this.drainInbox(false)
         if (this.pendingTurn) {
           this.pendingTurn = false
           this.enqueueTurn()
         }
       })
+  }
+
+  /**
+   * 收件箱出账：把排队中的异步输入落到对话历史。
+   *
+   * 两个调用点（对照 dsh 的 claim 时机）：
+   * - **步骤边界**（`midTurn = true`）：工具结果已闭合，消息以 steering 身份并入本轮，
+   *   下一轮请求自然带上——不多花回合。
+   * - **回合收尾**（`midTurn = false`）：消息悬在最后一条 assistant 之后，挂起
+   *   pendingTurn 让模型接话；正在跑的回合收不了尾时输入也不会丢。
+   *
+   * 界面在入箱时就已经把消息画出来了（user 事件随 enqueue 发），出账不再重发。
+   */
+  private drainInbox(midTurn: boolean): void {
+    const items = this.session.takeAsyncInbox()
+    if (items.length === 0) return
+    for (const item of items) this.session.appendUser(item.text, item.images)
+    if (!midTurn) this.pendingTurn = true
   }
 
   private async runTurn(): Promise<void> {
@@ -185,6 +222,9 @@ export class MiniAgent {
         if (abort.signal.aborted) break
         if (result.toolCalls.length === 0) break
         await this.executeToolCalls(result, abort.signal)
+        // 步骤边界（对照 dsh 的 preStep claim）：上一步的结果已闭合，收件箱此刻出账
+        // 落库，下一轮请求自然带上——作业通知合并进本轮，不多花一个回合。
+        this.drainInbox(true)
       }
       this.deps.emit({ type: 'turn/end', reason: abort.signal.aborted ? 'aborted' : 'completed' })
     } catch (error) {
@@ -196,6 +236,10 @@ export class MiniAgent {
       }
     } finally {
       this.abort = null
+      // 收尾出账：最后一步之后/流式定稿期间入箱的输入还欠着，这里落库（dsh：回合
+      // 不许隔着未交货的收件箱收尾）。落库后它们悬在最后一条 assistant 之后，补一轮
+      // 让模型接话。出错/打断一样算——输入不该因为回合失败而蒸发。
+      if (this.session === session) this.drainInbox(false)
       // 收尾聚合（成功/中断/出错一样算——改了的文件如实展示）。条目按「下一条用户消息
       // 之前归当前轮」的口径落位，晚于 turn/end 也能进这一轮的轮尾卡区间。
       if (this.session === session) {

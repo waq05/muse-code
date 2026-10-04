@@ -21,13 +21,14 @@ const sanitizeNotices = new Map<string, string>()
 /** 历史有协议残留、请求侧兜底清洗过：给用户说一声（同一个会话同一种残留只报一次）。 */
 function noticeSanitize(ctx: Context, report: ToolOrphanReport): void {
   const sid = ctx.session.current().meta.id
-  const shape = `${String(report.droppedResults)}/${String(report.droppedCalls)}/${String(report.droppedMessages)}`
+  const shape = `${String(report.droppedResults)}/${String(report.droppedCalls)}/${String(report.droppedMessages)}/${String(report.reordered)}`
   if (sanitizeNotices.get(sid) === shape) return
   sanitizeNotices.set(sid, shape)
   const parts: string[] = []
   if (report.droppedResults > 0) parts.push(`丢弃重复/孤儿的工具结果 ${String(report.droppedResults)} 条`)
   if (report.droppedCalls > 0) parts.push(`剔掉没有回应的工具调用 ${String(report.droppedCalls)} 个`)
   if (report.droppedMessages > 0) parts.push(`整条删除已无内容的回复 ${String(report.droppedMessages)} 条`)
+  if (report.reordered > 0) parts.push(`把 ${String(report.reordered)} 条插队的消息移回工具结果之后`)
   ctx.emit(
     'dsc/notice',
     `会话日志里有协议残留（多半来自上一次中断），这次请求已自动清洗：${parts.join('、')}。只影响发给模型的这一份，日志文件不动。`,

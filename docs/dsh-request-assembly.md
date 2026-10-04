@@ -95,3 +95,4 @@
 - **抄了的**：环境/时间快照「变化才注入 + user 角色」→ dsc 的 env-facts 投影（每次请求附当前值，变了才写状态留痕）；压缩调用复用主对话前缀 → dsc 的 `compactSession(…, context)`；瞬态注入不改写头部（dsc 的 LSP 诊断/钩子产出改 user 角色）；「模型可见⟺logged」双轨达成（dsh 运行时不变量强校验 / dsc 命名投影链 + appendNote + 状态条目留痕）。
 - **没抄的**：`systemPromptUpdate:'in-history'`（要 mid-history system 消息，dsc 的 fold-system 为兼容网关只认头部 system；dsc 用「易变段搬出提示词」达到同类缓存效果）；`toolUpdate` addition-only 与 request header 系列（多 provider 长驻场景，dsc 单路由 + DeepSeek 自动缓存，收益≈0）；scoped/global 两层提示词。
 - **dsh 领先、dsc 仍缺的**：请求装配的**运行时强校验**（dsc 只有设计约定与探针）；工具变更的增量通告；会话层「孤儿写入即拒」（dsc 是重放/请求侧兜底，见 development-log 阶段 67）。
+- **0.6.47 补上的**：dsh inbox 的最小版——轮中途到达的输入（插话/作业通知/定时补投）先入 `async-inbox` 状态条目排队，步骤边界/回合收尾才落库（对应 dsh 的 next-step claim + 「回合不许隔着收件箱收尾」）；请求侧 sanitize 加邻接重排兜底存量脏日志（对位 dsh serialize 校验的位置）。起因：作业完成通知在「调用等审批」期间落库，插进 tool_calls 与结果中间，网关 400 卡死会话（development-log 阶段 68）。

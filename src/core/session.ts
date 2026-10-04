@@ -138,6 +138,14 @@ export interface SessionStateMap {
    * 2026-10-03 起环境事实不再进系统提示词，这份条目就是「模型当时看到的环境」的留痕。
    */
   'env-facts': { hash: string; text: string }
+  /**
+   * 异步输入收件箱（loop 写）：回合跑动中到达、还没落到对话历史的 user 消息
+   * （轮中途插话、后台作业完成通知、定时补投……）。它们不能直接 appendUser——
+   * 若此刻还有没落结果的 tool 调用，就会插在 tool_calls 和结果中间，网关按
+   * 「结果必须紧跟 tool_calls」判 400（0.6.47 修的夹层）。对照 dsh 的
+   * next-step inbox：到达与入史拆成两段，步骤边界才出账。
+   */
+  'async-inbox': { items: Array<{ text: string; images?: string[] }> }
 }
 
 /**
@@ -478,7 +486,12 @@ export class Session {
     for (const [callId, error] of toolErrors) session.toolErrors.set(callId, error)
     for (const [callId, change] of fileChanges) session.fileChanges.set(callId, change)
     // T32：修复只在「我们是写租约持有人」时做——修复要落盘，只读重放（队友记录 peek）不动它。
-    if (lease !== null) session.repairInterruptedTurns()
+    if (lease !== null) {
+      session.repairInterruptedTurns()
+      // 收件箱遗债：入箱后没等到边界就重启/切换的异步输入。修复完历史必然闭合，
+      // 直接落库（dsh 的收件箱是持久投影，重启后同样要交货）。
+      for (const item of session.takeAsyncInbox()) session.appendUser(item.text, item.images)
+    }
     return session
   }
 
@@ -677,6 +690,28 @@ export class Session {
   appendState<K extends keyof SessionStateMap>(id: K, payload: SessionStateMap[K]): void {
     this.stateById.set(id as string, payload)
     this.write({ type: 'state', id: String(id), payload })
+  }
+
+  /**
+   * 异步输入入箱：回合跑动中到达的 user 消息先在这里排队（state 条目持久化，
+   * 重启不丢），等 loop 在步骤边界/回合收尾时出账落库。见 {@link SessionStateMap} 的
+   * `async-inbox` 注释。
+   */
+  enqueueAsync(text: string, images?: string[]): void {
+    const current = this.state('async-inbox')?.items ?? []
+    this.appendState('async-inbox', {
+      items: [...current, images !== undefined && images.length > 0 ? { text, images } : { text }],
+    })
+  }
+
+  /**
+   * 收件箱出账：取走全部排队中的异步输入并清空条目。空箱是常见路径，不动日志。
+   * 取走后由调用方负责 appendUser 落库（顺序上保证 tool 结果已闭合）。
+   */
+  takeAsyncInbox(): Array<{ text: string; images?: string[] }> {
+    const items = this.state('async-inbox')?.items ?? []
+    if (items.length > 0) this.appendState('async-inbox', { items: [] })
+    return items
   }
 
   /** 已记录的请求注入备忘（note 记录），按写入顺序；恢复会话时从日志重放回来。 */

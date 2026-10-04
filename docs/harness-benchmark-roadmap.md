@@ -355,7 +355,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 | 项 | 对标 | 不做的理由 |
 | --- | --- | --- |
 | checkpoint / rewind / backtrack | codex Esc-Esc 回退重编辑；hermes shadow git | 与 T26 同族，动内核，等真实痛点；**已升出立项 T52（§7.8）** |
-| 轮中途插话 steering / 消息排队 | dsh steering inbox；codex turn steer + `codex queue` | 无 steering 数据模型，已裁定不做（§3.2 有意不做清单） |
+| 轮中途插话 steering / 消息排队 | dsh steering inbox；codex turn steer + `codex queue` | 完整的多端排队不做；**0.6.47 已落最小版**：轮中途输入一律进 `async-inbox` 收件箱、步骤边界落库——这是 400 夹层事故的正确性修复，不是 steering 功能面 |
 | 对外 SDK / 协议面 | dsh SDK（TS+Python）；codex app-server v2 | 个人版没有第三方集成方；host-stdio 协议 v2 内部够用；**已升出立项 T53（§7.8）** |
 | SSH 远程执行 | dsh `packages/ssh/*` | 手机遥控已覆盖「人不在电脑前」的主场景；**已升出立项 T54（§7.8）** |
 | 消息评分反馈 | dsh Like/Dislike + `/feedback` | 无消费方（dsh 的评分喂官方日志上传，dsc 没有这条链路） |

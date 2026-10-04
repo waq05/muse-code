@@ -1473,3 +1473,15 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **验证**：typecheck（根 + 桌面端）绿；`pnpm build` 绿。探针：prompt-projection 20/20（含 env-facts 快照与状态留痕）、lsp 167/167、lifecycle-hooks 81/81、llm-adapter 18/18、compact-check 56/56（含前缀三断言）、batch-b 12/12、preset-check / modes-security 全过（「环境事实垫在最后」两处断言随事实跟改）、session-dedupe 15/15、transcript-usage 全过、kernel-boot 绿。端到端冒烟（临时 HOME 真内核 + 假 SSE 端点）：损坏会话（重复 + 孤儿结果）过真请求 → 通知恰一条、同形状第二轮不重报；usage 记录带 `ch`/`cm`；`env-facts` 状态落盘且 system-prompt 不再含环境事实。bump 0.6.46。
 
 **附：参考实现拆解入档（同一批）**：本轮对照调研的 dsh / codex 源码级结论各写成常驻文档，以后对齐不必重新探索——`docs/dsh-request-assembly.md`（HEAD `4878cdabd8` 快照）与 `docs/codex-request-assembly.md`（HEAD `1cc7e23612` 快照），按功能分节、引用到「文件:行号」，每篇结尾带「与 Muse Code 的对照（抄了什么/没抄什么/仍缺什么）」。README 文档表与三份对标文档（peer-feature-inventory / harness-benchmark-roadmap / dsh-plugin-porting）的相互索引已接上。
+
+## 阶段 68：400 夹层死局第二种形状——dsh inbox 最小版 + 邻接重排（0.6.47）
+
+**报障**：0.6.46 的会话（「帮我更新dsh源码」）还是每轮 400 `An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`。日志解剖：assistant 发起 bash 调用后在等审批，此刻后台作业 job-2 完成通知以 **user 消息**落库，拒绝后 tool 结果才跟上——发出的顺序成了 `assistant(tool_calls) → user → tool`。阶段 67 的三层防护管的全是「有来有回」（重复结果/孤儿结果/无应答调用），没管**紧邻性**：调用和结果都在，只是中间隔了条 user，网关照样 400，且每轮请求都带同一份历史（死局）。真正「读写全走 shell」的其实是 codex（没有 read 工具，只有 exec_command + apply_patch）；dsc/dsh 是 Claude-Code 派——实测近 3 天 61 次调用里 bash 44%，其中约 2/3 是 git/网络诊断这类三家都只能 shell 的活。
+
+**修法（对齐 dsh 的 inbox，到达与入史拆成两段）**：
+1. **收件箱**（`core/session.ts`）：`enqueueAsync`/`takeAsyncInbox`——轮中途到达的输入写 `async-inbox` 状态条目排队（持久化，重启不丢），不入对话历史；`Session.load` 修复完中断后把遗债直接落库（dsh 收件箱的持久交货）。
+2. **followup 改道**（`core/loop.ts`）：`running` 时 followup（用户插话、作业完成通知、定时补投、goal 提醒——所有生产者都走这一个口）一律入箱；步骤边界（`executeToolCalls` 之后，对应 dsh preStep claim 的位置）和回合收尾各有一个出账点（`drainInbox`），收尾出账落库的消息挂 pendingTurn 补一轮——回合不许隔着未交货的收件箱收尾（dsh 原话 *the turn cannot close over*）。
+3. **邻接重排兜底存量**（`core/llm.ts` `sanitizeToolOrphansWithReport`）：清洗后加一遍邻接整形——assistant(tool_calls) 与它的结果之间夹着的非 tool 消息整块后移到结果闭合之后（组间相对顺序不动），报告加 `reordered` 计数，notice 文案带上。dsh 靠 inbox 从源头不产生脏历史、serialize 只做校验；dsc 已经有一批脏日志（包括事故会话），请求侧重排能把它们全部治好——事故日志实测 `reordered=1`，接缝消失，无需手改。
+4. **关窗**（`core/loop.ts` enqueueTurn 外层 finally）：`turn/end` 事件发在 runTurn 内部、`running` 要等 finally 收尾才落假——事件监听里紧跟的 followup（界面解锁用户秒回）会入箱而上一轮的收尾出账已经跑过，输入从此无人出账（prompt-projection 探针第二连发轮当场抓住）。外层 finally 补一次 `drainInbox(false)` 关掉这个窗。
+
+**验证**：typecheck（根 + 桌面端）绿；`pnpm build` 绿。新回归 `scripts/async-inbox-test.mjs`（16 断言：工具执行期通知落在结果之后、出账后箱清空、user 事件只发一次且带 steering、收尾期插话补轮不丢、遗债加载自动落库、turn/end 后立刻 followup 补轮、存量夹层重排后接缝消失且条数不变）。既有电池：session-dedupe 15/15、prompt-projection 20/20（第二连发轮曾把竞态钉出来）、batch-b 12/12、compact-check 56/56、transcript-usage 全过。真实事故日志副本经 `shots/sandwich-probe.mjs` 断言转绿。bump 0.6.47。
