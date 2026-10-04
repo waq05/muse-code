@@ -1604,3 +1604,19 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **验证**：`npm publish` 回执 `+ @waq666/muse-code@0.6.50`；重复发布被拒「cannot publish over 0.6.50」坐实服务端收录；公开元数据接口对新包有几分钟 CDN 延迟，属正常。本地 `node bin/dsc.js --version` → `Muse Code msc 0.6.50`。
 
 **版本号**：未 bump（仍 0.6.50）。tag v0.6.50 仍指 c87f560（桌面安装器内容与包名无关，不重打）；0.6.51 起走新包名。
+
+## 阶段 77：TUI 功能适配四批次——从 700 行 MVP 到功能闭环（0.6.51–0.6.54）
+
+**动因**：四路侦察（dsc TUI 现状 / dsc core 基线 / codex TUI / dsh-TUI）确认 TUI（`src/app/`，msc 命令）只是刻意薄的 MVP——宿主侧能力几乎全在（DscRuntime 契约本就双端共用），缺口集中在「数据已下发但 TUI 不渲染、不接按键」。方案落档 `docs/tui-adaptation-plan.md`（31aa62c），用户拍板四批全做。
+
+**批次一（0.6.51）核心流程闭环**：计划评审卡（y 批准 / n 拒绝 / e 带反馈退回，全文 v 展开）与提问卡（整批逐题作答：↑↓+空格选定、多选勾选、自由文本、Esc 跳过；刻意不用数字键——数字要留给自由文本）补上「模型交计划/提问就挂死只能 Ctrl+C」的硬伤；审批卡从 y/n 两档补齐宿主四档（y 一次 / a 会话 / p 永久 / n 拒），按键按 `scopes` 渲染、硬地板只留拒绝，卡片补 reason/risk/当前模式/后台会话来源/内嵌 diff（`DiffBlock` 渲染 hunks，v 展开）；内置 `/policy` `/effort` 回归（查看+前缀匹配切换）；修 `/review` 撞名——file-review 插件默认启用、Map.set 覆盖语义曾把内置审查命令劫走，改名 `/file-review`。
+
+**批次二（0.6.52）信息呈现**：ChatView 补渲染六类静默丢弃的条目（turn-end 已停止/过程失败、turn-max-tokens、model-retry、changes 逐刀、turnDiff 轮尾聚合、plan 卡带批准状态），失败轮不再和成功轮同貌；user 条目带 ↩ 插话徽标与图片计数，压缩落点画「⎯ 已压缩历史 · 第 N 次 ⎯」分隔线；新 `TaskStrips`（goal/todo 纯展示条，操作走 /goal /todo 命令）；状态栏两行制——回合状态+协作模式+权限模式 / cwd 尾部+模型+effort+tok+**前缀缓存命中率**+会话 id，后台会话有第三行状态点；`TokenUsageView` 增可选 cacheHit/cacheMiss（usage 事件明细累计，未上报的请求不掺入免得稀释命中率），`StatusView` 增 cwd；内置 `/usage`（聚合 usage.jsonl：总量/命中率/峰值日/按模型 Top5）。
+
+**批次三（0.6.53）会话与输入**：Ctrl+O 全量 transcript 回看浮层（↑↓/j·k/PgUp·PgDn 滚动，q/Esc 关闭），摆脱尾部 30 条直播窗；SessionPicker 升级——全量列表（置顶优先+最近更新排序）、输入即筛选、标题/置顶标/后台状态点、Tab 切归档页、Ctrl+R 改名 / P 置顶 / A 归档 / U 恢复 / X 删除（二次确认进回收站）/ F 按末条用户消息分叉，动作键全走 Ctrl 组合把普通字符留给筛选；Composer 重写为光标模型（←→/Home/End、Ctrl+A/E/U/K/W、Shift+Enter/Ctrl+J 多行、粘贴整段不压平），历史持久化 `~/.dsc/.tui-history`（200 条去重）；@ 文件提及补全——`mention-complete` 自桌面上移 `src/core/mention.ts` 做单一真源（桌面经 `@dsc/runtime/core/mention.js` alias 零改动兼容），文件清单经 dock fs-list 递归拉取缓存；提交前扫描本地图片路径自动附加（`extractImages` → submit(text, images)，模型不支持由宿主 drop-images 投影兜底）；空闲 Esc 打断回合（补全面板开着时只关面板）。
+
+**批次四（0.6.54）进阶**：`/diff`（走 dock git-diff，含 codex 同款 --no-textconv/--no-ext-diff 安全姿势）、`/copy`（clip/pbcopy/wl-copy 按平台）、`/model` 无参数打开模型选择浮层（CommandContext 增 `openModels`，宿主桥经 `dsc/open-models` 转发，桌面端可映射或忽略）、回合跑动→空闲响一声 BEL。
+
+**UI 纪律**：全部新元素从 theme.ts 取值（新增 `DIFF_COLOR`，add/del 与完成/失败同源但单独命名防语义漂移）；卡片语言统一——浮动块（审批/计划/提问/选择器/浮层）双线框、内联块（任务条/文件更改）无框贴排；默认折叠、展开是显式动作；键位提示就地在卡片尾行。
+
+**验证**：每批 typecheck+build+桌面 typecheck（mention 上移后 alias 链验证）+11 个本地检查脚本全绿；`node bin/dsc.js --version` → 0.6.54。远期清单（双 Esc rewind、/trace、侧栏分栏、kitty/sixel 图片、vim、外部会话迁移）留在方案文档不承诺。
