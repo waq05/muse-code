@@ -147,9 +147,16 @@ export const agentPlugin: Plugin.Object = {
       if (prev !== null && prev !== next) {
         if (prev.busy) {
           // 被切走且还有活的（回合在跑/排了下一轮）：留在后台继续——这正是 0.6.48
-          // 的语义（旧模型在这里 abort）。重发一次 working：它被查看期间转录层清了
+          // 的语义（旧模型在这里 abort）。重发一次状态：它被查看期间转录层清了
           // 状态点，回后台后侧栏的点要重新亮起来，收工才能翻成「已完成未读」。
-          ctx.emit('dsc/agent-status', { sessionId: prev.sessionId, path: prev.session.filePath, state: 'working' })
+          // 挂着审批卡的发 awaiting-approval（0.6.50）：以前一律发 working，会把
+          // 「等你批准」盖成「还在跑」，侧栏两个状态点就此错位。
+          const waitingApproval = ctx.get('approval')?.pendingFor(prev.session.filePath) === true
+          ctx.emit('dsc/agent-status', {
+            sessionId: prev.sessionId,
+            path: prev.session.filePath,
+            state: waitingApproval ? 'awaiting-approval' : 'working',
+          })
         } else {
           disposeAgent(prev)
         }

@@ -7,6 +7,7 @@
  * @module desktop/renderer/Composer
  */
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   ApprovalPolicy,
   EffortLevel,
@@ -76,6 +77,8 @@ export function Composer(props: {
   working: boolean
   /** 当前工作目录（T14：切会话/换目录时 @ 文件清单缓存跟着失效）。 */
   cwd: string
+  /** 草稿存取键（= 会话 id，0.6.50）：正文、贴图与输入历史每会话各一份，切会话各回各的。 */
+  draftKey: string
   /** @ 提及候选的数据源（App 注入：dock fs-list 的工作区遍历，带缓存）。 */
   listFiles(): Promise<string[]>
   onSubmit(text: string, images?: string[]): void
@@ -104,6 +107,33 @@ export function Composer(props: {
   const [mentionActive, setMentionActive] = useState(0)
   /** Escape 关掉面板后记住的 token：同一个 token 不再弹，换一个字重新弹。 */
   const [mentionDismissed, setMentionDismissed] = useState<string | null>(null)
+
+  // ---- 贴图双击预览（0.6.50）：dataURL 没有路径，复用不了文件预览页签，自立一个最轻的浮层 ----
+  const [preview, setPreview] = useState<string | null>(null)
+  useEffect(() => {
+    if (preview === null) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setPreview(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [preview])
+
+  // ---- 每会话独立草稿（0.6.50）----
+  /** 草稿的三样东西：正文、贴图、输入历史。会话切换时整份换入换出。 */
+  const draftsRef = useRef(new Map<string, { value: string; attachments: string[]; history: string[] }>())
+  const draftKeyRef = useRef(props.draftKey)
+  useEffect(() => {
+    if (draftKeyRef.current === props.draftKey) return
+    draftsRef.current.set(draftKeyRef.current, { value, attachments, history })
+    draftKeyRef.current = props.draftKey
+    const next = draftsRef.current.get(props.draftKey) ?? { value: '', attachments: [], history: [] }
+    setValue(next.value)
+    setAttachments(next.attachments)
+    setHistory(next.history)
+    // 历史游标跟着历史走：换了一份历史，上下键从头开始
+    setHistoryIndex(null)
+  }, [props.draftKey, value, attachments, history])
 
   const completions = completionsFor(value, props.models)
   const mentionQuery = mentionQueryAt(value, caret)
@@ -364,7 +394,12 @@ export function Composer(props: {
         <div className="attach-strip">
           {attachments.map((url, index) => (
             <span className="attach-item" key={`${url.slice(0, 48)}-${String(index)}`}>
-              <img src={url} alt={`第 ${String(index + 1)} 张贴图`} />
+              <img
+                src={url}
+                alt={`第 ${String(index + 1)} 张贴图`}
+                data-tip="双击看大图"
+                onDoubleClick={() => setPreview(url)}
+              />
               <button
                 className="attach-remove"
                 data-tip="不要这张图"
@@ -377,6 +412,13 @@ export function Composer(props: {
           <span className="attach-hint">{attachments.length} 张贴图，发送时一起发出去</span>
         </div>
       )}
+      {preview !== null &&
+        createPortal(
+          <div className="img-lightbox" onClick={() => setPreview(null)} role="presentation">
+            <img src={preview} alt="贴图预览" />
+          </div>,
+          document.body,
+        )}
       <textarea
         ref={textarea}
         rows={1}

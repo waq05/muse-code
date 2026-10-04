@@ -11,8 +11,8 @@
  *   3. 累计用量与上下文占用：壳进程读宿主的 `~/.dsc/usage/usage.jsonl`（只读）
  *      后按会话 id 汇总，经 `dsc.sessionUsage(sessionId)` 拿到。
  *
- * 缓存命中率宿主根本没记（core/llm.ts 只留 prompt_tokens / completion_tokens，
- * 把服务端回的缓存命中字段丢了），所以第二段不显示缓存命中——宁缺不假。
+ * 第二段卡的缓存三行来自用量日志的 ch/cm 两栏（core/llm.ts 0.6.46 起解析服务端回的
+ * 缓存命中字段并落库）：只有真上报过的请求进分母，老行不进——宁缺不假。
  *
  * @module desktop/renderer/StatusBar
  */
@@ -20,7 +20,7 @@ import { useEffect, useRef, useState, type JSX } from 'react'
 import type { StatusView, TokenUsageView, TranscriptEntry } from '@dsc/runtime/contract.js'
 import { dsc, type SessionUsageView } from './bridge.js'
 import { IconActivity, IconDatabase } from './icons.js'
-import { estimateTextTokens, formatTokens } from './token-estimate.js'
+import { estimateTextTokens, formatCacheHitPercent, formatExactTokens, formatTokens } from './token-estimate.js'
 
 const TURN_TEXT: Record<StatusView['turnState'], string> = {
   idle: '空闲',
@@ -161,37 +161,50 @@ function TurnCard(props: {
 }
 
 /**
- * 第二段的详情卡：请求数、输入/输出 token、最近一次请求时间。
+ * 第二段的详情卡：请求数、前缀缓存命中与两支输入、输出、最近一次请求时间
+ * （对照 dsh 的「Token 用量」卡，另留 dsc 自己的请求数与最近请求两行）。
  *
  * 全部字段来自 `dsc.sessionUsage`（宿主用量日志的真值）；日志里还没有这条会话时
  * 只有快照口径的输入/输出两项，请求数与最近请求整行省略，脚注说明换的是哪套口径。
+ * 缓存那三行只在日志真上报过缓存明细时出现（0.6.46 起），否则退回单行「输入 token」。
  */
 function TokenCard(props: {
   total: number
   logged: SessionUsageView | null
   snapshot: TokenUsageView | null
 }): JSX.Element {
-  const input = props.logged?.inputTokens ?? props.snapshot?.inputTokens ?? null
-  const output = props.logged?.outputTokens ?? props.snapshot?.outputTokens ?? null
-  const requests = props.logged?.requests ?? null
-  const lastAt = props.logged !== null && props.logged.lastAt > 0 ? props.logged.lastAt : null
+  const logged = props.logged
+  const input = logged?.inputTokens ?? props.snapshot?.inputTokens ?? null
+  const output = logged?.outputTokens ?? props.snapshot?.outputTokens ?? null
+  const requests = logged?.requests ?? null
+  const lastAt = logged !== null && logged.lastAt > 0 ? logged.lastAt : null
+  // 命中率的分母只算上报过缓存明细的请求（老日志没有 ch/cm）
+  const cachePrompt = logged === null ? 0 : logged.cacheHitTokens + logged.cacheMissTokens
+  const cacheHit = logged !== null && cachePrompt > 0
+    ? formatCacheHitPercent(logged.cacheHitTokens, cachePrompt)
+    : null
   return (
     <div className="ctx-card" role="note">
       <div className="ctx-head">
         <span className="ctx-title">会话用量</span>
-        <span className="ctx-numbers">{formatTokens(props.total)} tok</span>
+        <span className="ctx-numbers">{formatExactTokens(props.total)} tok</span>
       </div>
       <div className="ctx-rule" />
       <div className="ctx-rows">
         {requests !== null && <CardRow label="模型请求" value={`${String(requests)} 次`} />}
-        {input !== null && <CardRow label="输入 token" value={formatTokens(input)} />}
-        {output !== null && <CardRow label="输出 token" value={formatTokens(output)} />}
+        {cacheHit !== null && <CardRow label="缓存命中" value={`${cacheHit}%`} />}
+        {cacheHit !== null && logged !== null
+          && <CardRow label="未缓存输入" value={formatExactTokens(logged.cacheMissTokens)} />}
+        {cacheHit !== null && logged !== null
+          && <CardRow label="缓存读取" value={formatExactTokens(logged.cacheHitTokens)} />}
+        {cacheHit === null && input !== null && <CardRow label="输入 token" value={formatExactTokens(input)} />}
+        {output !== null && <CardRow label="输出" value={formatExactTokens(output)} />}
         {lastAt !== null && <CardRow label="最近请求" value={`${clockText(lastAt)}（${agoText(lastAt)}）`} />}
       </div>
       <div className="ctx-note">
-        {props.logged === null
-          ? '宿主用量日志里还没有这条会话，这里只有本进程内的累计（宿主快照口径），不含切到本进程之前的历史请求，因此不列请求数与最近请求时间。'
-          : '数字来自宿主用量日志：每次模型请求记一条，输入含该次重发的完整上下文，所以远大于输出。'}
+        {logged === null
+          ? '宿主用量日志里还没有这条会话，这里只有本进程内的累计（宿主快照口径），不含切到本进程之前的历史请求，因此不列请求数、缓存明细与最近请求时间。'
+          : '数字来自宿主用量日志：每次模型请求记一条，输入含该次重发的完整上下文，所以远大于输出。缓存三行只统计上报过缓存明细的请求（0.6.46 起），未缓存输入 + 缓存读取 就是这些请求的输入总量。'}
       </div>
     </div>
   )

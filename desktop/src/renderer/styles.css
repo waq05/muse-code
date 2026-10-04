@@ -1872,7 +1872,9 @@
 .approval-diff {
   border: 1px solid var(--dsc-stroke-2);
   border-radius: var(--dsc-r-block);
-  background: var(--dsc-neutral-bg);
+  /* 实底衬块：压住审批卡那层半透明风险底色。--dsc-neutral-bg 从未定义过，
+     这里的 background 曾整条无效（0.6.50 修）。 */
+  background: var(--dsc-bg-raised);
   overflow: hidden;
 }
 
@@ -3338,7 +3340,7 @@ body.resizing iframe {
   max-width: 100%;
   border: 1px solid var(--dsc-stroke-4);
   border-radius: var(--dsc-r-block);
-  background: var(--dsc-bg-body);
+  background: var(--dsc-bg-raised);
 }
 
 /* 图片预览：格底衬托透明区，图片等比缩到预览框内，不撑破面板 */
@@ -3360,7 +3362,7 @@ body.resizing iframe {
   object-fit: contain;
   border: 1px solid var(--dsc-stroke-4);
   border-radius: var(--dsc-r-block);
-  background: var(--dsc-bg-body);
+  background: var(--dsc-bg-raised);
 }
 
 .file-preview-empty {
@@ -5160,6 +5162,29 @@ body.resizing iframe {
   object-fit: cover;
   border: 1px solid var(--dsc-stroke-2);
   border-radius: var(--dsc-r-control);
+  cursor: zoom-in;
+}
+
+/* 贴图双击预览（0.6.50）：全屏遮罩 + 大图，点哪都能关、Esc 也关。
+   贴图是 dataURL 没有路径，复用不了文件预览页签；遮罩走全局 scrim 令牌。 */
+.img-lightbox {
+  align-items: center;
+  background: var(--dsc-scrim);
+  backdrop-filter: blur(var(--dsc-scrim-blur));
+  cursor: zoom-out;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: fixed;
+  z-index: var(--dsc-z-picker);
+}
+
+.img-lightbox img {
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-card);
+  box-shadow: var(--dsc-shadow-float);
+  max-height: 90vh;
+  max-width: 90vw;
 }
 
 .attach-remove {
@@ -9561,9 +9586,13 @@ body.resizing iframe {
 
 /* ── 轮尾卡文件行的悬停预览卡：停 500ms 出现在行旁边（body 直挂的浮层） ── */
 .hover-preview {
-  background: var(--dsc-neutral-bg);
+  background: var(--dsc-bg-popover);
+  /* 弹层底色带 4% 透明，配一层模糊才不会透出下面的字（与 .row-menu 同款浮层惯例）。
+     以前这里写着从未定义的 --dsc-neutral-bg，整条 background 无效变全透明，
+     diff 文字直接叠在会话正文上（0.6.50 修）。 */
+  backdrop-filter: blur(12px);
   border: 1px solid var(--dsc-stroke-2);
-  border-radius: var(--dsc-r-panel);
+  border-radius: var(--dsc-r-overlay);
   box-shadow: var(--dsc-shadow-float);
   color: var(--dsc-text-primary);
   display: flex;
@@ -9620,9 +9649,9 @@ body.resizing iframe {
 
 /* 计划评审卡的拒绝反馈框（T40）：与 plan-body 同宽，走令牌不硬编码色值 */
 .plan-feedback {
-  background: var(--dsc-bg-inset);
-  border: 1px solid var(--dsc-border);
-  border-radius: var(--dsc-radius);
+  background: var(--dsc-bg-raised);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-block);
   color: var(--dsc-text-primary);
   font-family: var(--dsc-font-ui);
   font-size: var(--dsc-fs-ui);

@@ -624,8 +624,13 @@ export function groupSteps(
       }
       // system：既不进组也不封组（见模块注释）
     }
-    // 尾组：这一轮收尾了才算结束。没收尾时它一直是「正在…」，因为新工具还会并进来
-    flush(!isRunning(round.index))
+    // 尾组：这一轮收尾了才成组。还在跑的那一轮尾段直接摊开（0.6.50）：以前它成一个
+    // 「未收口」的组，组头挂「正在分析请求」+ 最新思考摘录——与流末尾的状态行
+    // （TurnStatusLine）说的是同一件事，重复；而且组头挂在轮中间，后续的正文继续
+    // 往下滚、它留在原地，看着像实时行跑进了正文。dsh 的轮内实时组头没这个问题，
+    // 因为它没有底部状态行。收尾之后这里照旧成组：聚合文案与整轮折叠都不受影响。
+    if (isRunning(round.index)) pending = []
+    else flush(true)
   }
   const headAt = new Map<number, StepGroup>()
   const at = new Map<number, StepGroup>()

@@ -21,6 +21,14 @@ export interface SessionUsageView {
   inputTokens: number
   outputTokens: number
   /**
+   * 前缀缓存读取（日志的 ch）与未缓存输入（日志的 cm）。
+   *
+   * 只有 0.6.46 起、且服务端真回了缓存明细的请求进这两个数：老行没有这两栏，
+   * 把它们塞进分母会把命中率算低——宁缺不假（与设置页「前缀缓存命中」同口径）。
+   */
+  cacheHitTokens: number
+  cacheMissTokens: number
+  /**
    * 最后一次请求的输入 token：每次请求都会重发完整上下文，
    * 所以这就是此刻的上下文占用（服务端真值，不是估算）。
    */
@@ -51,10 +59,18 @@ export function readSessionUsage(sessionId: string): SessionUsageView | null {
     // 刚写盘/被别的进程占着：这一拍给不出统计，下一次再读
     return null
   }
-  const view: SessionUsageView = { requests: 0, inputTokens: 0, outputTokens: 0, lastInputTokens: 0, lastAt: 0 }
+  const view: SessionUsageView = {
+    requests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheHitTokens: 0,
+    cacheMissTokens: 0,
+    lastInputTokens: 0,
+    lastAt: 0,
+  }
   for (const line of text.split(/\r?\n/)) {
     if (line === '') continue
-    let row: { t?: unknown; i?: unknown; o?: unknown; sid?: unknown }
+    let row: { t?: unknown; i?: unknown; o?: unknown; ch?: unknown; cm?: unknown; sid?: unknown }
     try {
       row = JSON.parse(line) as typeof row
     } catch {
@@ -66,6 +82,12 @@ export function readSessionUsage(sessionId: string): SessionUsageView | null {
     view.requests += 1
     view.inputTokens += row.i
     view.outputTokens += row.o
+    // 缓存两栏成对上报才算数（写入端一次写两个键）：缺一个的行不进分母，不然命中率
+    // 会被算低。负数不是合法 token 数，按没上报处理。
+    if (typeof row.ch === 'number' && row.ch >= 0 && typeof row.cm === 'number' && row.cm >= 0) {
+      view.cacheHitTokens += row.ch
+      view.cacheMissTokens += row.cm
+    }
     // 「最后一次」按时间戳取，不靠文件顺序：追加写不保证同一毫秒里的先后
     if (at >= view.lastAt) {
       view.lastAt = at

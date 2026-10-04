@@ -12,3 +12,5 @@ shots/
 
 # pnpm pack 产物（打包验证用，不入库）
 *.tgz
+scripts/.remote-e2e-home/
+desktop/dist-run.log

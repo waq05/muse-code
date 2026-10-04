@@ -188,6 +188,15 @@ export const approvalPlugin: Plugin.Object = {
     /** 这次判定的会话 jsonl 路径（侧栏状态点的键口径）。 */
     const pathOf = (request: ApprovalRequest): string => request.sessionPath ?? ctx.session.current().filePath
 
+    /** 当前查看会话的最老一张挂起卡；没有就 undefined（pendingView/answer 同用它定口径）。 */
+    const currentForHere = (): PendingCard | undefined => {
+      const here = ctx.session.current().filePath
+      for (const card of pendings.values()) {
+        if (card.sessionPath === here) return card
+      }
+      return undefined
+    }
+
     /** 这次调用属于哪个「同类」：同一会话里再出现就不再问的粒度。 */
     function grantKeyOf(toolName: string, suggested: string[] | null, insideCwd: boolean): string {
       if (suggested !== null) return `${toolName}:${suggested.join(' ')}`
@@ -525,15 +534,26 @@ export const approvalPlugin: Plugin.Object = {
       },
 
       pendingView() {
+        // 只返回当前查看会话的卡（0.6.50 对齐 dsh 的「卡只在归属会话的视图里」）：
+        // 后台会话的卡留在它自己的会话里，侧栏的橙点引导你切过去答。
         // 多卡并存时取最老的一张（插入序）：答完一张，下一张自动顶上来。
-        const oldest = pendings.values().next()
-        return oldest.done === true ? null : oldest.value.view
+        const current = currentForHere()
+        return current === undefined ? null : current.view
+      },
+
+      /** 这个会话现在有没有挂着审批卡（agent 切走时重发状态点用）。 */
+      pendingFor(filePath: string) {
+        for (const card of pendings.values()) {
+          if (card.sessionPath === filePath) return true
+        }
+        return false
       },
 
       answer(answer: ApprovalAnswer, source: 'app' | 'web' = 'app') {
-        const oldest = pendings.values().next()
-        if (oldest.done === true) return
-        const current = oldest.value
+        // 与 pendingView 同口径：答的就是界面上显示的那张——当前查看会话的最老一张。
+        // 以前取全局最老，答卡可能答到别的会话头上去。
+        const current = currentForHere()
+        if (current === undefined) return
         // 来源挂在挂起对象上，`done` 里落审计时取用；手机浏览器点的那一下因此查得到（source='web'）。
         current.source = source
         const finish = current.done

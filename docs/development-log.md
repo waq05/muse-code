@@ -1517,3 +1517,56 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **验证**：typecheck（根 + 桌面端）绿；`pnpm build` 绿。新回归 `shots/plan-ask-multi-card.mjs`（25 断言：后台提卡归属、切会话不杀卡、多卡互不顶掉、应答只动当前会话的卡、状态点翻转、退出收尾）；`scripts/resident-agents-test.mjs` 扩到 32 断言（后台收工拿自动标题、按路径 interrupt 停后台回合、归档后台在跑的会话先收摊再挪文件、重试收敛）；`shots/batch-a-check.mjs` 补标题归属断言。既有电池全绿：approval-floor 95、lifecycle-hooks 81、compact 56、modes-security/runtime、order、reject-replay 14、prompt-projection 20、async-inbox、session-dedupe、batch-b/c 12+13、hooks、memory、self-improve 181、team、preset、session-search、file-review 59+9、storage、mcp、sound-notify、dock-model、integration ×2、llm-adapter 18、llm-retry 10、kernel-boot、model-caps、remote-server 12、role-order、dsh-compat 15、composer、settings-sections、sandbox 193、lsp 167、spill 53、schedule 207、browser 210。
 
 **顺手修掉的四处探针欠账（历史漂移，与本轮功能无关）**：`scripts/remote-host-test.mjs` 的 import 还指向已拆分的桶文件（hostHeaderAllowed→remote/http、REMOTE_METHODS/REMOTE_PROTOCOL_VERSION→remote/types），修后 140/140；`scripts/trace-data-test.mjs` 假 ctx 缺 `get`（T21 转录快照的合法软依赖）；`scripts/turn-changes-test.mjs` 在两次工具操作之间裸写文件，撞上 T35「先读后写」守卫——补 readTool 重新登记（真 agent 同款动作）；`scripts/review-approval-test.mjs` 的 reviewMessage import 还在旧位置（已搬 core/git-info）。`scripts/remote-e2e.mjs` 仍剩 2 条历史失败（设备信息行断言、第二宿主唤醒），stash 基线核实与本轮无关，另行处理。bump 0.6.49。
+
+## 阶段 71：删除工作区后侧栏不消失——归档自己收尾重扫列表
+
+**报障**（0.6.49，附截图：`dsc-turn-changes-*` 组右键「删除工作区」后组仍挂在侧栏，顶上还压着一条「会话打开失败：ENOENT」）：「为什么工作区删不了了」。
+
+**根因**：删除工作区 = 归档该组全部会话 + 把目录从 recentCwds 撤下（`Sidebar.tsx` 的 `deleteWorkspaceWithConfirm` → `App.tsx` 的 `onDeleteWorkspace`）。那两组临时目录不在 `~/.dsc/desktop.json` 的 `recentCwds` 里，撤下是空操作，组只能靠会话撑着消失。而 `session.archive` 只挪文件 + 写 sidecar（`core/session.ts` 的 `archiveSession`），**不重扫会话列表缓存**；快照的 `sessions` 字段读的正是这份缓存（`plugins/transcript.ts` 的 `sessions: ctx.session.sessions`），于是归档成功的会话仍按活动区留在侧栏。二次点击更安静：`if (!existsSync(path)) continue` 把已挪走的全部跳过，`done === 0` 也返回 `ok`，界面照样报「工作区已删除，N 个会话已归档」。顶上那条 ENOENT 是同一份陈旧列表的产物——点那个会话行时文件已经进了 `.archived/`，索引还指着活动区的老路径。
+
+**修法（宿主层收尾）**：`plugins/session.ts` 的 `archive` 在挪完文件后自己重扫一次列表缓存——`if (done.length > 0) await service.refresh()`。`refresh()` 发 `dsc/changed`，宿主据此推新快照，侧栏与选择器跟着变；失败一半也扫，已经挪走的那部分同样不该再出现在活动区列表里。渲染层不动：别的会话库操作（`Sidebar` 的 `run()`）本来就自己调 `refreshSessions()`，这次把收尾放在宿主侧，所有调用方（含 remote / TUI 路径）一起受益，不必各自记得刷。
+
+**验证**：typecheck（根）绿。新回归 `scripts/session-archive-refresh-test.mjs`（临时 HOME，7 断言：apply 提供 session 服务、归档前两条都在活动区、archive 报成功、归档后活动区缓存不再有它、归档区那份带 archivedAt、没误伤保留的那条、archive 期间发过 dsc/changed）全绿。变异核实：把 `lib/plugins/session.js` 里那行 `await service.refresh()` 换成 `void 0`（等价修复前行为）后探针 3 条转红——「归档后活动区缓存里不再有它」正是用户看到的现象；重新构建还原后 7/7 全绿。端到端（侧栏的组当真空掉）需装包重启宿主复验，本轮未跑桌面走查（`desktop.json` 是走查与真实档案的交叉点，按阶段 65 的教训不主动碰）。
+
+**版本号**：本轮未 bump `package.json`（仍 0.6.49），发版时统一走。
+
+## 阶段 72：会话用量卡对齐 dsh——缓存三行 + 精确千分位（0.6.49）
+
+**动因**：用户贴截图「这个用量统计，改成和 dsh 一样的」。dsh 的会话级用量卡是 `StatsPills.tsx` 的 `UsagePill`（标题「Token 用量」+ 精确总数；明细：缓存命中 / 未缓存输入 / 缓存读取 / 缓存写入（为 0 不显示）/ 输出）。dsc 原来的卡（`StatusBar.tsx` 的 `TokenCard`）只有「模型请求 / 输入 token / 输出 token / 最近请求」：输入没按缓存拆开，标题也是紧凑写法。
+
+**数据侧**：`~/.dsc/usage/usage.jsonl` 每行早就带 `ch`（缓存读取）/`cm`（未缓存输入）两栏（0.6.46 起 `core/llm.ts` 解析服务端回的缓存字段并落库），但壳进程投影 `electron/main/session-usage.ts` 的 `readSessionUsage` 只汇总了 `i`/`o`——本轮补上两栏的按会话聚合（成对上报的行才进分母，缺一栏或负数按没上报处理）。
+
+**改法**（口径三问按用户选择）：
+1. 保留 dsc 独有的「模型请求」「最近请求」两行，另补 dsh 的三行（缓存命中 / 未缓存输入 / 缓存读取）+「输出」——共 6 行，缓存三行相邻、顺序照 dsh。
+2. 标题与明细改用精确千分位（新增 `formatExactTokens`，对照 dsh 的 6,912,345 tok）；状态栏 pill 与侧栏底部那行仍是紧凑 `6.9M tok`——与 dsh 同一分工（pill 紧凑、详情卡精确）。
+3. 命中率移植 dsh 的算法（新增 `formatCacheHitPercent`：部分命中绝不四舍五入成 100%，差几个 token 就加位数区分，如 999/1000 显示 99.9）；分母只吃上报过缓存明细的请求，老行不进——与设置页「前缀缓存命中」同口径。
+4. 日志里没有这条会话、或一条缓存明细都没上报过时，退回单行「输入 token」，脚注写明换的是哪套口径（沿用 dsc 的「宁缺不假」）。
+5. 渲染层的 `SessionUsageView` 类型副本（`bridge.ts`，注释要求与壳进程同步）加同样两个字段；`StatusBar.tsx` 顶部那段「宿主根本没记缓存命中」的注释已过时，一并更正。
+
+**验证**：根 + 桌面端（tsconfig.node / tsconfig.web）三处 typecheck 全绿（exit=0）。新探针 `desktop/shots/usage-card-check.mjs` 16 断言全绿——esbuild 打包真源码（`electron` 与 `@dsc/runtime/core/token-estimate.js` 换成临时 stub），临时 HOME 造一份含老行/上报行/别的会话/半截行/负数行的用量日志，断言：按会话汇总的请求数与输入输出、缓存两栏只算上报行、最后一次输入按时间戳取、无记录返回 null、老行不进分母（450/500 = 90%）、满命中给 100、无输入给 null、部分命中不显示成 100%（999/1000 → 99.9、999999/1000000 ≠ 100）、精确千分位。**未做变异核实**：断言直接压在新字段上——旧实现的对象没有 `cacheHitTokens` 属性（第一条缓存断言必红），旧代码里也根本没有 `formatCacheHitPercent`（import 即失败）。
+
+**没动的**：设置 → 用量统计页（`UsagePanel.tsx`）的「前缀缓存命中」卡片仍用 `Math.round`，与这张卡新用的 dsh 算法不一致——本轮范围外，要统一另说。
+
+**版本号**：未 bump（仍 0.6.49），与阶段 71 一起走发版。
+
+## 阶段 73：验收五连修——幽灵 token、审批卡跨会话、实时组头去重、草稿独立、贴图预览（0.6.50）
+
+**动因**：用户装包实机验收 0.6.49，连报三处，加上前两轮诊断待批的两处历史 bug，一并修：
+
+1. **悬停预览与会话重叠**（截图：改动文件 hover 预览的 diff 文字直接叠在会话正文上）。
+2. **审批卡跨会话**：「审批是另一个会话的，却带了过来」——后台会话的审批卡弹进当前查看的会话，且侧栏两个状态点错位（真凶蓝点、无辜者橙点）。
+3. **实时行位置与重复**：跑动轮里「正在分析请求」实时组头挂在正文中间（带着旧思考摘录），底部状态行又一个「正在分析请求」——同一时刻两处报同一件事。
+4. **输入框草稿不独立**：A 会话打的字切到 B 会话还在。
+5. **贴图没有预览入口**。
+
+**修法**：
+
+- **幽灵 token（批 A）**：`styles.css` 有 6 处引用了从未定义的令牌——`--dsc-neutral-bg`（`.hover-preview:9564`、`.approval-diff:1875`）、`--dsc-bg-inset`/`--dsc-border`/`--dsc-radius`（`.plan-feedback:9623-9625`）、`--dsc-bg-body`（`.file-pdf-page:3341`、`.file-preview-img img:3363`）。`git log -S` 证实 0.6.25/26 引入消费方时就没有任何提交定义过它们——`background` 整条声明无效变全透明，这就是重叠的直接原因。全部落回既有令牌：浮层（`.hover-preview`）用 `--dsc-bg-popover` + `blur(12px)`（对齐 `.row-menu` 浮层惯例，注释里那句「配一层模糊才不会透出下面的字」说的就是它）；内嵌块（`.approval-diff`、`.plan-feedback`）用实底 `--dsc-bg-raised`；PDF/图片衬底同样 `--dsc-bg-raised`（浅色主题即纸白）。圆角补 `--dsc-r-overlay`/`--dsc-r-block`，边框补 `--dsc-stroke-2`。另给差集扫描留了口谕：余下 5 个「未定义」引用（diff-pane-w、handle-y、icon-size、thread-col-*）全带 fallback，是 JS 拖宽/滚动条把手动态注入的，合法。
+- **审批卡跨会话（批 B）**：`plugins/approval.ts` 的 `pendingView()` 原来返回**全局**最老一张卡（注释自称「卡片是全局渲染的」），0.6.49 只给卡加了「来自会话 xx」标签、没做归属过滤——plan/ask 卡都在 0.6.49 对齐了「surface 只返回本会话的卡」，approval 是漏网之鱼。现改为按 `ctx.session.current().filePath` 过滤（`currentForHere`），`answer()` 同口径切换（否则答卡会答到别的会话头上）；新增 `pendingFor(filePath)` 给 agent 查。`plugins/agent.ts` 的 session-open 处理：切走 busy 会话时重发的状态以前一律 `working`，会把刚挂上的 `awaiting-approval` 盖掉——现在先查 `ctx.get('approval')?.pendingFor(...)`，挂着卡就发 `awaiting-approval`。transcript 侧不用动：`turnState` 推导（`plugins/transcript.ts:157`）与桌面输入框禁用（`App.tsx:882`）吃的都是 `surfaces.pendingApproval`，kernel 过滤后自动正确；「来自会话 xx」标签退化为防御性代码保留。TUI/remote 的消费方都按「当前会话」看快照，口径自动一致。`modes-security-check` 的 ctx.get 白名单补 `approval`（软依赖：approval 缺席时退化发 working）。
+- **实时组头去重（批 C1）**：`process-groups.ts` 的 `groupSteps` 里，跑动轮的尾组原来 flush 成「未收口」组（`closed=false`），组头挂 `RUNNING_THINKING` + 最新思考摘录——dsh 有这个是因为它没有底部状态行，dsc 两样都有。现在跑动轮尾段直接摊开（`pending = []`），「现在在干嘛」由 `TurnStatusLine` 独家表达；轮收尾后照旧成组，聚合文案与整轮折叠不变。
+- **草稿独立（批 C2）**：`Composer.tsx` 的正文/贴图原是单份组件 state，切会话不清空。现在 props 加 `draftKey`（= 会话 id，`App.tsx` 传 `snapshot.status.sessionId`），内部 `draftsRef` 按键各存一份 `{value, attachments, history}`，切换时整份换入换出、历史游标复位——输入历史也跟着会话走。
+- **贴图预览（批 C3）**：贴图 chip 加双击开全屏 lightbox（`createPortal` 到 body，遮罩走 `--dsc-scrim` 令牌，点击/Esc 关）。贴图是 dataURL 没有路径，复用不了文件预览页签，自立浮层最省。
+
+**验证**：根 typecheck 绿、桌面 typecheck（node/web）绿；`resident-agents-test` 32/32、`modes-security-check`（白名单更新后）全绿、阶段 71/72 遗留探针（`usage-card-check` 16/16、`session-archive-refresh-test` 7/7、`async-inbox-test`）全绿；scripts 目录 10 个探针、shots 目录 60+ 自检全过（`memory-seed`/`seed-*` 是种子脚本需参数，历来跳过）。端到端视觉（hover 实底、审批卡归属、跑动轮摊开、草稿切换、lightbox）留待装包实机走查。**未做变异核实**：批 A 的断言等价于「token 存在且语义正确」，透明→实底是纯增益；批 B/C1 的行为断言已由既有探针与类型契约钉住。
+
+**版本号**：bump 0.6.50。本提交同时捎带上个会话遗留未提交的阶段 71（归档收尾重扫会话列表）与阶段 72（会话用量卡对齐 dsh）的改动——dev log 两段已在，当时说好「与阶段 71 一起走发版」。

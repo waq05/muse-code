@@ -880,6 +880,7 @@ export function App(): JSX.Element {
                 {peek === null ? (
                   <Composer
                     disabled={snapshot.surfaces.pendingApproval !== null}
+                    draftKey={snapshot.status.sessionId ?? ''}
                     models={models}
                     model={snapshot.status.model}
                     effort={snapshot.status.effort}

@@ -187,8 +187,10 @@ export interface ApprovalService extends ApprovalHandler {
   surface(): PolicySurface
   /** 切换权限模式（写 system 条目告知模型与用户）。 */
   setPolicy(policy: ApprovalPolicy): void
-  /** 当前挂起的审批视图；null = 无。 */
+  /** 当前查看会话挂起的审批视图（0.6.50 起只给本会话的卡，后台会话的卡不跨界）；null = 无。 */
   pendingView(): ApprovalRequestView | null
+  /** 这个会话现在有没有挂着审批卡（agent 切走时重发侧栏状态点用）。 */
+  pendingFor(filePath: string): boolean
   /**
    * 应答当前挂起审批（无挂起时静默忽略）。
    * @param source - 这个答案从哪儿来：省略 = 宿主界面（桌面端 / 终端），

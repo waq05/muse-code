@@ -150,6 +150,12 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
             failed.push(`${basename(path)}（${errText(error)}）`)
           }
         }
+        // 挪走文件之后必须自己重扫一次列表缓存（refresh 会发 dsc/changed，宿主据此推
+        // 快照，侧栏与选择器读的就是这份缓存）：漏了这一步，归档成功的会话仍按活动区
+        // 留在侧栏，组菜单的「删除工作区」看着像没生效（0.6.49 报障）。失败一半也要扫，
+        // 已经挪走的那部分同样不该再出现在活动区列表里。
+        if (done.length > 0) await service.refresh()
+
         if (failed.length > 0) {
           return { ok: false, error: `已归档 ${done.length} 个，${failed.length} 个失败：${failed.join('；')}` }
         }

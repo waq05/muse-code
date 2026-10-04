@@ -45,6 +45,9 @@ export interface SessionUsageView {
   requests: number
   inputTokens: number
   outputTokens: number
+  /** 前缀缓存读取（日志 ch）与未缓存输入（日志 cm）：只统计上报过缓存明细的请求。 */
+  cacheHitTokens: number
+  cacheMissTokens: number
   /** 最后一次请求的输入 token = 当前上下文占用（服务端真值）。 */
   lastInputTokens: number
   lastAt: number
