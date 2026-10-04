@@ -540,6 +540,11 @@ exe 当**桌面端**跑的时候才要清掉它。
   结果文字超 1500 字符截断（`:27`）。
 - 状态灯优先级：有挂起审批 → `awaiting-approval`，否则在回合内且working → `working`，
   回合内不 working → `thinking`，其余 `idle`（`src/plugins/transcript.ts:74-81`）。
+  0.6.50 起「有挂起审批」只数**当前查看会话**的卡（`approval.pendingView` 按
+  `ctx.session.current().filePath` 过滤，后台会话的卡不串进当前视图）；后台会话的灯由
+  `dsc/agent-status` 事件喂 `backgroundStates`，agent 切走 busy 会话时按
+  `approval.pendingFor(path)` 重发对应状态（挂着卡发 `awaiting-approval`，否则 `working`），
+  不再把「等你批准」盖成「还在跑」。
 - **跨进程推的是全量快照，缺省 80 ms 节流**（可配 `host-stdio.snapshotThrottleMs`），没有 diff 协议；
   renderer 侧必须走 `onSnapshot`，代理对象的 `getSnapshot()` 会直接抛错（`bridge.ts:97-100`）。
 
