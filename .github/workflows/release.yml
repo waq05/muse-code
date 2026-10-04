@@ -46,7 +46,7 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: 安装并编译
         run: |
-          pnpm install --frozen-lockfile --dangerously-allow-all-builds
+          pnpm install --frozen-lockfile
           pnpm build
       - name: 发布（未配 NPM_TOKEN 则跳过）
         env:
@@ -74,13 +74,13 @@ jobs:
       - name: 构建内核（prepare-runtime 要吃根包 lib）
         shell: bash
         run: |
-          pnpm install --frozen-lockfile --dangerously-allow-all-builds
+          pnpm install --frozen-lockfile
           pnpm build
       - name: 打包安装器（nsis + portable）
         working-directory: desktop
         shell: bash
         run: |
-          pnpm install --frozen-lockfile --dangerously-allow-all-builds
+          pnpm install --frozen-lockfile
           pnpm exec electron-vite build
           node scripts/prepare-runtime.mjs
           pnpm exec electron-builder --publish never
