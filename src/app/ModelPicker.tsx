@@ -1,7 +1,8 @@
 /**
- * 模型选择浮层（/model 无参数打开）：可切换模型的滚动列表，输入即筛选
- * （按端点/模型名/说明），↑↓ 选择、Enter 切换（下一次请求生效）、Esc 关闭。
- * 键盘路由在 App 顶层统一处理，本组件纯展示。
+ * 模型选择浮层（/model 无参数打开）：整屏可点版。根盒撑满状态栏之上的全部空间，
+ * 列表行从构造位置起排（上边框 + 标题 + 筛选行），屏幕行与候选一一对应——鼠标点击
+ * 选中、再点已选中项即切换；滚轮与 ↑↓ 同义（路由在 App 键盘/鼠标顶层）。输入即筛选
+ * （按端点/模型名/说明），Enter 切换（下一次请求生效）、Esc 关闭。本组件纯展示。
  *
  * @module dsc-tui/app/ModelPicker
  */
@@ -26,14 +27,16 @@ export function ModelPicker({
       borderColor={BORDER.active}
       paddingX={PAD.inline}
       flexDirection="column"
-      marginTop={GAP.tight}
+      flexGrow={1}
+      overflowY="hidden"
       gap={GAP.none}
     >
-      <Text {...TEXT.label} color={ACCENT}>
+      <Box flexShrink={0} flexDirection="column" gap={GAP.none}>
+      <Text {...TEXT.label} color={ACCENT} wrap="truncate-end">
         模型选择（{models.length} 个）
-        <Text {...TEXT.secondary}>{SEP.gap}Enter 切换（下一次请求生效）</Text>
+        <Text {...TEXT.secondary}>{SEP.gap}点击选中、再点应用 · Enter 切换（下一次请求生效）</Text>
       </Text>
-      <Text>
+      <Text wrap="truncate-end">
         <Text {...TEXT.label} color={ACCENT}>
           筛选{' '}
         </Text>
@@ -56,7 +59,10 @@ export function ModelPicker({
           </Text>
         )
       })}
-      <Text {...TEXT.secondary}>↑↓ 选择 · Enter 切换 · Esc 关闭</Text>
+      <Text {...TEXT.secondary} wrap="truncate-end">
+        ↑↓ 选择 · Enter 切换 · Esc 关闭
+      </Text>
+      </Box>
     </Box>
   )
 }

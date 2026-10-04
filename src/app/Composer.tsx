@@ -81,7 +81,8 @@ export function Composer({
       }))
     }
     if (!completionsEnabled) return []
-    return completionsFor(value, models)
+    // 命令候选可能一大把（/ 开头全匹配）：面板最多 8 行，别把恒定帧里的聊天区挤没。
+    return completionsFor(value, models).slice(0, 8)
   }, [value, suppressedFor, mention, mentionFiles, completionsEnabled, models])
 
   const panelOpen = completions.length > 0
@@ -127,6 +128,8 @@ export function Composer({
 
   useInput((input, key) => {
     if (disabled) return
+    // SGR 鼠标事件（App 顶层已消费，这里兜底吞掉）绝不能当成打字灌进输入框。
+    if (/^\[<\d+;\d+;\d+[Mm]$/.test(input)) return
 
     // 补全面板打开时，导航键归面板（不与历史翻阅冲突）
     if (panelOpen) {

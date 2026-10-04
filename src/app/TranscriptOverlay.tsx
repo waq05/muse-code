@@ -1,7 +1,8 @@
 /**
  * 回看浮层（Ctrl+O 打开）：全量 transcript 的滚动窗口，摆脱「直播窗只画尾部 30 条」
- * 的限制。复用 ChatView 的条目渲染（streaming 恒 false），滚动窗口由 App 按
- * 终端行数计算并路由按键（↑↓/j/k 单条、PgUp/PgDn 翻页），本组件纯展示。
+ * 的限制。复用 ChatView 的条目渲染（streaming 恒 false）；窗口切片与滚动偏移由
+ * App 按「条」计算并路由按键（↑↓/j·k 单条、PgUp/PgDn 翻页、滚轮同义）。根盒在
+ * 恒定帧里撑满、底对齐、溢出从顶上裁掉——只丢历史不丢最新。本组件纯展示。
  *
  * @module dsc-tui/app/TranscriptOverlay
  */
@@ -13,19 +14,16 @@ import { Entry } from './ChatView.js'
 
 export function TranscriptOverlay({
   entries,
-  offset,
-  visible,
+  start,
+  total,
 }: {
+  /** 可见窗口切片（App 按滚动偏移算好传入）。 */
   entries: TranscriptEntry[]
-  /** 从尾部往回滚的条数：0 = 最新（窗口贴着末尾），越大越往历史翻。 */
-  offset: number
-  /** 窗口里最多几条（按终端行数算出来的近似值）。 */
-  visible: number
+  /** 窗口第一条在全量 transcript 里的下标（标题展示用）。 */
+  start: number
+  /** 全量条数。 */
+  total: number
 }): JSX.Element {
-  const maxOffset = Math.max(0, entries.length - visible)
-  const back = Math.min(Math.max(0, offset), maxOffset)
-  const start = Math.max(0, entries.length - visible - back)
-  const window = entries.slice(start, start + visible)
   return (
     <Box
       borderStyle="round"
@@ -33,22 +31,26 @@ export function TranscriptOverlay({
       paddingX={PAD.inline}
       flexDirection="column"
       flexGrow={1}
+      overflowY="hidden"
+      justifyContent="flex-end"
       gap={GAP.none}
     >
-      <Text {...TEXT.label} color={ACCENT}>
-        回看全文（{entries.length} 条 · 第 {start + 1}-{start + window.length} 条）
-      </Text>
-      {window.map((entry) => (
-        <Entry key={entry.id} entry={entry} streaming={false} expandThinking={false} />
-      ))}
-      {window.length === 0 ? (
-        <Box marginLeft={INDENT.detail}>
-          <Text {...TEXT.secondary}>（这个会话还没有条目）</Text>
-        </Box>
-      ) : null}
-      <Text {...TEXT.secondary}>
-        ↑↓/j·k 滚动 · PgUp/PgDn 翻页 · q 或 Esc 或 Ctrl+O 关闭
-      </Text>
+      <Box flexShrink={0} flexDirection="column" gap={GAP.none}>
+        <Text {...TEXT.label} color={ACCENT} wrap="truncate-end">
+          回看全文（共 {total} 条 · 第 {start + 1}-{start + entries.length} 条）
+        </Text>
+        {entries.map((entry) => (
+          <Entry key={entry.id} entry={entry} streaming={false} expandThinking={false} />
+        ))}
+        {entries.length === 0 ? (
+          <Box marginLeft={INDENT.detail}>
+            <Text {...TEXT.secondary}>（这个会话还没有条目）</Text>
+          </Box>
+        ) : null}
+        <Text {...TEXT.secondary} wrap="truncate-end">
+          ↑↓/j·k 单条 · PgUp/PgDn 翻页 · 滚轮同义 · q 或 Esc 或 Ctrl+O 关闭
+        </Text>
+      </Box>
     </Box>
   )
 }

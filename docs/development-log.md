@@ -1632,3 +1632,15 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **鼠标**：DECSET 1000+1006（SGR）跟踪跟选择器同开同关（effect 清理兜底）；ink 的 keypress 解析器不认识 SGR 鼠标序列，剥 ESC 头后以 `'[<b;x;yM|m'` 原样进 useInput——在键盘路由最顶层拦截：左键点击选中、再点已选中行=打开（与 Enter 同路，归档页先恢复再开）、滚轮 64/65 与 ↑↓ 同义、释放/右键/中键忽略、改名输入态整体免疫。点击行号映射是纯构造算术（内容底往上数：状态栏+底描边+提示行），不需要测量或 CPR 校准。
 
 **验证**：新 `scripts/session-picker-mouse-test.mjs`（mock runtime + 假命令 ctx 让 `/resume` 真派发，PassThrough 驱动整只 App）18 项断言全绿——帧内容行数恒等于行数−1（改名态同）、窗口指示、↑↓/滚轮/点击/再点打开、释放忽略、改名态免疫、跟踪转义同开同关（含 DSC_HOME 指临时目录隔离历史文件）；既有 10 个检查脚本全绿（resident-agents 32/0）；双包 typecheck 绿；`node bin/dsc.js --version` → 0.6.55。已知取舍：跟踪开着时终端原生前缀选区要走 Shift+拖拽（全终端 TUI 统一行为）；ModelPicker 未加鼠标（列表短，后续照此模式搬）。
+
+## 阶段 79：整屏恒定帧 + 全局鼠标——操作逻辑对齐 codex / dsh-TUI（0.6.56）
+
+**动因**：0.6.55 只给了选择器鼠标，用户要求「所有地方都能鼠标点击」+ 聊天里 ↑↓ 仍会跳底。复核参考实现：codex（ratatui）整屏接管 + capture_mouse，↑↓/j·k 就是滚动 transcript、历史走反向搜索；dsh-TUI fork ink 得到 ScrollBox/Button/位置路由滚轮，↑↓ 仍是输入框历史。公约数是「整屏恒定帧 + 一切可滚可点」——跳底的最终根源就是帧高随内容变化。
+
+**架构（不 fork ink、不进 alternate screen）**：App 根盒 `height={终端行数−1}` + overflow hidden，任何状态下帧行数恒定，重绘永远从屏顶原位擦写、零滚动。聊天区变成真正的滚动视口：flexGrow + 底对齐 + 顶部裁剪（溢出丢老不丢新），渲染窗口 80 条；`chatAnchor` 记窗口末端（null=直播跟随），滚轮 ±1 条、PgUp/PgDn ±10 条，提交/回底复位；滚动时输入框上方挂「⇡ 已回看历史」提示条（整行可点回底）。键位保持 ↑↓=输入历史（dsh 语义，用户日常习惯），新增 PgUp/PgDn（codex 语义）。
+
+**关键实现课（ink 6.8）**：① 根盒 flex 布局里内容超高时 yoga 按比例压缩所有 `flexShrink:1`（默认！）子项——条目互相重叠、卡片压扁、状态栏串行；聊天内容、卡片、状态栏必须 `flexShrink={0}` 保持自然高度、只靠 overflow 裁剪。② ink 的 yoga 布局在节流渲染里才算完，layout-effect 时量到的是上一帧几何——点击命中注册表不能存静态几何，**点击发生时才测量**（此刻上一帧必已画完）。③ SGR 行是 1 基、帧行是 0 基，命中判定入口统一剥成 0 基。④ `absoluteTop` 沿 ink DOM parentNode 链累加 yoga getComputedTop（ink 内部 getAbsolutePosition 同款，未导出，自写十行）。
+
+**鼠标全时开启**（DECSET 1000+1006，卸载关闭）：滚轮按状态路由（浮层/聊天/两个选择器）；左键点击——选择器行映射（居中窗口 1:1）、模型浮层整屏化后同款（点选中、再点应用）、审批卡页脚按钮（y/a/p/n/v，列区间按显示宽度与渲染同源计算）、计划卡页脚 + 「…共 N 行」标记行、提问卡选项行（单选即答、多选勾选）、回底提示条。卡片/提示条几何走 click.ts 命中注册表；Composer 兜底吞掉鼠标序列不打进输入框；补全面板钉 8 行防挤压。
+
+**验证**：`scripts/session-picker-mouse-test.mjs` 重写为 28 项断言全绿（恒定帧四种状态、聊天裁剪方向、滚轮/PgUp·PgDn/提示条点击、选择器全流程、改名免疫、审批/提问卡点击派发、全时跟踪转义）；既有 10 检查脚本 0 FAIL（resident-agents 32/0）；双包 typecheck 绿；`node bin/dsc.js --version` → 0.6.56。已知取舍：鼠标跟踪开着时原生选区走 Shift+拖拽（全终端 TUI 通例）；↑↓ 仍为输入历史——要 codex 式「↑↓ 滚屏」改 scrollChat 一行即可；聊天回看按「条」粒度（比 codex 的按行粗），后续可在 Entry 内做行级切片。

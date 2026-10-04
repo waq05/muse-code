@@ -1,16 +1,29 @@
 /**
- * 顶层界面：快照订阅（useSyncExternalStore）+ 键盘路由。
+ * 顶层界面：快照订阅（useSyncExternalStore）+ 键盘路由 + 鼠标层 + 恒定帧布局。
+ *
+ * 布局（0.6.56）：根盒高度恒为「终端行数 − 1」并 overflow hidden——ink 的帧写带尾随
+ * 换行，帧高一旦随内容变化终端就会滚动（「↑↓ 跳回底部」的根源）；固定帧之后任何
+ * 状态下重绘都从屏顶原位擦写、零滚动。聊天区是 flexGrow 的滚动视口：底对齐、老的
+ * 条目从顶上裁掉（只丢历史不丢最新），滚轮 / PgUp·PgDn 以条为单位回看，滚动时在
+ * 输入框上方挂一条可点击的「回到底部」提示；选择器与模型浮层独占整屏、列表行与
+ * 屏幕行一一对应，点击即命中。
  *
  * 键盘优先级：Ctrl+C（打断/退出）→ 审批卡（四档）→ 提问卡（模态作答）→ 计划反馈
  * 输入 → 计划评审卡（批准/拒绝/带反馈）→ 回看浮层（Ctrl+O）→ 会话选择器（含筛选
- * 输入与 Ctrl 组合动作）→ Esc 打断 → Ctrl+O/Ctrl+T → 其余交给 Composer。
- * 卡片（审批/提问/计划卡/选择器/浮层）打开时 Composer 置 disabled；唯一的例外是
- * 计划「带反馈退回」——Composer 临时切成反馈输入框，Enter 提交、Esc 取消。
+ * 输入与 Ctrl 组合动作）→ 模型浮层 → Esc 打断 → PgUp/PgDn 滚动 → Ctrl+O/Ctrl+T →
+ * 其余交给 Composer（↑↓ 在输入框里仍是历史回忆，对齐 dsh-TUI）。
+ *
+ * 鼠标（0.6.56）：进程存活期间开启 SGR 跟踪（DECSET 1000+1006），卸载时关闭。
+ * ink 的按键解析不认识 SGR 序列，剥掉 ESC 头后以 `'[<b;x;yM|m'` 原样进 useInput——
+ * 在最顶层拦截：滚轮按状态路由（浮层/聊天/两个选择器）；左键点击派发给命中区注册表
+ * （卡片页脚按钮、提问选项、回底提示条——组件用 yoga 绝对行自报几何，见 click.ts），
+ * 列表则用构造行号直接映射。跟踪开着时终端原生选区要走 Shift+拖拽，全终端 TUI 通例。
  *
  * @module dsc-tui/app/App
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Box, Text, useInput, useStdout } from 'ink'
+import type { DOMElement } from 'ink'
 import type { JSX } from 'react'
 import type {
   ArchivedSessionView,
@@ -18,12 +31,13 @@ import type {
   SessionSummary,
 } from '../contract.js'
 import { runCommand } from '../plugins/commands.js'
-import { ApprovalCard } from './ApprovalCard.js'
+import { absoluteTop, measuredHeight, useClickRegion, type ClickEntry, type RegisterClick } from './click.js'
+import { ApprovalCard, type ApprovalAction } from './ApprovalCard.js'
 import { AskCard, SKIPPED_ANSWER } from './AskCard.js'
 import { ChatView } from './ChatView.js'
 import { Composer, type DirLister } from './Composer.js'
 import { ModelPicker } from './ModelPicker.js'
-import { PlanReviewCard } from './PlanReviewCard.js'
+import { PlanReviewCard, type PlanAction } from './PlanReviewCard.js'
 import { SessionPicker } from './SessionPicker.js'
 import { StatusBar } from './StatusBar.js'
 import { TaskStrips } from './TaskStrips.js'
@@ -33,6 +47,37 @@ import { BORDER, GAP, PAD, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 双击 Ctrl+C 的判定窗口。 */
 const EXIT_WINDOW_MS = 2000
+/** 聊天视口一次渲染的条目窗口（帧内放不下会被裁掉，窗口只约束 reconcile 量）。 */
+const CHAT_WINDOW = 80
+/** 回看浮层的条目窗口（全量 transcript，窗口随滚动偏移滑动）。 */
+const OVERLAY_WINDOW = 200
+/** 选择器框的固定行数：上下边框 2 + 标题 1 + 筛选行 1 + 提示行 1（改名行与提示行 1:1 互换）。 */
+const PICKER_CHROME = 5
+
+/** 「已离开最新」提示条：整行可点，点了回到底部。 */
+function TailIndicator({
+  hidden,
+  onJump,
+  registerClick,
+}: {
+  hidden: number
+  onJump: () => void
+  registerClick: RegisterClick | undefined
+}): JSX.Element {
+  const ref = useRef<DOMElement | null>(null)
+  useClickRegion(ref, registerClick, (col, row, top, height) => {
+    if (row < top || row >= top + height) return false
+    onJump()
+    return true
+  })
+  return (
+    <Box ref={ref} borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline} marginTop={GAP.tight}>
+      <Text {...TEXT.label} color={STATUS_COLOR.pending} wrap="truncate-end">
+        ⇡ 已回看历史，下方有 {hidden} 条新内容 · 点击本行或 PgDn 回到底部
+      </Text>
+    </Box>
+  )
+}
 
 export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot)
@@ -58,6 +103,8 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
   /** 回看浮层（Ctrl+O）：offset 是「从尾部往回滚的条数」。 */
   const [transcriptOpen, setTranscriptOpen] = useState(false)
   const [scrollOffset, setScrollOffset] = useState(0)
+  /** 聊天滚动锚点：窗口末端的条目下标；null = 跟随最新（直播态）。 */
+  const [chatAnchor, setChatAnchor] = useState<number | null>(null)
   /** Composer 补全面板开合（Esc 打断与「关面板」的分流依据）。 */
   const [panelOpen, setPanelOpen] = useState(false)
   // ---- 会话选择器：页 / 筛选 / 改名 / 删除确认 ----
@@ -81,6 +128,14 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       }>,
     [runtime],
   )
+  /** 卡片/提示条的点击命中注册表（组件登记判定函数，几何在点击时现量，见 click.ts）。 */
+  const clickRegions = useRef(new Set<ClickEntry>())
+  const registerClick = useCallback<RegisterClick>((region) => {
+    clickRegions.current.add(region)
+    return () => {
+      clickRegions.current.delete(region)
+    }
+  }, [])
 
   const askQuestions = question?.questions ?? (question !== null ? [question] : [])
   const currentQuestion = askQuestions[askIndex]
@@ -109,6 +164,18 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       }
     }
   }, [snapshot.status.turnState, stdout])
+
+  // 鼠标跟踪全时开启（SGR 点击/滚轮；不启用 1002/1003——拖拽选区留给终端原生行为）。
+  useEffect(() => {
+    stdout?.write('\x1b[?1000;1006h')
+    return () => {
+      try {
+        stdout?.write('\x1b[?1000;1006l')
+      } catch {
+        // 卸载收尾时写不进就放弃，别让退出路径再抛错
+      }
+    }
+  }, [stdout])
 
   // 卡片换人（或消失）时复位对应的本地状态。
   useEffect(() => setApprovalExpanded(false), [approval?.id])
@@ -177,39 +244,43 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
     )
   }, [pickerPage, snapshot.sessions, archivedList, pickerQuery])
 
-  // ---- 选择器整屏几何（0.6.55）：帧高精确凑满「终端行数 − 1」----
-  // 以前列表全量渲染、聊天流也还挂在画面里，帧比终端高——ink 每次重绘都把画面顶回
-  // 底部（↑↓ 每敲一键就跳底）。选择器打开时让它独占整屏：ink 的帧带一个尾随换行
-  //（光标停帧尾下一行），内容写满终端行数时那个换行每次重绘都滚一行，所以凑的是
-  //「行数 − 1」：内容贴屏顶、末行留给光标，重绘永远从顶行擦写，一次滚动都不发生；
-  // 屏幕行与帧行一一对应，鼠标点击的行号映射因此是纯构造计算（对齐 codex / dsh-TUI
-  // 整屏浮层的做法，但不进 alternate screen、不 fork ink）。所有块行数都是构造的：
-  // 行内文本一律截断保证不折行。
+  // ---- 恒定帧与各视口的窗口切片 ----
   const termRows = stdout?.rows ?? 24
-  /** 帧内容可用行数：终端行数 − 1（末行是 ink 帧尾随换行的光标落点）。 */
+  /** 帧内容行数：终端行数 − 1（ink 帧自带尾随换行，末行留给光标落点）。 */
   const frameRows = Math.max(1, termRows - 1)
   /** 状态栏行数：描边 2 + 两行内容；有后台会话时第三行状态点。 */
   const statusbarLines = 4 + (Object.keys(snapshot.sessionStates).length > 0 ? 1 : 0)
-  /** 提示条（单行文本的描边框）行数，选择器打开时才参与凑帧。 */
-  const noticeLines = notice !== null ? 3 : 0
-  /** 空列表占位行（「没有匹配的会话」）。 */
-  const emptyLines = pickerList.length === 0 && !snapshot.sessionsLoading ? 1 : 0
-  /** 选择器框固定行数：外边距 1 + 描边 2 + 标题 1 + 筛选行 1 + 提示行 1（改名时提示行换改名行，净 0）。 */
-  const pickerFixedLines = 6
-  /** 列表窗口行数：除固定框架外全部让给列表；终端矮到连框架都放不下时保底 1 行。 */
-  const maxListRows = Math.max(1, frameRows - statusbarLines - noticeLines - emptyLines - pickerFixedLines)
-  const listRows = Math.min(pickerList.length, maxListRows)
+  /** 选择器列表窗口：框内除固定框架外全部让给列表（点击行号映射按它 1:1 对齐）。 */
+  const pickerListRows = Math.min(
+    Math.max(pickerList.length, 0),
+    Math.max(1, frameRows - statusbarLines - PICKER_CHROME),
+  )
   /** 窗口起点：选中项尽量居中（fzf 式），两端夹住；列表放得下时等于 0。 */
   const pickerStart = Math.min(
-    Math.max(0, pickerIndex - Math.floor((listRows - 1) / 2)),
-    Math.max(0, pickerList.length - listRows),
+    Math.max(0, pickerIndex - Math.floor((pickerListRows - 1) / 2)),
+    Math.max(0, pickerList.length - pickerListRows),
   )
-  const visibleSessions = pickerList.slice(pickerStart, pickerStart + listRows)
-  /** 列表上方的填充行：短列表时把选择器框压到屏幕底，帧高才恰好凑满。 */
-  const pickerFiller = Math.max(
-    0,
-    frameRows - statusbarLines - noticeLines - (pickerFixedLines + listRows + emptyLines),
-  )
+  const visibleSessions = pickerList.slice(pickerStart, pickerStart + pickerListRows)
+
+  /** 聊天窗口：末端锚在 chatAnchor（null = 跟最新），窗口向历史方向展开。 */
+  const chatEnd = Math.min(chatAnchor ?? snapshot.entries.length, snapshot.entries.length)
+  const chatWindow = snapshot.entries.slice(Math.max(0, chatEnd - CHAT_WINDOW), chatEnd)
+
+  /** 回看浮层的窗口（offset 是从尾部往回的条数）。 */
+  const overlayTotal = snapshot.entries.length
+  const overlayEnd = Math.max(1, overlayTotal - Math.min(scrollOffset, Math.max(0, overlayTotal - 1)))
+  const overlayStart = Math.max(0, overlayEnd - OVERLAY_WINDOW)
+  const overlayWindow = snapshot.entries.slice(overlayStart, overlayEnd)
+
+  /** 聊天回看滚动：delta 负数往历史翻，翻到最底（end=len）就回到直播态。 */
+  const scrollChat = (delta: number): void => {
+    setChatAnchor((current) => {
+      const length = snapshot.entries.length
+      const end = Math.min(current ?? length, length)
+      const next = end + delta
+      return next >= length ? null : Math.max(0, next)
+    })
+  }
 
   /** 归档页的数据加载（Tab 切页时拉一次；动作之后刷新也走这里）。 */
   const reloadArchived = useCallback((): void => {
@@ -246,28 +317,12 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       )
   }
 
-  // 鼠标跟踪（DECSET 1000+1006，SGR 编码）只跟选择器同开同关：终端这时才上报
-  // 点击/滚轮（\x1b[<b;x;yM 按下、…m 释放）。ink 的 keypress 解析器不认识这个
-  // 序列，剥掉 ESC 头后原样送进 useInput（input='[<b;x;yM'、无任何键位标志）——
-  // 在键盘路由最顶层拦截。跟踪开着时终端原生前缀选区要走 Shift+拖拽，这是
-  // 全终端 TUI 的统一取舍；关闭后立即还原，聊天态完全不受影响。
-  useEffect(() => {
-    if (!picker) return
-    stdout?.write('\x1b[?1000;1006h')
-    return () => {
-      try {
-        stdout?.write('\x1b[?1000;1006l')
-      } catch {
-        // 卸载收尾时写不进就放弃，别让退出路径再抛错
-      }
-    }
-  }, [picker, stdout])
-
   /** 打开当前选中会话（Enter 与「点击已选中行」共用）：归档页先恢复回活动区再打开。 */
   const openSelectedSession = (): void => {
     const selected = pickerList[pickerIndex]
     if (selected === undefined) return
     setPicker(false)
+    setChatAnchor(null)
     if (pickerPage === 'archived') {
       pickerAction(() => runtime.restoreSessions([selected.id]))
       void runtime.openSession(selected.id)
@@ -276,27 +331,98 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
     }
   }
 
+  /** 应用当前选中的模型（Enter 与「点击已选中项」共用）。 */
+  const applyModel = (): void => {
+    const choice = modelList[modelIndex]
+    if (choice === undefined) return
+    setModelPicker(false)
+    void runtime.setModel(choice.value)
+  }
+
+  // ---- 卡片鼠标动作（与按键一一等价；键盘路由仍是唯一真源，这里只是映射）----
+  const handleApprovalAction = (action: ApprovalAction): void => {
+    if (approval === null) return
+    if (action === 'allow-once') runtime.answerApproval('allow-once')
+    else if (action === 'allow-session') {
+      if (approval.scopes.includes('session')) runtime.answerApproval('allow-session')
+    } else if (action === 'allow-always') {
+      if (approval.scopes.includes('always')) runtime.answerApproval('allow-always')
+    } else if (action === 'reject') runtime.answerApproval('reject')
+    else if (action === 'toggle-diff') setApprovalExpanded((current) => !current)
+  }
+
+  const handlePlanAction = (action: PlanAction | 'toggle'): void => {
+    if (action === 'approve') runtime.answerPlan('approved')
+    else if (action === 'reject') runtime.answerPlan('rejected')
+    else if (action === 'feedback') setPlanFeedback(true)
+    else if (action === 'toggle') setPlanExpanded((current) => !current)
+  }
+
+  const handleAskOption = (option: number): void => {
+    if (question === null || currentQuestion === undefined) return
+    if (currentQuestion.multiSelect) {
+      setAskChecked((current) =>
+        current.includes(option)
+          ? current.filter((position) => position !== option)
+          : [...current, option],
+      )
+      return
+    }
+    const chosen = currentQuestion.options[option]
+    if (chosen === undefined) return
+    runtime.answerQuestion(chosen.label)
+    advanceAsk()
+  }
+
   useInput((input, key) => {
-    // SGR 鼠标事件最顶层拦截（选择器开着时终端才上报；ink 传进来的形状是 '[<b;x;yM|m'）。
+    // SGR 鼠标事件最顶层拦截：滚轮按状态路由，左键点击派发给命中区。
     const mouse = /^\[<(\d+);(\d+);(\d+)([Mm])$/.exec(input)
     if (mouse !== null) {
-      if (!picker || pickerBuffer !== null) return // 改名输入态不响应鼠标
-      const [, button, , row, phase] = mouse
+      const [, button, colText, rowText, phase] = mouse
+      const col = Number(colText)
+      const row = Number(rowText)
       if (button === '64' || button === '65') {
-        // 滚轮：与 ↑↓ 同义，窗口由居中规则自动跟随。
+        // 滚轮：64 上 / 65 下，一步一条（浮层/聊天同款颗粒度）。
         const step = button === '64' ? -1 : 1
-        setPickerIndex((current) => Math.max(0, Math.min(current + step, pickerList.length - 1)))
+        if (picker) {
+          setPickerIndex((current) => Math.max(0, Math.min(current + step, pickerList.length - 1)))
+        } else if (modelPicker) {
+          setModelIndex((current) => Math.max(0, Math.min(current + step, modelList.length - 1)))
+        } else if (transcriptOpen) {
+          const maxOffset = Math.max(0, snapshot.entries.length - 1)
+          setScrollOffset((current) => Math.max(0, Math.min(current - step, maxOffset)))
+        } else {
+          scrollChat(step)
+        }
         return
       }
       if (button !== '0' || phase !== 'M') return // 只认左键按下；释放与右/中键忽略
-      // 点击行 → 列表下标：帧内容 = 终端行数 − 1 且从屏顶排，从内容底往上数
-      //（状态栏 + 底描边 + 提示行）再加窗口内余行；落到框外（标题/筛选/状态栏）无效。
-      const listTop = frameRows - statusbarLines - 1 - (pickerBuffer !== null ? 0 : 1) - listRows
-      const row0 = Number(row) - 1 - listTop
-      if (row0 < 0 || row0 >= listRows) return
-      const hit = pickerStart + row0
-      if (hit === pickerIndex) openSelectedSession()
-      else setPickerIndex(hit)
+      if (picker) {
+        if (pickerBuffer !== null) return // 改名输入态不响应鼠标
+        // 列表行从「顶边框+标题+筛选行」之后起排（改名行再往下顺延一行）。
+        const listTop = 3 + (pickerBuffer !== null ? 1 : 0)
+        const row0 = row - 1 - listTop
+        if (row0 < 0 || row0 >= pickerListRows) return
+        const hit = pickerStart + row0
+        if (hit === pickerIndex) openSelectedSession()
+        else setPickerIndex(hit)
+        return
+      }
+      if (modelPicker) {
+        const row0 = row - 1 - 3
+        if (row0 < 0 || row0 >= modelList.length) return
+        if (row0 === modelIndex) applyModel()
+        else setModelIndex(row0)
+        return
+      }
+      // 卡片页脚按钮 / 提问选项 / 回底提示条：点击时现量几何（避免节流渲染导致的
+      // 滞后），再询问判定函数；谁命中谁消费。
+      for (const entry of clickRegions.current) {
+        const top = absoluteTop(entry.node.current)
+        const height = measuredHeight(entry.node.current)
+        if (top === null || height === null) continue
+        if (entry.hit(col - 1, row - 1, top, height)) return
+      }
       return
     }
     if (key.ctrl && input === 'c') {
@@ -368,18 +494,14 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       return
     }
     if (transcriptOpen) {
-      const termRows = stdout?.rows ?? 24
-      const visible = Math.max(6, termRows - 8)
-      const maxOffset = Math.max(0, snapshot.entries.length - visible)
+      const maxOffset = Math.max(0, snapshot.entries.length - 1)
       if (key.escape || input === 'q' || (key.ctrl && input === 'o')) setTranscriptOpen(false)
       else if (key.upArrow || input === 'k')
-        setScrollOffset((current) => Math.max(0, Math.min(current, maxOffset) - 1))
+        setScrollOffset((current) => Math.min(maxOffset, current + 1))
       else if (key.downArrow || input === 'j')
-        setScrollOffset((current) => Math.min(maxOffset, Math.min(current, maxOffset) + 1))
-      else if (key.pageUp)
-        setScrollOffset((current) => Math.max(0, Math.min(current, maxOffset) - visible))
-      else if (key.pageDown)
-        setScrollOffset((current) => Math.min(maxOffset, Math.min(current, maxOffset) + visible))
+        setScrollOffset((current) => Math.max(0, current - 1))
+      else if (key.pageUp) setScrollOffset((current) => Math.min(maxOffset, current + 10))
+      else if (key.pageDown) setScrollOffset((current) => Math.max(0, current - 10))
       return
     }
     if (picker) {
@@ -474,11 +596,7 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
     if (modelPicker) {
       if (key.escape) setModelPicker(false)
       else if (key.return) {
-        const choice = modelList[modelIndex]
-        if (choice !== undefined) {
-          setModelPicker(false)
-          void runtime.setModel(choice.value)
-        }
+        applyModel()
       } else if (key.upArrow) setModelIndex((current) => Math.max(0, current - 1))
       else if (key.downArrow)
         setModelIndex((current) => Math.min(modelList.length - 1, current + 1))
@@ -499,6 +617,15 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
       runtime.interrupt()
       return
     }
+    // 聊天回看（对齐 codex 的 PgUp/PgDn；滚轮同义，↑↓ 留给输入框历史）。
+    if (key.pageUp) {
+      scrollChat(-10)
+      return
+    }
+    if (key.pageDown) {
+      scrollChat(10)
+      return
+    }
     if (key.ctrl && input === 't') {
       setExpandThinking((current) => !current)
       return
@@ -512,6 +639,7 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
 
   const handleSubmit = (text: string): void => {
     setNotice(null)
+    setChatAnchor(null)
     if (planFeedback) {
       setPlanFeedback(false)
       if (text !== '') runtime.answerPlan('rejected', text)
@@ -551,73 +679,78 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
     (plan !== null && !planFeedback)
 
   return (
-    <Box flexDirection="column" width="100%" gap={GAP.none}>
+    <Box height={frameRows} width="100%" flexDirection="column" overflow="hidden">
       {picker ? (
-        // 整屏选择器：遮掉聊天流/任务条/卡片（surface 状态原样保留，关掉即回来），
-        // 帧高精确凑满终端行数——重绘零滚动，鼠标命中的几何也靠它成立。
-        <>
-          {notice !== null ? (
-            <Box borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline}>
-              <Text {...TEXT.label} color={STATUS_COLOR.waiting} wrap="truncate-end">
-                {notice}
-              </Text>
-            </Box>
-          ) : null}
-          <Box height={pickerFiller} />
-          <SessionPicker
-            sessions={visibleSessions}
-            total={pickerList.length}
-            start={pickerStart}
-            index={pickerIndex}
-            page={pickerPage}
-            query={pickerQuery}
-            buffer={pickerBuffer}
-            armed={pickerArmed}
-            loading={snapshot.sessionsLoading}
-            sessionStates={snapshot.sessionStates}
-          />
-        </>
+        <SessionPicker
+          sessions={visibleSessions}
+          total={pickerList.length}
+          start={pickerStart}
+          index={pickerIndex}
+          page={pickerPage}
+          query={pickerQuery}
+          buffer={pickerBuffer}
+          armed={pickerArmed}
+          loading={snapshot.sessionsLoading}
+          sessionStates={snapshot.sessionStates}
+        />
+      ) : transcriptOpen ? (
+        <TranscriptOverlay entries={overlayWindow} start={overlayStart} total={overlayTotal} />
+      ) : modelPicker ? (
+        <ModelPicker models={modelList} index={modelIndex} query={modelQuery} />
       ) : (
         <>
-          {transcriptOpen ? (
-            <TranscriptOverlay
-              entries={snapshot.entries}
-              offset={scrollOffset}
-              visible={Math.max(6, (stdout?.rows ?? 24) - 8)}
-            />
-          ) : (
+          <Box flexDirection="column" flexGrow={1} overflowY="hidden" justifyContent="flex-end">
             <ChatView
-              entries={snapshot.entries}
+              entries={chatWindow}
               turnState={snapshot.status.turnState}
               expandThinking={expandThinking}
+              empty={snapshot.entries.length === 0}
             />
-          )}
-          <TaskStrips goal={snapshot.surfaces.goal} todos={snapshot.surfaces.todos} />
-          {approval !== null ? (
-            <ApprovalCard request={approval} expanded={approvalExpanded} />
-          ) : null}
-          {approval === null && question !== null ? (
-            <AskCard
-              ask={question}
-              index={askIndex}
-              checked={askChecked}
-              highlight={askHighlight}
-              text={askText}
-            />
-          ) : null}
-          {approval === null && question === null && plan !== null ? (
-            <PlanReviewCard plan={plan} expanded={planExpanded} feedbacking={planFeedback} />
-          ) : null}
-          {notice !== null ? (
-            <Box borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline} marginTop={GAP.tight}>
-              <Text {...TEXT.label} color={STATUS_COLOR.waiting}>
-                {notice}
-              </Text>
-            </Box>
-          ) : null}
-          {modelPicker ? (
-            <ModelPicker models={modelList} index={modelIndex} query={modelQuery} />
-          ) : (
+          </Box>
+          <Box flexShrink={0} flexDirection="column">
+            <TaskStrips goal={snapshot.surfaces.goal} todos={snapshot.surfaces.todos} />
+            {approval !== null ? (
+              <ApprovalCard
+                request={approval}
+                expanded={approvalExpanded}
+                onAction={handleApprovalAction}
+                registerClick={registerClick}
+              />
+            ) : null}
+            {approval === null && question !== null ? (
+              <AskCard
+                ask={question}
+                index={askIndex}
+                checked={askChecked}
+                highlight={askHighlight}
+                text={askText}
+                onOptionClick={handleAskOption}
+                registerClick={registerClick}
+              />
+            ) : null}
+            {approval === null && question === null && plan !== null ? (
+              <PlanReviewCard
+                plan={plan}
+                expanded={planExpanded}
+                feedbacking={planFeedback}
+                onAction={handlePlanAction}
+                registerClick={registerClick}
+              />
+            ) : null}
+            {notice !== null ? (
+              <Box borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline} marginTop={GAP.tight}>
+                <Text {...TEXT.label} color={STATUS_COLOR.waiting}>
+                  {notice}
+                </Text>
+              </Box>
+            ) : null}
+            {chatAnchor !== null ? (
+              <TailIndicator
+                hidden={snapshot.entries.length - chatEnd}
+                onJump={() => setChatAnchor(null)}
+                registerClick={registerClick}
+              />
+            ) : null}
             <Composer
               disabled={modal}
               models={models}
@@ -627,14 +760,16 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
               onPanelOpenChange={setPanelOpen}
               onSubmit={handleSubmit}
             />
-          )}
+          </Box>
         </>
       )}
-      <StatusBar
-        status={snapshot.status}
-        surfaces={snapshot.surfaces}
-        sessionStates={snapshot.sessionStates}
-      />
+      <Box flexShrink={0}>
+        <StatusBar
+          status={snapshot.status}
+          surfaces={snapshot.surfaces}
+          sessionStates={snapshot.sessionStates}
+        />
+      </Box>
     </Box>
   )
 }

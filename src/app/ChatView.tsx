@@ -1,6 +1,6 @@
 /**
- * 会话流：把 TranscriptEntry 序列渲染成终端块。只渲染尾部 N 条（回看走 Ctrl+O 浮层，
- * 见批次三；本组件保持「直播窗」定位）。
+ * 会话流：把 TranscriptEntry 序列渲染成终端块。只渲染 App 算好的「可见窗口」切片
+ * （整屏视口：根盒恒定高度、底对齐、老条目从顶上裁掉；回看走 Ctrl+O 浮层）。
  *
  * 排版走 theme 的三档文字：助手回答与用户输入是正文（默认前景），思考正文与系统
  * 说明是次要信息（暗淡色），思考标题是状态标签（暗淡色 + 状态色）。条目之间贴排，
@@ -17,9 +17,6 @@ import type { JSX } from 'react'
 import type { TranscriptEntry } from '../contract.js'
 import { ToolCard } from './ToolCard.js'
 import { ACCENT, DIFF_COLOR, GAP, INDENT, STATUS_COLOR, TEXT } from './theme.js'
-
-/** 尾部渲染窗口：防止长会话每帧 reconcile 过多节点。 */
-const TAIL = 30
 
 const oneLine = (text: string, limit: number): string => {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -179,16 +176,20 @@ export function ChatView({
   entries,
   turnState,
   expandThinking,
+  empty,
 }: {
+  /** 可见窗口切片（App 按「帧底对齐 + 顶部裁剪」算好传入）。 */
   entries: TranscriptEntry[]
   turnState: 'idle' | 'thinking' | 'working' | 'awaiting-approval'
   expandThinking: boolean
+  /** 全会话一条都没有（和「窗口恰好翻空」区分开，只有前者画开场提示）。 */
+  empty: boolean
 }): JSX.Element {
-  const tail = entries.slice(-TAIL)
+  const tail = entries
   // 直播尾（负 id）与最后定稿 text 条目才带光标闪烁位。
   const lastId = tail[tail.length - 1]?.id
   return (
-    <Box flexDirection="column" flexGrow={1} gap={GAP.none}>
+    <Box flexDirection="column" flexShrink={0} gap={GAP.none}>
       {tail.map((entry) => (
         <Entry
           key={entry.id}
@@ -201,7 +202,7 @@ export function ChatView({
           expandThinking={expandThinking}
         />
       ))}
-      {tail.length === 0 ? (
+      {empty ? (
         <Box marginLeft={INDENT.detail}>
           <Text {...TEXT.secondary}>输入消息开始对话；/help 查看命令，Esc 打断回合，Ctrl+O 回看全文。</Text>
         </Box>

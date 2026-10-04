@@ -1,12 +1,12 @@
 /**
  * 会话选择器（/resume）：整屏视口版。
  *
- * 列表超过终端行数时由 App 侧切成「可见窗口」传进来（按选中项居中取窗），帧高精确
- * 凑满终端行数——重绘零滚动（修掉「按 ↑↓ 画面跳回底部」），屏幕行与列表行一一对应，
- * 鼠标点击/滚轮的行号映射由此成立（事件拦截在 App 键盘路由顶层）。标题带全量条数与
- * 窗口范围；行内带标题、置顶标、后台状态点；Tab 切「活动 / 归档」两页；动作键全部
- * 走 Ctrl 组合（普通字符留给筛选输入）：Ctrl+R 改名、Ctrl+P 置顶、Ctrl+A 归档、
- * Ctrl+U 恢复、Ctrl+X 删除（再按一次确认，进回收站）、Ctrl+F 按最后一条用户消息分叉。
+ * 根盒在恒定帧里撑满状态栏之上的全部空间（App 根盒固定高度，溢出从底部裁掉），
+ * 列表按选中项居中取窗（App 侧算切片），屏幕行与列表行一一对应——鼠标点击/滚轮的
+ * 行号映射由此成立（事件拦截在 App 键盘路由顶层）。标题带全量条数与窗口范围；行内
+ * 带标题、置顶标、后台状态点；Tab 切「活动 / 归档」两页；动作键全部走 Ctrl 组合
+ * （普通字符留给筛选输入）：Ctrl+R 改名、Ctrl+P 置顶、Ctrl+A 归档、Ctrl+U 恢复、
+ * Ctrl+X 删除（再按一次确认，进回收站）、Ctrl+F 按最后一条用户消息分叉。
  * 键盘与鼠标路由都在 App 顶层统一处理，本组件纯展示。
  *
  * @module dsc-tui/app/SessionPicker
@@ -71,9 +71,11 @@ export function SessionPicker({
       borderColor={BORDER.active}
       paddingX={PAD.inline}
       flexDirection="column"
-      marginTop={GAP.tight}
+      flexGrow={1}
+      overflowY="hidden"
       gap={GAP.none}
     >
+      <Box flexShrink={0} flexDirection="column" gap={GAP.none}>
       <Text {...TEXT.label} color={ACCENT} wrap="truncate-end">
         {page === 'active' ? '恢复会话' : '归档会话'}
         {loading ? '（读取中…）' : `（${total} 条）`}
@@ -143,6 +145,7 @@ export function SessionPicker({
           {' · '}Esc 关闭
         </Text>
       )}
+      </Box>
     </Box>
   )
 }
