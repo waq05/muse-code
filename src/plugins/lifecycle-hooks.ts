@@ -251,7 +251,11 @@ export const lifecycleHooksPlugin: Plugin.Object = {
     offs.push(ctx.on('dsc/compacted', () => fire('PostCompact', '', {})))
     offs.push(ctx.on('dsc/exit', () => fire('SessionEnd', '', { reason: 'exit' })))
     offs.push(
-      ctx.on('dsc/turn-end', (reason) => {
+      ctx.on('dsc/turn-end', (reason, signal) => {
+        // 0.6.48：只认当前查看会话的回合。Stop/Interrupt 钩子取的
+        // lastAssistantText 来自当前会话，后台 agent 收工时触发会拿错文本。
+        // 载荷缺省（老式直接 emit）按当前会话算。
+        if (signal !== undefined && signal.sessionId !== ctx.session.current().meta.id) return
         if (reason === 'completed') {
           fire('Stop', '', {
             reason,

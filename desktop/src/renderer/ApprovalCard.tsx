@@ -25,6 +25,8 @@ export function ApprovalCard(props: {
   onAnswer(answer: ApprovalAnswer): void
   /** 工作目录：内嵌 diff 的折叠行把目标路径显示成相对路径。 */
   cwd?: string
+  /** 会话归属标注（0.6.49）：后台会话的卡弹到当前视图时显示「来自会话 xx」；当前会话自己的卡不标。 */
+  ownerLabel?: string | null
 }): JSX.Element {
   const { request } = props
   const scopes: Array<'once' | 'session' | 'always'> = request.scopes.length > 0 ? request.scopes : ['once']
@@ -67,6 +69,9 @@ export function ApprovalCard(props: {
         </span>
       </div>
       <div className="approval-args">{request.argsSummary}</div>
+      {props.ownerLabel != null && props.ownerLabel !== '' && (
+        <div className="approval-owner">来自会话「{props.ownerLabel}」</div>
+      )}
       {request.diff !== undefined && (
         <div className="approval-diff">
           <div className="approval-diff-head">

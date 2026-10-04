@@ -453,11 +453,15 @@ ${body}
       }
       const line = `队友 ${teammate.name}，角色 ${teammate.role}，${state}`
       const live = ctx.session.current() === teammate.parentSession
-      if (config.notify === 'auto' && live) {
-        ctx.agent.followup(notice)
-        ctx.transcript.system(`${line}，汇报已并入下一轮`)
+      // 0.6.48 常驻多 agent：父会话正被查看、或它的 agent 还常驻（后台跑着/刚切走），
+      // 汇报都投给那个 agent（跑动中进收件箱，闲置的唤起一轮后台回合）；已经收摊的
+      // 才写文件等用户回去看到——不打断也不抢跑。
+      const parentResident = ctx.agent.hasAgent(teammate.parentSession.meta.id)
+      if (config.notify === 'auto' && (live || parentResident)) {
+        ctx.agent.followup(notice, undefined, teammate.parentSession.meta.id)
+        ctx.transcript.system(`${line}，汇报已${live ? '并入下一轮' : '投进后台会话'}`)
       } else {
-        // 静默，或者用户已经切去别的会话：话写进它所属的那个会话文件，
+        // 静默，或者父会话的 agent 已收摊：话写进它所属的那个会话文件，
         // 等用户回到那个会话再说话时模型自然看到，不打断也不抢跑。
         teammate.parentSession.appendUser(notice)
         ctx.transcript.system(

@@ -548,6 +548,8 @@ export interface ApprovalRequestView {
   /** 当前权限模式与协作模式（卡片上说明现在是哪一档）。 */
   policy: ApprovalPolicy
   mode: CollaborationMode
+  /** 发起审批的会话 jsonl 路径（0.6.49）：后台会话的卡弹到当前视图时，界面据此标注「来自哪个会话」。 */
+  sessionPath?: string
   /** write / edit 的「将做的改动」；其他工具或推演不出时缺省。 */
   diff?: ApprovalDiffView
 }
@@ -970,9 +972,11 @@ export interface ProviderDraft {
 
 /**
  * 跨会话运行状态（T21）：侧栏会话行状态点的值域。
- * working = 那个会话正在跑（当前回合进行中，或它是干着活的队友）；awaiting-approval = 挂着等用户批。
+ * working = 那个会话正在跑（当前回合进行中，或它是干着活的队友）；
+ * awaiting-approval = 挂着等用户批；
+ * just-finished = 后台跑完时你没在看（0.6.48 常驻多 agent），点开即熄。
  */
-export type SessionRunState = 'working' | 'awaiting-approval'
+export type SessionRunState = 'working' | 'awaiting-approval' | 'just-finished'
 
 /** UI 每帧读取的运行时快照（useSyncExternalStore 的 getSnapshot 返回）。 */
 export interface RuntimeSnapshot {
@@ -985,7 +989,8 @@ export interface RuntimeSnapshot {
   sessionsLoading: boolean
   /**
    * 跨会话运行状态面（T21）：会话 jsonl 路径 → 运行状态，侧栏状态点的数据源。
-   * 收录当前会话（按 turnState）与正干着活的队友会话；不在场/收工的会话不出现。
+   * 收录当前会话（按 turnState）、后台常驻 agent（dsc/agent-status 事件喂进来的，
+   * 含「已完成未读」徽标）与正干着活的队友会话；不在场/收工已看的会话不出现。
    */
   sessionStates: Record<string, SessionRunState>
 }
@@ -1000,6 +1005,8 @@ export interface RuntimeSnapshot {
  *     条目报告；
  *   - openSession(undefined) 新建会话并切换；openSession(id) 恢复之；
  *     切换时清空 entries。
+ *   - 0.6.48 起：切换会话**不打断**原来那个会话正在跑的回合（它转入后台
+ *     继续跑完，侧栏亮状态点与「已完成」徽标）；打断只发生在显式 interrupt()。
  */
 export interface DscRuntime {
   subscribe(listener: () => void): () => void
@@ -1009,8 +1016,12 @@ export interface DscRuntime {
    * @param images - 随消息发送的图片（data URL 清单）；当前模型没勾「照片」时发送方要先拦住。
    */
   submit(text: string, images?: string[]): void
-  /** 尝试取消当前回合（M4 前可为 no-op + system 提示）。 */
-  interrupt(): void
+  /**
+   * 取消在跑的回合。缺省停当前查看的会话；指定会话 jsonl 路径时停那个**后台**
+   * 会话（0.6.49：侧栏行右键「停止」）——回合以 aborted 收尾，挂着的审批卡
+   * 随信号兜底成 reject。
+   */
+  interrupt(filePath?: string): void
   openSession(id?: string): Promise<void>
   compact(): Promise<void>
   setModel(model: string): Promise<void>

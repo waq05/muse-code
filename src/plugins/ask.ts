@@ -9,6 +9,9 @@
  * 界面每交一题就调一次 `answerQuestion`，服务按题序收下，收齐整批才让 ask_user 这个
  * 工具调用落地——所以模型侧看到的仍然是「一次调用拿回全部答案」。
  *
+ * 0.6.49 常驻模型：卡跟自己的会话走——多卡并存（每个会话最多一张，互不顶掉），
+ * surface 只出「当前查看会话」的卡；切会话不再作废挂起的提问（后台会话的卡继续等）。
+ *
  * @module dsc/plugins/ask
  */
 import { randomUUID } from 'node:crypto'
@@ -31,8 +34,6 @@ const DEFAULTS: AskLimits = { maxQuestions: 3, maxOptions: 4 }
 
 /** 中断这一轮时替没答的题写的实话（模型据此知道这句不是用户的话）。 */
 const INTERRUPTED = '（用户没回答就中断了这一轮）'
-/** 换会话时替没答的题写的实话。 */
-const SESSION_SWITCHED = '（切换了会话，这个问题作废）'
 /** 程序退出时替没答的题写的实话。 */
 const EXITED = '（用户退出了程序，这个问题没回答）'
 /** 上一批还没答完就被新的一批顶掉时，替没答的题写的实话。 */
@@ -72,36 +73,57 @@ function withRest(
 
 export const askPlugin: Plugin.Object = {
   name: 'ask',
-  inject: ['tools', 'surfaces', 'waiting'],
+  inject: ['session', 'tools', 'surfaces', 'waiting'],
   provide: 'ask',
   apply(ctx, passed) {
     let limits = readLimits(passed)
-    /** 挂着等答的那一批提问；null = 没挂着。 */
-    let pending: {
-      view: AskUserView
-      answers: string[]
-      /** 收尾：清掉挂起状态、广播快照失效、让 ask 的 Promise 落地。只有它是出口。 */
-      settle(answers: string[]): void
-    } | null = null
+    /** 挂着等答的批次：卡 id → 卡。多卡并存（0.6.49），每个会话最多一张。 */
+    const pendings = new Map<
+      string,
+      {
+        view: AskUserView
+        answers: string[]
+        /** 提问会话（后台提问也归属它）：surface 认领与应答只认当前查看会话的那张。 */
+        sessionPath: string
+        /** 收尾：清掉挂起状态、广播快照失效、让 ask 的 Promise 落地。只有它是出口。
+         *  wake = 答完之后回合还要继续（状态点翻回 working）；中断/退出路径传 false。 */
+        settle(final: string[], wake?: boolean): void
+      }
+    >()
 
     const touch = (): void => ctx.emit('dsc/changed')
 
+    /** 当前查看会话的那张卡（没有就 undefined）——surface 与应答都只认它。 */
+    const cardOfCurrent = () => {
+      const path = ctx.session.current().filePath
+      for (const card of pendings.values()) {
+        if (card.sessionPath === path) return card
+      }
+      return undefined
+    }
+
     /**
-     * 一次挂出一批问题，挂起直到整批答完（跳过也算答完）、中断、换会话或退出。
+     * 一次挂出一批问题，挂起直到整批答完（跳过也算答完）、中断或退出。
      *
      * 收答案只走 `answerQuestion` 这一条路，而且按题序：第 1 次调用收下第 1 题的答案，
      * 第 2 次收第 2 题……没到齐之前视图**一动不动**——界面已经点了统一提交、本地草稿也清了，
      * 这里要是中途 `touch()`，快照会推着一张半空的卡回去重画一次。
      * @param input - 这一批题目（至少一题，调用方保证）。
      * @param signal - 这一轮工具调用的中断信号。
+     * @param sessionPath - 提问会话的 jsonl 路径（0.6.49）：后台回合提问时归属它，缺省按当前会话。
      */
-    const askMany = (input: readonly AskQuestionItem[], signal: AbortSignal): Promise<string[]> => {
+    const askMany = (input: readonly AskQuestionItem[], signal: AbortSignal, sessionPath?: string): Promise<string[]> => {
       // 空批不该挂出一张没有题的卡：宁可当场报错，也不给界面一张空卡。
       if (input.length === 0) return Promise.reject(new Error('一批问题至少要有一个'))
       return new Promise<string[]>((resolveDone) => {
-        // 同一时刻只挂一批：真有上一批没走完（理论上不该有），也得给它一个交代，
-        // 不能让它的 Promise 永远悬着。
-        pending?.settle(withRest(pending.view.questions ?? [], pending.answers, SUPERSEDED))
+        // 提问会话按工具运行身份显式解析（后台回合提问时 current() 是别家会话）。
+        const session =
+          (sessionPath !== undefined ? ctx.get('agent')?.sessionFor(sessionPath) : undefined) ?? ctx.session.current()
+        const path = session.filePath
+        // 同会话重复挂卡（防御，正常一轮只挂一张）：给旧卡一个交代，不能让它的 Promise 永远悬着。
+        for (const card of [...pendings.values()]) {
+          if (card.sessionPath === path) card.settle(withRest(card.view.questions ?? [], card.answers, SUPERSEDED), false)
+        }
         const questions: AskQuestionItem[] = input.map((item) => ({
           ...item,
           options: item.options.map((option) => ({ ...option })),
@@ -109,16 +131,21 @@ export const askPlugin: Plugin.Object = {
         // 单题字段就是第 1 题的投影，和 questions[0] 同源，不会出现两处不一致。
         const view: AskUserView = { id: randomUUID(), ...questions[0], questions }
         const answers: string[] = []
-        const settle = (final: string[]): void => {
-          if (pending === null || pending.settle !== settle) return
-          pending = null
+        const settle = (final: string[], wake = true): void => {
+          if (!pendings.has(view.id)) return
+          pendings.delete(view.id)
           signal.removeEventListener('abort', onAbort)
+          // 答完之后回合还要继续：状态点从「等审批」翻回 working；中断/退出交给 turn-end 收口。
+          if (wake) {
+            ctx.emit('dsc/agent-status', { sessionId: session.meta.id, path, state: 'working' })
+          }
           touch()
           resolveDone(final)
         }
-        const onAbort = (): void => settle(withRest(questions, answers, INTERRUPTED))
-        pending = { view, answers, settle }
+        const onAbort = (): void => settle(withRest(questions, answers, INTERRUPTED), false)
+        pendings.set(view.id, { view, answers, sessionPath: path, settle })
         signal.addEventListener('abort', onAbort, { once: true })
+        ctx.emit('dsc/agent-status', { sessionId: session.meta.id, path, state: 'awaiting-approval' })
         // 信号进来就已经中断了（abort 事件不会再补发一次）：立刻按「没回答」收尾，别挂死。
         if (signal.aborted) onAbort()
         else touch()
@@ -127,9 +154,9 @@ export const askPlugin: Plugin.Object = {
 
     const service: AskService = {
       pendingQuestion() {
-        return pending === null ? null : pending.view
+        return cardOfCurrent()?.view ?? null
       },
-      ask(question: AskUserViewInput, signal: AbortSignal) {
+      ask(question: AskUserViewInput, signal: AbortSignal, sessionPath?: string) {
         return askMany(
           [
             {
@@ -141,12 +168,13 @@ export const askPlugin: Plugin.Object = {
             },
           ],
           signal,
+          sessionPath,
         ).then((answers) => answers[0] ?? '')
       },
       askMany,
       answerQuestion(answer) {
-        const current = pending
-        if (current === null) return
+        const current = cardOfCurrent()
+        if (current === undefined) return
         current.answers.push(answer)
         // 整批还没收齐：视图保持不变，等最后一题。收齐了才收尾并 resolve。
         if (current.answers.length < (current.view.questions?.length ?? 1)) return
@@ -155,7 +183,7 @@ export const askPlugin: Plugin.Object = {
     }
     ctx.provide('ask', service)
     ctx.surfaces.register('pendingQuestion', () => service.pendingQuestion())
-    ctx.waiting.register('ask', () => pending !== null)
+    ctx.waiting.register('ask', () => pendings.size > 0)
 
     const askUserTool: ToolEntry = {
       name: 'ask_user',
@@ -231,7 +259,7 @@ export const askPlugin: Plugin.Object = {
           })
         }
         if (questions.length === 0) throw new Error('问题正文都是空的')
-        const answers = await askMany(questions, runCtx.signal)
+        const answers = await askMany(questions, runCtx.signal, runCtx.sessionPath)
         // 答案按题序回给模型；跳过的题界面已经替它写了「（用户跳过了这一题）」，原样带过去。
         return questions
           .map((item, index) => `${item.question}\n用户回答：${answers[index] ?? '（用户跳过了这一题）'}`)
@@ -240,15 +268,11 @@ export const askPlugin: Plugin.Object = {
     }
     ctx.tools.register(askUserTool)
 
-    ctx.on('dsc/session-open', () => {
-      // 提问不跨会话留存：换会话时这批卡连同等待一起清掉；已经答过的题保留原话。
-      if (pending === null) return
-      pending.settle(withRest(pending.view.questions ?? [], pending.answers, SESSION_SWITCHED))
-    })
-
     ctx.on('dsc/exit', () => {
-      if (pending === null) return
-      pending.settle(withRest(pending.view.questions ?? [], pending.answers, EXITED))
+      for (const card of [...pendings.values()]) {
+        card.settle(withRest(card.view.questions ?? [], card.answers, EXITED), false)
+      }
+      pendings.clear()
     })
   },
 }

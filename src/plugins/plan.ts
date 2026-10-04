@@ -8,9 +8,14 @@
  *   4. 批准后切回执行档——这是模式服务的事，所以这里声明 `inject: ['mode']` 调它，
  *      而不是反过来让模式偷偷查计划（依赖方向只有一条，依赖图上没有环）。
  *
+ * 0.6.49 常驻模型：卡跟自己的会话走——多卡并存（每个会话最多一张，互不顶掉），
+ * surface 只出「当前查看会话」的卡；切会话不再把挂起的评审按拒收尾（后台会话的卡
+ * 继续等它的用户，对齐 dsh 卡只画在发起会话视图里的语义）。
+ *
  * @module dsc/plugins/plan
  */
 import { mkdir, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { planFilePath } from '../core/modes.js'
@@ -25,40 +30,61 @@ interface PlanOutcome {
   feedback?: string
 }
 
+/** 一张活挂起的评审卡。 */
+interface PendingPlanCard {
+  id: string
+  view: PlanView
+  /** 提交计划的会话（后台提卡也归属它）：落库、事件归属、surface 认领全靠它。 */
+  sessionPath: string
+  /** 拒绝时用户附的反馈原文（answerPlan 带进来，经 exit_plan_mode 的结果文案捎给模型）。 */
+  rejectionFeedback?: string
+  finish(decision: PlanDecision, quiet?: boolean): void
+}
+
 export const planPlugin: Plugin.Object = {
   name: 'plan',
   inject: ['session', 'tools', 'mode', 'surfaces', 'waiting'],
   provide: 'plan',
   apply(ctx) {
-    const initial = ctx.session.current().state('plan')
-    let plan: PlanView | null = initial?.decision === 'pending' ? initial : null
-    let planDone: ((decision: PlanDecision, quiet?: boolean) => void) | null = null
-    /** 拒绝时用户附的反馈原文（answerPlan 带进来，经 exit_plan_mode 的结果文案捎给模型）。 */
-    let rejectionFeedback: string | undefined
+    /** 当前查看会话的「僵尸」计划卡：状态条目里 decision=pending 的计划（进程重启前留下的）。 */
+    const pendingStateOf = (session: { state(name: string): unknown }): PlanView | null => {
+      const state = session.state('plan') as PlanView | undefined
+      return state?.decision === 'pending' ? state : null
+    }
+    let restored: PlanView | null = pendingStateOf(ctx.session.current())
+    /** 活挂起的评审卡：卡 id → 卡。多卡并存（0.6.49）。 */
+    const pendings = new Map<string, PendingPlanCard>()
 
     const touch = (): void => ctx.emit('dsc/changed')
 
+    /** 当前查看会话的那张活卡（没有就 null）——surface 与应答都只认它。 */
+    const cardOfCurrent = (): PendingPlanCard | undefined => {
+      const path = ctx.session.current().filePath
+      for (const card of pendings.values()) {
+        if (card.sessionPath === path) return card
+      }
+      return undefined
+    }
+
     /** 交一份计划等用户批：挂起直到批准 / 拒绝 / 这一轮被打断。 */
-    const propose = (next: PlanView, signal: AbortSignal): Promise<PlanOutcome> =>
+    const propose = (next: PlanView, signal: AbortSignal, sessionPath?: string): Promise<PlanOutcome> =>
       new Promise<PlanOutcome>((resolveDone) => {
-        // 评审可能比提交它的回合活得久（挂起时切走会话，T29）：落库与审计必须用
-        // 「提交时」的那个会话——session-open 先于 agent 的 abort 到（插件顺序），
-        // 那时 ctx.session.current() 已经是新会话了。
-        const proposed = ctx.session.current()
-        plan = next
-        ctx.emit('dsc/plan', next)
+        // 提交会话按工具运行身份显式解析（0.6.49 常驻模型：后台回合提卡时
+        // ctx.session.current() 是用户正看着的别家会话，落库绝不能跟着它走）。
+        const proposed =
+          (sessionPath !== undefined ? ctx.get('agent')?.sessionFor(sessionPath) : undefined) ?? ctx.session.current()
+        const path = proposed.filePath
+        const id = randomUUID()
         const finish = (decision: PlanDecision, quiet = false): void => {
-          if (planDone === null) return
-          planDone = null
-          plan = plan === null ? null : { ...plan, decision }
-          if (plan !== null) {
-            proposed.appendState('plan', plan)
-            ctx.emit('dsc/plan', plan)
-          }
-          // quiet = 切会话 / 退出这类「没人做决定」的清理：卡收掉、状态记成拒绝，
-          // 但不再往（可能已经切走的）界面上喊一嗓子。
+          const card = pendings.get(id)
+          if (card === undefined) return
+          pendings.delete(id)
+          const settled: PlanView = { ...next, decision }
+          proposed.appendState('plan', settled)
+          ctx.emit('dsc/plan', settled, path)
+          // quiet = 退出这类「没人做决定」的清理：卡收掉、状态记成拒绝，不再喊界面。
           if (!quiet) {
-            ctx.emit('dsc/notice', decision === 'approved' ? '计划已批准，切回执行模式开工。' : '计划未获批准，留在计划模式。')
+            ctx.emit('dsc/notice', decision === 'approved' ? '计划已批准，切回执行模式开工。' : '计划未获批准，留在计划模式。', undefined, path)
           }
           // 批准之后该由哪一档继续干活，是模式服务自己的事：这里只是把结果告诉它。
           if (decision === 'approved') ctx.mode.setMode('build')
@@ -69,35 +95,43 @@ export const planPlugin: Plugin.Object = {
             sessionId: proposed.meta.id,
             cwd: proposed.meta.cwd,
           })
+          // 提卡会话还在跑（决定完工具就返回、回合继续）：状态点从「等审批」翻回 working；
+          // quiet 路径交给回合收尾的 turn-end 收口。
+          if (!quiet) {
+            ctx.emit('dsc/agent-status', { sessionId: proposed.meta.id, path, state: 'working' })
+          }
           touch()
-          const feedback = rejectionFeedback
-          rejectionFeedback = undefined
+          const feedback = card.rejectionFeedback
           resolveDone({
             decision,
             ...(decision === 'rejected' && feedback !== undefined ? { feedback } : {}),
           })
         }
-        planDone = finish
+        pendings.set(id, { id, view: next, sessionPath: path, finish })
+        ctx.emit('dsc/plan', next, path)
+        ctx.emit('dsc/agent-status', { sessionId: proposed.meta.id, path, state: 'awaiting-approval' })
         signal.addEventListener('abort', () => finish('rejected'), { once: true })
         touch()
       })
 
     const service: PlanService = {
       pendingPlan() {
-        return plan
+        // 只出当前查看会话的卡：活卡优先，没有再看这个会话状态里留的僵尸卡。
+        return cardOfCurrent()?.view ?? restored
       },
       proposePlan: (input, signal) => propose({ ...input, decision: 'pending' }, signal).then((outcome) => outcome.decision),
       answerPlan(decision, feedback) {
-        if (planDone === null) return
+        const card = cardOfCurrent()
+        if (card === undefined) return
         if (decision === 'rejected' && typeof feedback === 'string' && feedback.trim() !== '') {
-          rejectionFeedback = feedback.trim()
+          card.rejectionFeedback = feedback.trim()
         }
-        planDone(decision)
+        card.finish(decision)
       },
     }
     ctx.provide('plan', service)
     ctx.surfaces.register('pendingPlan', () => service.pendingPlan())
-    ctx.waiting.register('plan', () => plan !== null)
+    ctx.waiting.register('plan', () => pendings.size > 0 || restored !== null)
 
     const exitPlanTool: ToolEntry = {
       name: 'exit_plan_mode',
@@ -123,7 +157,7 @@ export const planPlugin: Plugin.Object = {
         const file = planFilePath(runCtx.cwd, title)
         await mkdir(dirname(file), { recursive: true })
         await writeFile(file, `${text}\n`, 'utf8')
-        const outcome = await propose({ file, title, text, decision: 'pending' }, runCtx.signal)
+        const outcome = await propose({ file, title, text, decision: 'pending' }, runCtx.signal, runCtx.sessionPath)
         if (outcome.decision === 'approved') {
           return (
             `用户已批准这份计划（${file}）。现在按计划开工：` +
@@ -139,19 +173,18 @@ export const planPlugin: Plugin.Object = {
     ctx.tools.register(exitPlanTool)
 
     ctx.on('dsc/session-open', ({ session, filePath }) => {
-      // T29：挂起的评审先收尾再清场。只置空不 resolve 的话，exit_plan_mode 的 await
-      // 永远不返回，agent 循环的 running 永远为真——此后所有消息都变成轮中途插话，
-      // 宿主只能重启。落库走 propose 时捕获的那个会话，不会写进切换后的新会话。
-      planDone?.('rejected', true)
-      const restored = session.state('plan')
-      plan = restored?.decision === 'pending' ? restored : null
-      // 恢复会话时把计划条目放回会话流（这张卡用户批过也要看得见批了什么）。
-      if (filePath !== undefined && restored !== undefined) ctx.emit('dsc/plan', restored)
+      // 0.6.49 常驻模型：切会话不再收尾挂起的评审（后台会话的卡继续等它的用户，
+      // T29 当年的悬 Promise 死锁在常驻模型下不存在了——提卡的 agent 活着）。
+      // 这里只换「当前查看会话」的僵尸计划卡：恢复会话时把计划条目放回会话流，
+      // 这张卡用户批过也要看得见批了什么。
+      restored = pendingStateOf(session)
+      if (filePath !== undefined && restored !== null) ctx.emit('dsc/plan', restored)
       touch()
     })
 
     ctx.on('dsc/exit', () => {
-      planDone?.('rejected', true)
+      for (const card of [...pendings.values()]) card.finish('rejected', true)
+      pendings.clear()
     })
   },
 }

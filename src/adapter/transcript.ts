@@ -66,6 +66,18 @@ export class Transcript {
   working = false
   /** 事件驱动的 turn 状态（turn/start→true，turn/end→false；避免依赖 agent 瞬时值）。 */
   inTurn = false
+
+  /**
+   * 切回到一个回合还在跑的会话时补「回合中」状态（0.6.48 常驻多 agent）。
+   * 那一轮的 turn/start 发生在你切走的期间，转录层没收到，重放日志也补不出
+   * 这个纯内存状态——只能由转录插件按 agent 注册表的实时状态种回来。
+   * working 取不了真值（不知道回合此刻在流式还是在跑工具），先按「思考中」处理，
+   * 下一帧事件到达自然修正。
+   */
+  seedTurnState(running: boolean): void {
+    this.inTurn = running
+    if (!running) this.working = false
+  }
   /**
    * 本会话已经落过几条压缩标记（`clear()` 归零）。新标记的 `count` 就是它加一，
    * 因此这个数就是「第几次压缩」。标记只在真正压过的地方产生，所以不必认识压缩服务。

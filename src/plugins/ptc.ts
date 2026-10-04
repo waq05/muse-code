@@ -62,8 +62,14 @@ export const ptcPlugin: Plugin.Object = {
      * @param code - 函数体源码。
      * @param cwd - 会话工作目录（内部工具调用按它解析相对路径）。
      * @param signal - 这一轮的取消信号（用户打断时脚本连同内部调用一起停）。
+     * @param session - 发起脚本的会话身份：内部工具调用过守卫链/落台账都按它归属（0.6.48）。
      */
-    const runScript = async (code: string, cwd: string, signal: AbortSignal): Promise<string> => {
+    const runScript = async (
+      code: string,
+      cwd: string,
+      signal: AbortSignal,
+      session: { id: string; path: string },
+    ): Promise<string> => {
       // 注册表在这一刻快照：脚本跑的过程中插件热挂载不会让 SDK 中途变样
       const registry = new Map<string, ToolEntry>(
         ctx.tools
@@ -151,6 +157,8 @@ export const ptcPlugin: Plugin.Object = {
           cwd,
           args,
           signal,
+          sessionId: session.id,
+          sessionPath: session.path,
           ...callFacts(args, cwd),
         })
         if (verdict.action === 'deny') {
@@ -160,7 +168,8 @@ export const ptcPlugin: Plugin.Object = {
         }
         try {
           // T38：写/执行走独占闸，只读走并发闸（闸的规矩见上面的注释）
-          const execute = (): ReturnType<typeof entry.run> => entry.run(args, { cwd, signal })
+          const execute = (): ReturnType<typeof entry.run> =>
+            entry.run(args, { cwd, signal, sessionId: session.id, sessionPath: session.path })
           const output = entry.risk === 'read' ? await gate.read(execute) : await gate.write(execute)
           const raw = typeof output === 'string' ? output : output.text
           // 工具结果里的密钥形状字符串不进脚本、不进日志（遮红挂在观察者链上）
@@ -261,7 +270,11 @@ export const ptcPlugin: Plugin.Object = {
       risk: 'exec',
       // 只属于 PTC 模式：切到别的模式时它不会出现在模型面前
       presets: [PTC_PRESET],
-      run: async (args, runCtx) => runScript(String(args.code ?? ''), runCtx.cwd, runCtx.signal),
+      run: async (args, runCtx) =>
+        runScript(String(args.code ?? ''), runCtx.cwd, runCtx.signal, {
+          id: runCtx.sessionId,
+          path: runCtx.sessionPath,
+        }),
     })
   },
 }

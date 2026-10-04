@@ -217,9 +217,13 @@ export const goalPlugin: Plugin.Object = {
     /**
      * 目标自动续跑：本轮干净结束后，目标还开着就自己补一条消息接着跑。
      * 走 agent 的排队通道，所以不会跟用户刚发的消息抢；有卡挂着时 takeGoalRound 会挡下来。
+     * 0.6.48：只认当前查看会话的回合——目标状态是跟着查看会话走的，
+     * 后台 agent 的回合结束不该偷跑这里的目标。
      */
-    ctx.on('dsc/turn-end', (reason) => {
+    ctx.on('dsc/turn-end', (reason, signal) => {
       if (reason !== 'completed') return
+      // 载荷缺省（老式直接 emit）按当前会话算
+      if (signal !== undefined && signal.sessionId !== ctx.session.current().meta.id) return
       setTimeout(() => {
         const reminder = service.takeGoalRound()
         if (reminder === null) return

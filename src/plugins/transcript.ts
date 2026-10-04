@@ -31,14 +31,39 @@ export const transcriptPlugin: Plugin.Object = {
       for (const listener of [...listeners]) listener()
     }
 
+    /**
+     * 跨会话运行状态面（0.6.48 常驻多 agent）：后台 agent 的状态点来源。
+     * 键 = 会话 jsonl 路径。dsc/agent-status 事件驱动；当前查看会话的条目不进
+     * 这张表——它的状态由 turnState/surfaces 推导（getSnapshot 合并时跳过）。
+     * 「just-finished」是转录层自己造的值：后台会话收工时你没在看，侧栏亮
+     * 「已完成」徽标，点开那个会话（session-open）就熄掉。
+     */
+    const backgroundStates = new Map<string, RuntimeSnapshot['sessionStates'][string]>()
+    ctx.on('dsc/agent-status', ({ path, state }) => {
+      if (state === 'idle') {
+        const previous = backgroundStates.get(path)
+        backgroundStates.delete(path)
+        if (previous !== undefined && path !== ctx.session.current().filePath) {
+          backgroundStates.set(path, 'just-finished')
+        }
+      } else {
+        backgroundStates.set(path, state)
+      }
+      invalidate()
+    })
+
     ctx.on('dsc/changed', () => invalidate())
     // 第二个参数是通知的类别：'compaction' = 「历史刚被压缩」的落点（compact 插件发）。
     // 本插件认这个类别给条目打压缩标记；不认识的类别按普通通知处理。
-    ctx.on('dsc/notice', (text, kind) => {
+    // 事件可带会话归属（0.6.49）：后台会话发的通知/计划卡不进当前查看会话的转录，
+    // 它们留在自己会话的 jsonl/状态里，切回去时由会话重放与 surface 恢复。缺省按当前会话。
+    ctx.on('dsc/notice', (text, kind, sessionPath) => {
+      if (sessionPath !== undefined && sessionPath !== ctx.session.current().filePath) return
       transcript.system(text, kind === 'compaction')
       invalidate()
     })
-    ctx.on('dsc/plan', (plan) => {
+    ctx.on('dsc/plan', (plan, sessionPath) => {
+      if (sessionPath !== undefined && sessionPath !== ctx.session.current().filePath) return
       transcript.plan(plan)
       invalidate()
     })
@@ -66,23 +91,35 @@ export const transcriptPlugin: Plugin.Object = {
     }
 
     ctx.on('dsc/session-open', ({ filePath }) => {
-      // 重复打开同一条会话：条目一个字都不动（连「已恢复会话」那行提示也不重复写），
-      // 否则这次重建会把渲染层重挂一遍。
-      if (filePath !== undefined && replayIsRedundant()) return
+      const current = ctx.session.current()
+      // 0.6.48：切回运行中的会话要把「回合中」状态种回来——那一轮的 turn/start
+      // 发生在上次切走的期间，转录层没收到，重放日志也补不出这个纯内存状态。
+      const seedTurn = (): void => {
+        transcript.seedTurnState(ctx.get('agent')?.isRunning(current.filePath) ?? false)
+      }
+      // 「已完成未读」徽标看到即熄；同会话重复打开（内容没变）条目一个字都不动
+      //（连「已恢复会话」那行提示也不重复写），否则这次重建会把渲染层重挂一遍。
+      const badgeCleared = backgroundStates.delete(current.filePath)
+      if (filePath !== undefined && replayIsRedundant()) {
+        seedTurn()
+        if (badgeCleared) invalidate()
+        return
+      }
       transcript.clear()
       if (filePath !== undefined) {
         // 恢复会话：历史消息重放进条目（桌面端/TUI 点历史会话能回看内容）
         transcript.replayHistory(
-          ctx.session.current().messages,
-          ctx.session.current().toolErrors,
-          ctx.session.current().fileChanges,
+          current.messages,
+          current.toolErrors,
+          current.fileChanges,
         )
-        transcript.system(`已恢复会话 ${ctx.session.current().meta.id.slice(0, 8)}`)
+        transcript.system(`已恢复会话 ${current.meta.id.slice(0, 8)}`)
       } else {
         transcript.system(
-          `新会话 ${ctx.session.current().meta.id.slice(0, 8)}（模型 ${ctx.llm.provider}/${ctx.llm.model}）`,
+          `新会话 ${current.meta.id.slice(0, 8)}（模型 ${ctx.llm.provider}/${ctx.llm.model}）`,
         )
       }
+      seedTurn()
       invalidate()
     })
 
@@ -124,12 +161,17 @@ export const transcriptPlugin: Plugin.Object = {
                 ? 'working'
                 : 'thinking'
               : 'idle'
-        // T21 跨会话状态面：当前会话按 turnState，正干着活的队友会话按名册。
-        // 队友状态迁移时 subagent 会 touch 快照，这里现读名单不需要轮询。
+        // T21 跨会话状态面：当前会话按 turnState，正干着活的常驻 agent 与队友按名册。
+        // 0.6.48：后台 agent 的状态由 dsc/agent-status 事件喂进 backgroundStates
+        //（含「已完成未读」徽标），当前查看会话的条目跳过——它的状态上面已经推导过。
         const sessionStates: RuntimeSnapshot['sessionStates'] = {}
         if (turnState === 'working' || turnState === 'thinking' || turnState === 'awaiting-approval') {
           sessionStates[ctx.session.current().filePath] =
             turnState === 'awaiting-approval' ? 'awaiting-approval' : 'working'
+        }
+        const currentPath = ctx.session.current().filePath
+        for (const [path, state] of backgroundStates) {
+          if (path !== currentPath) sessionStates[path] = state
         }
         const team = ctx.get('team')
         if (team !== undefined) {

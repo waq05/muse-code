@@ -18,11 +18,12 @@
  * @module dsc/plugins/prompt
  */
 import { createHash } from 'node:crypto'
-import type { Context, Plugin } from '@deepseek-ai/cordis'
+import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
 import { dropImageParts, foldSystemMessages, type ChatMessage } from '../core/llm.js'
 import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '../core/prompt.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
+import type { Session } from '../core/session.js'
 import type { PromptService } from '../services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
@@ -69,6 +70,13 @@ export const promptPlugin: Plugin.Object = {
      */
     const projections = new Map<string, Projection>()
 
+    /**
+     * 本次改写所属的会话（0.6.48 常驻多 agent）：env-facts 这类按会话取 cwd/落
+     * 状态条目的投影靠它取对归属。rewrite 是纯同步的，调用前后换值即可，
+     * 不会串到别的请求；没带（老调用方）就回落当前查看的会话。
+     */
+    let requestSession: Session
+
     /** 按次序排好（同次序按 id，稳定），返回投影链。 */
     const projectionChain = (): Array<[string, Projection]> =>
       [...projections.entries()].sort(([aId, a], [bId, b]) =>
@@ -87,10 +95,10 @@ export const promptPlugin: Plugin.Object = {
     projections.set('env-facts', {
       order: 600,
       fn: (messages) => {
-        const snapshot = environmentSnapshot(ctx.session.current().meta.cwd)
+        const snapshot = environmentSnapshot(requestSession.meta.cwd)
         // 落一条状态（hash 去重，变了才写）：重放会话时最后一条就是模型当时看到的环境
         //（Model-visible ⟺ logged 的环境半边，与 agent 插件的 system-prompt 条目同套做法）。
-        noteEnvFacts(ctx, snapshot)
+        noteEnvFacts(requestSession, snapshot)
         return [...messages, { role: 'user', content: snapshot }]
       },
     })
@@ -164,7 +172,8 @@ export const promptPlugin: Plugin.Object = {
           ...(keep === undefined ? {} : { keep }),
         })
       },
-      rewrite(messages) {
+      rewrite(messages, session) {
+        requestSession = session ?? ctx.session.current()
         let out = messages
         for (const [id, projection] of projectionChain()) {
           try {
@@ -188,9 +197,8 @@ function environmentSnapshot(cwd: string): string {
 }
 
 /** 环境快照落盘（hash 去重）：变了才写一条状态，恢复会话时最后一条就是当前环境。 */
-function noteEnvFacts(ctx: Context, text: string): void {
+function noteEnvFacts(session: Session, text: string): void {
   const hash = createHash('sha256').update(text).digest('hex').slice(0, 16)
-  const current = ctx.session.current()
-  if (current.state('env-facts')?.hash === hash) return
-  current.appendState('env-facts', { hash, text })
+  if (session.state('env-facts')?.hash === hash) return
+  session.appendState('env-facts', { hash, text })
 }

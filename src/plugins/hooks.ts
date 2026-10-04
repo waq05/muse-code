@@ -303,6 +303,8 @@ export const hooksPlugin: Plugin.Object = {
           command: input.command,
           target: input.target,
           signal: new AbortController().signal,
+          sessionId: ctx.session.current().meta.id,
+          sessionPath: ctx.session.current().filePath,
         })
       },
       recent(limit = 8) {
@@ -699,7 +701,11 @@ export const hooksPlugin: Plugin.Object = {
         { session_id: session.meta.id },
       )
     })
-    ctx.on('dsc/turn-end', (reason) => {
+    ctx.on('dsc/turn-end', (reason, signal) => {
+      // 0.6.48：只认当前查看会话的回合——钩子是用户配的自动化，后台 agent 收工
+      // 不该在用户没开口时触发它（与 Stop/Interrupt 生命周期钩子同一口径）。
+      // 载荷缺省（老式直接 emit）按当前会话算。
+      if (signal !== undefined && signal.sessionId !== ctx.session.current().meta.id) return
       fireObserve('turn-end', { toolName: '', args: {}, cwd: ctx.session.current().meta.cwd }, { reason })
     })
 

@@ -1485,3 +1485,35 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 4. **关窗**（`core/loop.ts` enqueueTurn 外层 finally）：`turn/end` 事件发在 runTurn 内部、`running` 要等 finally 收尾才落假——事件监听里紧跟的 followup（界面解锁用户秒回）会入箱而上一轮的收尾出账已经跑过，输入从此无人出账（prompt-projection 探针第二连发轮当场抓住）。外层 finally 补一次 `drainInbox(false)` 关掉这个窗。
 
 **验证**：typecheck（根 + 桌面端）绿；`pnpm build` 绿。新回归 `scripts/async-inbox-test.mjs`（16 断言：工具执行期通知落在结果之后、出账后箱清空、user 事件只发一次且带 steering、收尾期插话补轮不丢、遗债加载自动落库、turn/end 后立刻 followup 补轮、存量夹层重排后接缝消失且条数不变）。既有电池：session-dedupe 15/15、prompt-projection 20/20（第二连发轮曾把竞态钉出来）、batch-b 12/12、compact-check 56/56、transcript-usage 全过。真实事故日志副本经 `shots/sandwich-probe.mjs` 断言转绿。bump 0.6.47。
+
+## 阶段 69：切会话不再中止回合——每会话常驻 agent，对齐 dsh（0.6.48）
+
+**报障**：用户问「一个会话正在运行时切到另一个会话，之前的提问会中止？」。解剖确认：dsc 全局只有一个 MiniAgent（`plugins/agent.ts`），切会话 = `MiniAgent.switchSession` 同步 `abort()` 当前轮 + close 旧会话 + 换底层会话。探针（shots/switch-session-probe.mjs 旧版）实锤三个问题：① abort 的收尾跑在换完会话之后的微任务里，`finishCall` 写 `this.session`——**中止轮的工具结果（在飞收尾 + 未开始调用的合成件）落进新会话的 jsonl 成孤儿记录**，旧会话反而留下无结果调用（重开靠 repair 补「结果未知」，真实结果却在别的会话里）；② 中止轮的 `turn/end(aborted)` 不看会话身份，新会话视图多一条「已停止」；③ `drainInbox(true)` 在 abort 检查之前跑，被打断的回合会继续把新会话排队的输入答掉再标「已停止」。缓解层（转录 reducer 丢无配对结果、sanitize 剥孤儿）意外接住了 400，但日志永久脏、语义全是错的。dsh 的做法：每会话一个常驻 Agent（AgentRegistry），UI 切换只是 retain/release 视图订阅，运行中回合后台跑完，宿主全局广播状态，侧栏有「已完成未读」徽标；显式停止只有 cancel RPC / 归档 / owner dispose。
+
+**修法（0.6.48 常驻多 agent，dsh 语义的个人版落地）**：
+1. **注册表**（`plugins/agent.ts` 重写）：`Map<sessionId, MiniAgent>` + `active` 指针。`dsc/session-open` 只换 active：目标会话有常驻 agent 就复用，没有就造；被切走的前一个**还有活（busy）就留后台继续跑**（这正是语义），闲着就地收摊（`disposeAgent`：close 释放写租约 + 清读取台账 + 记墓碑）。每个 agent 的 deps 闭包自持会话：systemPrompt/noteSystemPrompt、usage 记账（`sid` 用发起回合的会话，修掉原来 `ctx.session.current()` 的错位）、compact 目标、rewrite 会话、emit 归属。dsc/exit 收摊全部。
+2. **事件按会话路由**（`plugins/agent.ts`）：只有当前查看 agent 的事件进转录（后台 agent 的流式/工具卡留在各自 jsonl，切回按日志重放——污染从源头掐掉）；`dsc/turn-start` / `dsc/turn-end` 带 `TurnSignal{sessionId,sessionPath}` 载荷；新增 `dsc/agent-status{sessionId,path,state}` 广播 working/awaiting-approval/idle，转录插件据此维护 `backgroundStates` 喂进快照 `sessionStates`（T21 状态面复用，队友同管道）。idle 且当时没在看 → 转录层标 **just-finished**（「已完成未读」徽标，点开即熄）；被查看期间收工就不翻徽标（用户亲眼看着结束）。
+3. **switchSession 删除**（`core/loop.ts`）：agent 生死只认一个会话（`session` 改 readonly）；`runTurn` 的会话身份守卫随之拆掉；新增 `busy`（= turnActive || pendingTurn——`turnActive` 在 turn/end 发出即落假，收尾 git 聚合的尾段不算「在跑」，否则切走时会重发假 working、盖掉刚点的徽标，测试抓的）与 `dispose()`；`onIdle` 回调给注册表做收摊钩子。ToolContext / ToolGuardInput 带 `sessionId`/`sessionPath`（工具产物与审批归属的根）。
+4. **归属扩散**：`session.open` 复用常驻会话（`ctx.get('agent').sessionFor`——同文件不再造第二份内存副本、不再碰写租约）；compact 的 `check/forceCompact` 显式收目标会话、运行守卫按会话计数（后台回合不再挡当前会话 /compact）；审批 `pending` 单槽改 **多卡并存 Map**（旧代码两卡并发时第一张永远没人能答），授权记账/审计/卡片全按发起会话（`ApprovalRequest.sessionId/sessionPath`）；读取台账（path-policy）按会话键控，切会话不再清账（后台 agent 的「先读后写」状态不再被切换抹掉）；goal/memory/hooks/lifecycle-hooks/session-title 的 turn-end 监听按 sessionId 过滤（后台收工不偷跑目标续跑/记忆复盘/Stop 钩子/起标题），载荷缺省（老式直接 emit）回落当前会话兼容旧探针；JobTable 通知带 owner（按发起会话投递，合并桶按会话分）；subagent 汇报投给常驻父 agent（跑动中进收件箱，闲置唤起后台回合，收摊才写文件）；env-facts 投影经 `prompt.rewrite(messages, session)` 按请求会话取 cwd、落状态条目。
+5. **侧栏**（`desktop/renderer`）：`SessionRunState` 加 `just-finished`（绿色实心点，dsc-green 令牌），working/awaiting-approval 点自然覆盖后台 agent。
+
+**已知边界（v1 有意不做）**：dsh 无 idle 淘汰（dsc 以「闲而未看即收摊」控制资源，代价是收摊后的迟到通知只能写文件不起回合）；goal 自动续跑/记忆复盘/Stop 钩子只跟当前查看会话（后台会话的目标与钩子暂停）；`/model` 全局路由仍是进程级热切换（后台 agent 下一跳请求跟着换模型，与旧模型一致）。
+
+**验证**：typecheck（根 + 桌面端）绿；`pnpm build` 绿。新回归 `scripts/resident-agents-test.mjs`（内核级 21 断言：A 跑动中切 B 不断、B 日志零污染、切回复用常驻对象 + turnState 补种、后台收工翻 just-finished、闲而未看自动收摊 + 租约释放、收摊后迟到投递写文件、事件带归属、usage 按会话记账）；`shots/switch-session-probe.mjs` 改写为新语义（双 agent 并发不串台、工具上下文带身份、busy/onIdle/dispose）。既有电池全绿：async-inbox 16/16、session-dedupe 15/15、prompt-projection 20/20、compact-check 56/56、batch-a/b/c/d/e（22+12+13）、approval-floor 95/95、lifecycle-hooks 81/81、memory 全过、self-improve 181/181、team 全过、modes-security 全过（ctx.get 白名单补 agent——运行期解环的合法软依赖）、modes-runtime/preset/session-search/remote/dock/browser 210/lsp 167/sandbox 193/spill 53/schedule 207/llm-adapter 18/llm-retry 10/tool-search/order/reject-replay/storage/mcp/file-review 59/win-net 160/win-token 19/19、kernel-boot 绿、sandwich-probe（真实日志副本）过。bump 0.6.48。
+
+## 阶段 70：常驻模型收尾——dsh 对照差距清零（0.6.49）
+
+**动因**：0.6.48 落地后对 dsh 源码逐项核查剩余差距（steer/queue、keepInbox 取消、审批归属、host 级标题、ArchivedSessionGate、seq 游标、completionUnread 边沿），确认主干已对齐，剩四个真缺陷 + 一张漏网 bug，本轮全部修掉。
+
+**修法**：
+1. **后台首回合自动标题**（`plugins/session-title.ts`）：0.6.48 的「只认当前查看」守卫让后台收工的首回合永远没有标题。改为按 `signal.sessionPath` 生成；读取源优先常驻 agent 的内存会话（turn-end 时刻写流缓冲可能没冲刷，读盘会拿到缺尾日志——探针第二轮抓住的竞态），收摊了的才只读重放（close 已冲刷）。
+2. **归档先收摊常驻 agent**（`plugins/agent.ts` + `plugins/session.ts`）：常驻 agent 握着打开的写流，后台在跑时归档 rename 直接 EPERM。`AgentService.stop(path)`：排队输入按 dsh 归档语义丢弃（不清箱 cancel 反而会唤醒下一轮）→ cancel → 轮询等注册表移出（写租约释放）→ 10s 兜底强收。`session.archive` 改逐条报账：先 stop 再挪文件，失败的点名会话、成功的保留；重试收敛——已在归档区/已挪走的路径跳过不算失败，半途而废的批量归档重试不再卡死。
+3. **后台可停**（`services/types.ts` + `plugins/agent.ts` + `desktop`）：`interrupt(filePath?)` 按路径停任意在跑的会话（路径语义与 sessionFor/isRunning/stop 一致，UI 标识就是路径）；侧栏行右键加「停止运行」（working/awaiting-approval 且未归档时出现）；审批卡随取消信号兜底成 reject。
+4. **审批卡会话归属**（`contract.ts` + `plugins/approval.ts` + `desktop`）：`ApprovalRequestView.sessionPath`——全局渲染的卡弹出来时界面标注「来自会话 xx」（当前会话自己的卡不标，归属路径查不到就笼统标「后台会话」）。
+5. **plan/ask 多卡化 + 归属**（`plugins/plan.ts` + `plugins/ask.ts`）：卡跟自己的会话走——多卡并存（每会话最多一张，互不顶掉）、surface 只出当前查看会话的卡、切会话不再把挂起的卡按拒收尾（常驻模型下提卡的 agent 活着，T29 悬 Promise 死锁不存在）、挂卡/收卡发 agent-status（awaiting-approval ↔ working）。plan 的提卡会话改按 `runCtx.sessionPath` 经 sessionFor 解析——**修掉 0.6.48 漏网 bug**：后台回合提交计划时 `propose` 用 `ctx.session.current()` 落库，计划状态会写进用户正看着的别家会话。`dsc/plan` / `dsc/notice` 事件带可选 sessionPath 归属，转录插件按归属路由：后台会话的计划卡与通知不再污染当前视图的转录。
+
+**已知边界（更新）**：模式切换仍是进程全局——后台会话的计划被批准会把全局模式切回 build（与 /model 同类，登记不急修）；steer/queue 分档、goal/memory/Stop 钩子只认查看会话、休眠投递不起回合、闲即收摊等 v1 边界维持。
+
+**验证**：typecheck（根 + 桌面端）绿；`pnpm build` 绿。新回归 `shots/plan-ask-multi-card.mjs`（25 断言：后台提卡归属、切会话不杀卡、多卡互不顶掉、应答只动当前会话的卡、状态点翻转、退出收尾）；`scripts/resident-agents-test.mjs` 扩到 32 断言（后台收工拿自动标题、按路径 interrupt 停后台回合、归档后台在跑的会话先收摊再挪文件、重试收敛）；`shots/batch-a-check.mjs` 补标题归属断言。既有电池全绿：approval-floor 95、lifecycle-hooks 81、compact 56、modes-security/runtime、order、reject-replay 14、prompt-projection 20、async-inbox、session-dedupe、batch-b/c 12+13、hooks、memory、self-improve 181、team、preset、session-search、file-review 59+9、storage、mcp、sound-notify、dock-model、integration ×2、llm-adapter 18、llm-retry 10、kernel-boot、model-caps、remote-server 12、role-order、dsh-compat 15、composer、settings-sections、sandbox 193、lsp 167、spill 53、schedule 207、browser 210。
+
+**顺手修掉的四处探针欠账（历史漂移，与本轮功能无关）**：`scripts/remote-host-test.mjs` 的 import 还指向已拆分的桶文件（hostHeaderAllowed→remote/http、REMOTE_METHODS/REMOTE_PROTOCOL_VERSION→remote/types），修后 140/140；`scripts/trace-data-test.mjs` 假 ctx 缺 `get`（T21 转录快照的合法软依赖）；`scripts/turn-changes-test.mjs` 在两次工具操作之间裸写文件，撞上 T35「先读后写」守卫——补 readTool 重新登记（真 agent 同款动作）；`scripts/review-approval-test.mjs` 的 reviewMessage import 还在旧位置（已搬 core/git-info）。`scripts/remote-e2e.mjs` 仍剩 2 条历史失败（设备信息行断言、第二宿主唤醒），stash 基线核实与本轮无关，另行处理。bump 0.6.49。

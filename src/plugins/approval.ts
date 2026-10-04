@@ -37,7 +37,7 @@ import { toolApprovalGuard, type ToolObserver } from '../core/tool-guards.js'
 import type { ApprovalPolicy, ApprovalRequestView, ApprovalService } from '../services/types.js'
 import type { ApprovalAnswer, ApprovalDiffView, CollaborationMode, PolicySurface, TierOption } from '../contract.js'
 import { activeRules, appendRule, classifyCommand, reloadActiveRules } from '../core/command-policy.js'
-import { clearReadLedger, isInsideCwd, isProtectedInstruction, writeHardBlockReason } from '../core/path-policy.js'
+import { isInsideCwd, isProtectedInstruction, writeHardBlockReason } from '../core/path-policy.js'
 import { audit } from '../core/audit.js'
 import { redact } from '../core/secrets.js'
 
@@ -156,7 +156,9 @@ export const approvalPlugin: Plugin.Object = {
     let modeForCard: CollaborationMode = 'build'
     /** 本会话内的同类授权：sessionId → 授权键集合。 */
     const sessionGrants = new Map<string, Set<string>>()
-    let pending: {
+
+    /** 一张挂着等人答的审批卡。0.6.48 起多卡并存（常驻多 agent：后台会话也会弹卡）。 */
+    interface PendingCard {
       view: ApprovalRequestView
       grantKey: string
       suggestedRule: string[] | null
@@ -164,7 +166,12 @@ export const approvalPlugin: Plugin.Object = {
       timer: NodeJS.Timeout
       /** 这个答案是从哪儿点下来的（'app' 宿主界面 / 'web' 手机浏览器）；没人答过时 undefined。 */
       source?: 'app' | 'web'
-    } | null = null
+      /** 这张卡属于哪个会话：授权记账、审计与侧栏状态点都按它归属。 */
+      sessionId: string
+      sessionPath: string
+    }
+    /** 卡 id → 卡。插入序 = 弹卡序；界面取最老的一张展示。 */
+    const pendings = new Map<string, PendingCard>()
 
     /** 规则文件重新读一遍（写在永久规则之后，让下一条判定立刻看到它）。 */
     const reloadRules = (): void => {
@@ -174,6 +181,12 @@ export const approvalPlugin: Plugin.Object = {
 
     /** 当前会话 id（授权键与审计都挂在它下面）。 */
     const sessionId = (): string => ctx.session.current().meta.id
+
+    /** 这次判定属于哪个会话：请求带了发起方就按发起方（0.6.48 多 agent），否则看当前查看的。 */
+    const sidOf = (request: ApprovalRequest): string => request.sessionId ?? sessionId()
+
+    /** 这次判定的会话 jsonl 路径（侧栏状态点的键口径）。 */
+    const pathOf = (request: ApprovalRequest): string => request.sessionPath ?? ctx.session.current().filePath
 
     /** 这次调用属于哪个「同类」：同一会话里再出现就不再问的粒度。 */
     function grantKeyOf(toolName: string, suggested: string[] | null, insideCwd: boolean): string {
@@ -217,6 +230,7 @@ export const approvalPlugin: Plugin.Object = {
           return
         }
         const id = randomUUID()
+        const sid = sidOf(request)
         const view: ApprovalRequestView = {
           id,
           toolName: request.toolName,
@@ -228,6 +242,8 @@ export const approvalPlugin: Plugin.Object = {
           scopes: input.scopes,
           policy,
           mode: modeForCard,
+          // 发起会话归属（0.6.49）：卡片是全局渲染的，后台会话的卡弹出来时界面要标得清是谁家的
+          sessionPath: pathOf(request),
           ...(input.diff === null ? {} : { diff: input.diff }),
         }
         audit({
@@ -240,17 +256,20 @@ export const approvalPlugin: Plugin.Object = {
           reason: input.reason,
           policy,
           mode: view.mode,
-          sessionId: sessionId(),
+          sessionId: sid,
           cwd: request.cwd,
         })
         const done = (decision: ApprovalDecision, phase: 'decided' | 'cancelled' | 'timeout' = 'decided'): void => {
-          if (pending === null || pending.view.id !== id) return
-          // 来源要在清掉 pending 之前取出来：下面那行之后这个对象就没人持有了。
-          // 超时与被打断没人答过，pending.source 还是 undefined，审计里就不写这一栏。
-          const source = pending.source
-          clearTimeout(pending.timer)
-          pending = null
+          const card = pendings.get(id)
+          if (card === undefined) return
+          pendings.delete(id)
+          // 来源要在清掉挂起之前取出来：下面这行之后这个对象就没人持有了。
+          // 超时与被打断没人答过，card.source 还是 undefined，审计里就不写这一栏。
+          const source = card.source
+          clearTimeout(card.timer)
           ctx.emit('dsc/changed')
+          // 卡收了，那个会话要是还在跑回合就回到 working（转录层的状态点跟着翻回来）
+          ctx.emit('dsc/agent-status', { sessionId: sid, path: card.sessionPath, state: 'working' })
           audit({
             ts: Date.now(),
             kind: 'approval',
@@ -262,14 +281,16 @@ export const approvalPlugin: Plugin.Object = {
             reason: input.reason,
             policy,
             mode: view.mode,
-            sessionId: sessionId(),
+            sessionId: sid,
             ...(source === undefined ? {} : { source }),
           })
           resolveDone(decision)
         }
         const timer = setTimeout(() => done('reject', 'timeout'), timeoutMs())
-        pending = { view, grantKey: input.grantKey, suggestedRule: input.suggestedRule, done, timer }
+        pendings.set(id, { view, grantKey: input.grantKey, suggestedRule: input.suggestedRule, done, timer, sessionId: sid, sessionPath: pathOf(request) })
         ctx.emit('dsc/changed')
+        // 后台会话的卡也要让侧栏状态点亮起来（当前查看会话的状态走 turnState，转录层会忽略同路径）
+        ctx.emit('dsc/agent-status', { sessionId: sid, path: pathOf(request), state: 'awaiting-approval' })
         signal.addEventListener('abort', () => done('reject', 'cancelled'), { once: true })
       })
 
@@ -288,7 +309,7 @@ export const approvalPlugin: Plugin.Object = {
         reason,
         policy,
         mode: modeForCard,
-        sessionId: sessionId(),
+        sessionId: sidOf(request),
         cwd: request.cwd,
         ...extra,
       })
@@ -405,8 +426,9 @@ export const approvalPlugin: Plugin.Object = {
         const protectedWhy = target === null ? null : isProtectedInstruction(target, cwd)
 
         // 第 3 层：已给授权。同会话同类动作不再问第二次；永久规则命中 exec 时也在此放行。
+        // 0.6.48：按发起调用的会话记账（后台 agent 的授权不看当前查看的会话）。
         const suggested = verdict?.prefixRule ?? null
-        const grants = sessionGrants.get(sessionId())
+        const grants = sessionGrants.get(sidOf(request))
         const key = grantKeyOf(request.toolName, suggested, insideCwd)
         const grantHit = protectedWhy === null && forced === '' && (grants?.has(key) ?? false)
         if (grantHit) {
@@ -503,12 +525,15 @@ export const approvalPlugin: Plugin.Object = {
       },
 
       pendingView() {
-        return pending?.view ?? null
+        // 多卡并存时取最老的一张（插入序）：答完一张，下一张自动顶上来。
+        const oldest = pendings.values().next()
+        return oldest.done === true ? null : oldest.value.view
       },
 
       answer(answer: ApprovalAnswer, source: 'app' | 'web' = 'app') {
-        const current = pending
-        if (current === null) return
+        const oldest = pendings.values().next()
+        if (oldest.done === true) return
+        const current = oldest.value
         // 来源挂在挂起对象上，`done` 里落审计时取用；手机浏览器点的那一下因此查得到（source='web'）。
         current.source = source
         const finish = current.done
@@ -526,17 +551,17 @@ export const approvalPlugin: Plugin.Object = {
             rule: current.suggestedRule,
             reason: '用户在审批卡上永久允许',
             policy,
-            sessionId: sessionId(),
+            sessionId: current.sessionId,
             source,
           })
           finish('allow-always')
           return
         }
         if (answer === 'allow-session') {
-          const id = sessionId()
-          const grants = sessionGrants.get(id) ?? new Set<string>()
+          // 授权记在卡片所属的那个会话名下（0.6.48：卡的归属不再跟着「当前查看」走）
+          const grants = sessionGrants.get(current.sessionId) ?? new Set<string>()
           grants.add(current.grantKey)
-          sessionGrants.set(id, grants)
+          sessionGrants.set(current.sessionId, grants)
           finish('allow-session')
           return
         }
@@ -553,7 +578,15 @@ export const approvalPlugin: Plugin.Object = {
         approve: (input) =>
           service
             .decide(
-              { toolName: input.toolName, argsSummary: argsSummary(input.args), args: input.args, cwd: input.cwd },
+              {
+                toolName: input.toolName,
+                argsSummary: argsSummary(input.args),
+                args: input.args,
+                cwd: input.cwd,
+                // 发起调用的会话身份：授权记账、审计与卡片归属都按它（0.6.48 多 agent）
+                sessionId: input.sessionId,
+                sessionPath: input.sessionPath,
+              },
               input.signal,
             )
             .then((decision) => decision !== 'reject'),
@@ -567,24 +600,19 @@ export const approvalPlugin: Plugin.Object = {
 
     ctx.surfaces.register('policy', () => service.surface())
     ctx.surfaces.register('pendingApproval', () => service.pendingView())
-    ctx.waiting.register('approval', () => pending !== null)
+    ctx.waiting.register('approval', () => pendings.size > 0)
 
     ctx.on('dsc/mode-changed', (mode) => {
       modeForCard = mode
     })
 
-    ctx.on('dsc/session-open', () => {
-      // 会话级授权不跨会话生效（Hermes 的 _session_yolo 也是按会话 id 键控的）。
-      sessionGrants.clear()
-      // 「先读过才许改」的账本也一样按会话算：换了会话就得重新读一遍那个文件。
-      clearReadLedger()
-    })
+    // 0.6.48 起切换会话不再清授权与读取台账：它们本来就按会话 id 键控，天然互不串台；
+    // 后台常驻 agent 正跑着的时候清它的账，反而会把跑到一半的授权状态抹掉。
+
     ctx.on('dsc/exit', () => {
-      if (pending !== null) {
-        const current = pending
-        pending = null
-        clearTimeout(current.timer)
-        current.done('reject', 'cancelled')
+      for (const card of [...pendings.values()]) {
+        clearTimeout(card.timer)
+        card.done('reject', 'cancelled')
       }
     })
   },

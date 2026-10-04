@@ -54,6 +54,7 @@ import {
   IconSearch,
   IconSidebar,
   IconSort,
+  IconStop,
   IconSwap,
   IconTrash,
   IconTriangleRightFill,
@@ -649,13 +650,20 @@ export function Sidebar(props: {
             : undefined
         }
       >
-        {/* T21 行首状态点：working = 正在跑（当前回合或队友活着），awaiting-approval = 挂着等批。
+        {/* T21 行首状态点：working = 正在跑（当前回合、后台常驻 agent 或队友活着），
+            awaiting-approval = 挂着等批，just-finished = 后台跑完时你没在看（0.6.48）。
             没有状态点的前置槽让位给图钉（图二样式）：悬浮浮出，已置顶的常显，点一下切换。 */}
         {(() => {
           const runState = props.sessionStates[session.id]
           if (runState !== undefined) {
+            const tip =
+              runState === 'working'
+                ? '这个会话正在跑'
+                : runState === 'awaiting-approval'
+                  ? '挂着等你审批'
+                  : '后台已完成（点开查看）'
             return (
-              <span className={`row-slot session-dot ${runState}`} data-tip={runState === 'working' ? '这个会话正在跑' : '挂着等你审批'} aria-label={runState === 'working' ? '运行中' : '等待审批'}>
+              <span className={`row-slot session-dot ${runState}`} data-tip={tip} aria-label={tip}>
                 <span className="dot" />
               </span>
             )
@@ -769,6 +777,20 @@ export function Sidebar(props: {
               <button className="menu-item" onClick={() => copySessionId(session.id)}>
                 <IconCopy size={15} /> 复制会话 ID
               </button>
+              {/* 后台可停（0.6.49）：行状态是 working/awaiting-approval 时给「停止」入口——
+                  不用切过去按 Esc，按路径停那个会话；审批卡随信号兜底成 reject。 */}
+              {!isArchived &&
+                (props.sessionStates[session.id] === 'working' || props.sessionStates[session.id] === 'awaiting-approval') && (
+                  <button
+                    className="menu-item"
+                    onClick={() => {
+                      setMenu(null)
+                      props.proxy.interrupt(session.id)
+                    }}
+                  >
+                    <IconStop size={15} /> 停止运行
+                  </button>
+                )}
               <div className="menu-sep" />
               {isArchived ? (
                 <button

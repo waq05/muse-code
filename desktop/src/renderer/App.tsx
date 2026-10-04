@@ -5,7 +5,7 @@
  * @module desktop/renderer/App
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import type { ModelChoiceView, PluginInfoView, RuntimeSnapshot, TeammateView, TranscriptEntry, UiPrefsView } from '@dsc/runtime/contract.js'
+import type { ApprovalRequestView, ModelChoiceView, PluginInfoView, RuntimeSnapshot, SessionSummary, TeammateView, TranscriptEntry, UiPrefsView } from '@dsc/runtime/contract.js'
 import { applyAppearance, loadCachedAppearance, normalizeUiPrefs, saveCachedAppearance } from './appearance.js'
 import { toastErr, toastOk } from './components/toast.js'
 import { playCompletionSound } from './completion-sound.js'
@@ -63,6 +63,17 @@ import {
   writeStoredPx,
 } from './panels.js'
 import { IconChevronDown, IconCode, IconCopy, IconFolderOpen, IconSidebar, IconTerminal } from './icons.js'
+
+/** 审批卡的会话归属标注（0.6.49）：后台会话的卡弹到当前视图时告诉用户它是谁家的；
+ *  当前会话自己的卡不标（重复信息）。归属路径查不到对应会话（比如刚归档）就笼统标「后台会话」。 */
+function approvalOwnerLabel(
+  request: ApprovalRequestView,
+  currentPath: string | null,
+  sessions: SessionSummary[],
+): string | null {
+  if (request.sessionPath === undefined || request.sessionPath === currentPath) return null
+  return sessions.find((item) => item.id === request.sessionPath)?.title ?? '后台会话'
+}
 
 export function App(): JSX.Element {
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null)
@@ -832,6 +843,11 @@ export function App(): JSX.Element {
                 {snapshot.surfaces.pendingApproval !== null && (
                   <ApprovalCard
                     request={snapshot.surfaces.pendingApproval}
+                    ownerLabel={approvalOwnerLabel(
+                      snapshot.surfaces.pendingApproval,
+                      snapshot.status.sessionId,
+                      snapshot.sessions,
+                    )}
                     onAnswer={(answer) => proxy.answerApproval(answer)}
                     cwd={cwd}
                   />

@@ -266,6 +266,9 @@ const harness = (() => {
       return () => handlers.delete(name)
     },
     provide: (name, value) => provided.set(name, value),
+    // T21 起转录快照会 ctx.get('team')/('agent')（队友名册、常驻 agent 状态）：
+    // 本探针不装这两个服务，按「可选服务整个没挂」返回 undefined。
+    get: () => undefined,
     session: { current: () => session, sessions: [], loading: false },
     llm: { provider: 'test', model: 'test', effort: 'medium' },
     surfaces: { build: () => ({ pendingApproval: null }) },

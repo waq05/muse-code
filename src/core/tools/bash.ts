@@ -313,7 +313,7 @@ export function spawnTerminalShell(cwd: string): ChildProcess {
  */
 export function createBashTool(
   budgets: BashBudgets = BASH_DEFAULT_BUDGETS,
-  background?: { launch(command: string, cwd: string): string },
+  background?: { launch(command: string, cwd: string, owner?: string): string },
 ): ToolEntry {
   return {
     name: 'bash',
@@ -357,7 +357,7 @@ export function createBashTool(
       // 命令不带超时（那是后台的意义所在），取消信号也不接（打断回合不打断构建）。
       if (args.run_in_background === true) {
         if (background === undefined) throw new Error('后台作业表不可用（内置工具插件没带 background 旁路）')
-        const id = await background.launch(args.command, ctx.cwd)
+        const id = await background.launch(args.command, ctx.cwd, ctx.sessionId)
         return `已转入后台：${id}\n输出用 job_output(job_id="${id}") 读（增量），job_list 清点，完成时会自动收到通知。`
       }
       const requested = typeof args.timeoutMs === 'number' ? Math.floor(args.timeoutMs) : budgets.timeoutMs
@@ -407,9 +407,10 @@ export interface JobRecord {
 export interface JobTableOptions {
   /**
    * 完成通知。tools-default 接的是 agent.followup（排队提交一条消息叫模型回来）；
-   * 自检脚本接的是自己的收集器。
+   * 自检脚本接的是自己的收集器。第二参数是作业所属会话的 id（0.6.48 常驻多
+   * agent：通知按归属投递，不再看「当前查看的会话」）；未知时 undefined。
    */
-  notify(text: string): void
+  notify(text: string, owner?: string): void
 }
 
 /** job_output 的单次读取结果。 */
@@ -455,8 +456,9 @@ export class JobTable {
   /**
    * 启动一个后台作业，立即返回 job id（不等进程结束）。
    * 命令分类与审批在 bash 工具入口已完成，这里不再判一遍（同一道命令，不同的等法）。
+   * `owner` = 发起作业的会话 id：完成通知按它归属投递（0.6.48）。
    */
-  launch(command: string, cwd: string): string {
+  launch(command: string, cwd: string, owner?: string): string {
     if (this.jobs.size >= JOB_MAX_COUNT) {
       throw new Error(`后台作业已到 ${String(JOB_MAX_COUNT)} 个上限，先用 job_kill 收掉几个，或 job_list 清点`)
     }
@@ -497,6 +499,7 @@ export class JobTable {
           `后台作业 ${id}（${command.slice(0, 60)}${command.length > 60 ? '…' : ''}）${
             code === 0 ? '成功完成' : `失败（退出码 ${String(code)}）`
           }。用 job_output(job_id="${id}") 查看输出，job_list 清点全部作业。`,
+          owner,
         )
       },
       onError: (message) => {
@@ -504,7 +507,7 @@ export class JobTable {
         job.status = 'failed'
         job.finishedAt = Date.now()
         job.output += `\n[启动失败：${message}]`
-        this.options.notify(`后台作业 ${id} 启动失败：${message}`)
+        this.options.notify(`后台作业 ${id} 启动失败：${message}`, owner)
       },
     })
     return id

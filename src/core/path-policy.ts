@@ -97,8 +97,21 @@ function normalizeKey(path: string): string {
   return resolve(path).replace(/[\\/]+/g, '\\').toLowerCase()
 }
 
-/** 跟踪「谁读过什么」：key = 正规化路径，value = 读到了哪个修改时间。 */
-const readLedger = new Map<string, number>()
+/**
+ * 跟踪「谁读过什么」：外层 key = 会话 id，内层 key = 正规化路径，value = 读到了哪个修改时间。
+ * 0.6.48 起按会话记账（常驻多 agent：后台 agent 的读数不能误用于别的会话，切会话也不再清账）。
+ */
+const readLedger = new Map<string, Map<string, number>>()
+
+/** 取某个会话的台账（没有就建一份）。 */
+function ledgerOf(sessionId: string): Map<string, number> {
+  let ledger = readLedger.get(sessionId)
+  if (ledger === undefined) {
+    ledger = new Map()
+    readLedger.set(sessionId, ledger)
+  }
+  return ledger
+}
 
 /** 文件是否跟着真实路径走（symlink 会改变越界判定的结果，所以判之前先跟一遍）。 */
 function realPath(path: string): string {
@@ -179,32 +192,32 @@ export function isProtectedInstruction(target: string, cwd: string): PathVerdict
   return null
 }
 
-/** 记录一次读取（read 工具执行后调用），带上当时的修改时间。 */
-export function noteRead(target: string): void {
+/** 记录一次读取（read 工具执行后调用），带上当时的修改时间。按会话记账（0.6.48）。 */
+export function noteRead(target: string, sessionId: string): void {
   try {
-    readLedger.set(normalizeKey(target), statSync(target).mtimeMs)
+    ledgerOf(sessionId).set(normalizeKey(target), statSync(target).mtimeMs)
   } catch {
-    readLedger.delete(normalizeKey(target))
+    ledgerOf(sessionId).delete(normalizeKey(target))
   }
 }
 
 /** 记录一次写入（write/edit 成功后调用），免得刚写完的文件被自己拦成「已变」。 */
-export function noteWrite(target: string): void {
-  noteRead(target)
+export function noteWrite(target: string, sessionId: string): void {
+  noteRead(target, sessionId)
 }
 
 /**
  * 整写覆盖前的检查：没读过 / 读之后文件又变了，都不许整写。
  * 只针对已存在的文件；新建文件直接放行。
  */
-export function staleOverwriteReason(target: string): PathVerdict {
+export function staleOverwriteReason(target: string, sessionId: string): PathVerdict {
   let mtime: number
   try {
     mtime = statSync(target).mtimeMs
   } catch {
     return null // 文件不存在 = 新建，没有覆盖问题
   }
-  const seen = readLedger.get(normalizeKey(target))
+  const seen = ledgerOf(sessionId).get(normalizeKey(target))
   if (seen === undefined) {
     return `${basename(target)} 已存在但本次会话没读过它。先读一遍再整写，不然会把别人改过的内容整片抹掉。`
   }
@@ -218,8 +231,8 @@ export function staleOverwriteReason(target: string): PathVerdict {
  * edit 定点替换前的检查（T35）：只拦「模型读过、之后又被第三方改过」这一半——
  * edit 自己会现读盘上现值，没读过的文件也允许直接改（这是它与整写覆盖的语义差别）。
  */
-export function staleEditReason(target: string): PathVerdict {
-  const seen = readLedger.get(normalizeKey(target))
+export function staleEditReason(target: string, sessionId: string): PathVerdict {
+  const seen = ledgerOf(sessionId).get(normalizeKey(target))
   if (seen === undefined) return null
   let mtime: number
   try {
@@ -233,9 +246,9 @@ export function staleEditReason(target: string): PathVerdict {
   return null
 }
 
-/** 清掉读取台账（切会话时调用，避免上一个会话的读数误用于新会话）。 */
-export function clearReadLedger(): void {
-  readLedger.clear()
+/** 清掉某个会话的读取台账（agent 收摊时调用，防长会话窗口里台账无界增长）。 */
+export function clearReadLedger(sessionId: string): void {
+  readLedger.delete(sessionId)
 }
 
 /** 主目录（测试与提示词用）。 */

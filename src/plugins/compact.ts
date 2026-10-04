@@ -24,6 +24,7 @@ import { readSpillConfig } from '../core/spill.js'
 import { DEFAULT_ANCHOR_BUDGET_CHARS, DEFAULT_USER_QUOTE_BUDGET_CHARS } from '../core/compact-anchors.js'
 import { errText } from '../adapter/transcript.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
+import type { Session } from '../core/session.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { CompactService, SettingsSectionSpec } from '../services/types.js'
 
@@ -115,9 +116,10 @@ export const compactPlugin: Plugin.Object = {
      * 复用主对话前缀的两样东西（对齐 dsh summarizer 的 warm-prefix 设计）：
      * 与主对话一字不差的系统提示词 + 主对话那份工具目录，让摘要调用成为
      * 上一次真实请求的严格前缀扩展，服务端缓存能一直命中到压缩指令前一个字。
+     * 0.6.48：按目标会话的 cwd 拼（后台常驻 agent 的压缩不能再看「当前查看的会话」）。
      */
-    const requestContext = (): { system: string; tools: readonly ToolSchema[] } => ({
-      system: ctx.prompt.systemPrompt(ctx.session.current().meta.cwd),
+    const requestContext = (target: Session): { system: string; tools: readonly ToolSchema[] } => ({
+      system: ctx.prompt.systemPrompt(target.meta.cwd),
       tools: ctx.tools.visible().map((tool) => ({
         name: tool.name,
         description: tool.description,
@@ -136,12 +138,19 @@ export const compactPlugin: Plugin.Object = {
 
     // T41 /compact 运行守卫：回合跑着的时候手动压缩，摘要落库会和进行中的工具
     // 落库交错（jsonl 里 summary 插在 tool 记录中间，重放口径会乱）。数着回合。
-    let runningTurns = 0
-    ctx.on('dsc/turn-start', () => {
-      runningTurns += 1
+    // 0.6.48 起按会话计数：后台常驻 agent 的回合不该挡住当前会话的 /compact
+    //（不同文件的落库互不交错），只有同一会话的回合才互斥。
+    const runningTurnsBySid = new Map<string, number>()
+    ctx.on('dsc/turn-start', (signal) => {
+      const sid = signal?.sessionId ?? ctx.session.current().meta.id
+      runningTurnsBySid.set(sid, (runningTurnsBySid.get(sid) ?? 0) + 1)
     })
-    ctx.on('dsc/turn-end', () => {
-      runningTurns = Math.max(0, runningTurns - 1)
+    ctx.on('dsc/turn-end', (reason, signal) => {
+      void reason
+      const sid = signal?.sessionId ?? ctx.session.current().meta.id
+      const count = runningTurnsBySid.get(sid) ?? 0
+      if (count <= 1) runningTurnsBySid.delete(sid)
+      else runningTurnsBySid.set(sid, count - 1)
     })
 
     const service: CompactService = {
@@ -153,11 +162,12 @@ export const compactPlugin: Plugin.Object = {
         }
       },
       /** 当前模型路由 + 配置里的自动压缩触发线（缺省 contextWindow 的 80%）。 */
-      async check(signal) {
+      async check(signal, target) {
+        const session = target ?? ctx.session.current()
         const threshold = ctx.llm.contextWindow * (config.autoCompactPercent / 100)
-        if (estimateTokens(ctx.session.current().messages) <= threshold) return
+        if (estimateTokens(session.messages) <= threshold) return
         const outcome = await compactSession(
-          ctx.session.current(),
+          session,
           ctx.llm.route(),
           stream,
           signal ?? new AbortController().signal,
@@ -165,7 +175,7 @@ export const compactPlugin: Plugin.Object = {
           limits(),
           undefined,
           prune(),
-          requestContext(),
+          requestContext(session),
         )
         const compacted = outcome === 'compacted'
         // 只有真压出结果才打压缩标记：noop 时这条提示照旧发（文案不动），
@@ -175,9 +185,10 @@ export const compactPlugin: Plugin.Object = {
       },
 
       /** 请求已经因爆窗失败，强制压一次（2026-09-29）：压出空间返回 true，循环方重试请求。 */
-      async forceCompact(signal) {
+      async forceCompact(signal, target) {
+        const session = target ?? ctx.session.current()
         const outcome = await compactSession(
-          ctx.session.current(),
+          session,
           ctx.llm.route(),
           stream,
           signal ?? new AbortController().signal,
@@ -185,7 +196,7 @@ export const compactPlugin: Plugin.Object = {
           limits(),
           true,
           prune(),
-          requestContext(),
+          requestContext(session),
         )
         if (outcome === 'compacted') {
           // 打上 'compaction' 类别：transcript 据此把这条通知标成压缩落点（轨迹页切区段）
@@ -202,8 +213,10 @@ export const compactPlugin: Plugin.Object = {
       },
 
       async run() {
-        // T41：回合运行中不许手动压——等这轮结束，或者先打断再压
-        if (runningTurns > 0) {
+        // T41：回合运行中不许手动压——等这轮结束，或者先打断再压。
+        // 0.6.48 起只看当前会话自己的回合数（后台 agent 的回合互不交错）。
+        const sid = ctx.session.current().meta.id
+        if ((runningTurnsBySid.get(sid) ?? 0) > 0) {
           ctx.emit('dsc/notice', '回合还在跑，等这轮结束（或先打断）再压缩：中途压会让摘要与工具结果的落库交错')
           ctx.emit('dsc/changed')
           return
@@ -218,7 +231,7 @@ export const compactPlugin: Plugin.Object = {
             limits(),
             undefined,
             prune(),
-            requestContext(),
+            requestContext(ctx.session.current()),
           )
           const compacted = outcome === 'compacted'
           ctx.emit(

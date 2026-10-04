@@ -489,6 +489,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 | T52 checkpoint / rewind（§7.3 升出） | codex Esc-Esc 回退重编辑、hermes shadow git；与 T51 同族，设计轮合并做 | 同 T51 |
 | T53 对外 SDK / 协议面（§7.3 升出） | dsh SDK（TS+Python）、codex app-server v2 对标；host-stdio 协议 v2 稳定化 + 客户端库 | 有真实集成方需求时排期优先级才升 |
 | T54 SSH 远程执行（§7.3 升出） | dsh `packages/ssh/*` 对标：远程宿主跑命令与会话；手机遥控场景的延伸 | 安全面（远程执行授权模型）先于实现 |
+| ~~T55 后台会话（dsh 常驻 agent）~~（✅ 已落地 2026-10-04，0.6.48） | dsh AgentRegistry + UI 订阅语义对齐：每会话一个常驻 agent，切换只换「当前查看」，运行中回合后台跑完；侧栏状态点 + 「已完成未读」徽标（dsh completionUnread 对位）；闲而未看的 agent 自动收摊（dsh 无淘汰，dsc 以资源计收摊——个人版窗口内常驻） | ~~设计轮~~ 已并入 0.6.48 直接落地：事故驱动的正确性修复（切会话 abort 中止收尾的工具结果误写进新会话日志，探针实锤）与功能语义一并解决 |
 | ~~V1 实机走查欠账~~（已回销 2026-10-03，0.6.38） | ✅ 不等 deepseek 限流：本地假 OpenAI 兼容端点（按请求形状应答工具调用/收尾/标题）驱动真 UI 全链走查——状态点 working→awaiting-approval→消失、T16 自动标题上侧栏、/export 提示与落盘全部实见（desktop/shots/v1-walkthrough.ps1，gitignored）。走查揪出并修掉两个真 bug：新会话提交后侧栏列表不刷新（App.tsx）、autoTitle 写入后列表缓存不刷（session-title 插件） | 权限档要点：readonly 档不弹卡直接拒、auto-edit 档工作区外写也要带 sandbox_permissions 升权请求才转审批卡（沙箱先于审批拦） |
 
 §7.3 中被升出的三行（checkpoint/rewind、对外 SDK、SSH 远程执行）保留原文并在行内标注「已升出（T52/T53/T54）」；其余 P3 行维持「登记免遗忘」不变。

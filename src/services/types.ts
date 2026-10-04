@@ -82,6 +82,22 @@ export interface SessionOpenPayload {
   filePath: string | undefined
 }
 
+/** 回合事件的会话归属（0.6.48）：turn-start / turn-end 的第二参数。 */
+export interface TurnSignal {
+  /** 发起回合的会话（meta.id）。 */
+  sessionId: string
+  /** 同一会话的 jsonl 路径（快照 sessionStates 的键口径）。 */
+  sessionPath: string
+}
+
+/** 跨会话运行状态的变化（0.6.48，dsc/agent-status 的负载）。 */
+export interface AgentStatusPayload {
+  sessionId: string
+  /** 会话 jsonl 路径（侧栏行的 id）。 */
+  path: string
+  state: 'working' | 'awaiting-approval' | 'idle'
+}
+
 // ── llm ──────────────────────────────────────────────────────────────────────
 
 /** 每次请求的模型路由（定义在 core/llm，这里转出口供插件引用；文件头已同时引入本地绑定）。 */
@@ -143,8 +159,8 @@ export interface SessionService {
   refresh(): Promise<void>
   /** 启动期一次性提示（如恢复失败回退），由宿主在就绪后转 system 条目。 */
   readonly startupNote: string | null
-  /** 归档一批会话（移进归档区）；当前打开的会话拒绝归档。 */
-  archive(paths: string[]): SettingsMutation
+  /** 归档一批会话（移进归档区）；当前打开的会话拒绝归档；常驻 agent 先收摊再挪文件。 */
+  archive(paths: string[]): Promise<SettingsMutation>
   /** 归档页数据（设置 → 归档的数据源）。 */
   archived(): ArchivedPage
   /** 从归档区恢复一批会话。 */
@@ -295,14 +311,15 @@ export interface AskService {
   /** 挂着等答的提问；null = 无。多题提问整批挂在这里，视图自己带 `questions` 数组。 */
   pendingQuestion(): AskUserView | null
   /** 模型向用户提一个问题（挂起直到有答案或中断）。 */
-  ask(question: AskUserViewInput, signal: AbortSignal): Promise<string>
+  ask(question: AskUserViewInput, signal: AbortSignal, sessionPath?: string): Promise<string>
   /**
    * 模型一次问一批（挂起直到全部答完/跳过，或中断）；返回的答案按题序与入参一一对应。
    *
    * 界面在这一批上逐题作答、统一提交，每次 `answerQuestion` 收下当前这一题的答案，
    * 收齐整批才让这个 Promise 落地——所以模型看到的是「一次调用拿回全部答案」。
+   * @param sessionPath - 提问会话的 jsonl 路径（0.6.49）：卡跟自己的会话走，缺省按当前会话。
    */
-  askMany(questions: readonly AskQuestionItem[], signal: AbortSignal): Promise<string[]>
+  askMany(questions: readonly AskQuestionItem[], signal: AbortSignal, sessionPath?: string): Promise<string[]>
   /** 回答挂起的提问：第 1 次调用解决第 1 题，第 2 次解决第 2 题…… */
   answerQuestion(answer: string): void
 }
@@ -479,16 +496,18 @@ export interface CompactService {
   /**
    * 每轮请求前的自动压缩检查（超阈值时折叠历史）。
    * T41：signal 是调用方那一轮的取消信号——用户打断时压到一半的模型调用跟着停。
+   * 0.6.48：target 是发起请求的 agent 自己的会话（常驻多 agent 下不能再看「当前
+   * 查看的会话」）；缺省按当前会话算。
    */
-  check(signal?: AbortSignal): Promise<void>
+  check(signal?: AbortSignal, target?: Session): Promise<void>
   /** 手动压缩（/compact），结果经 dsc/notice 反馈。回合运行中会被守卫挡下（防落库交错）。 */
   run(): Promise<void>
   /**
    * 请求报「上下文装不下」时的强制压缩：忽略触发线与「历史太短」检查直接折叠一次。
    * @returns true = 确实压缩了（调用方可以重试请求）；false = 没压出空间（原样报错）。
-   *   T41：signal 是调用方那一轮的取消信号。
+   *   T41：signal 是调用方那一轮的取消信号。target 同 check()。
    */
-  forceCompact(signal?: AbortSignal): Promise<boolean>
+  forceCompact(signal?: AbortSignal, target?: Session): Promise<boolean>
   /**
    * 当前压缩口径（/status 展示用）：自动压缩触发线百分比与摘要后保留条数。
    * 值现读插件配置，设置页保存后立刻是新值——与 check() 的判定同源。
@@ -506,15 +525,34 @@ export interface CompactService {
 
 // ── agent ────────────────────────────────────────────────────────────────────
 
-/** Agent 服务：ReAct 循环的对外操作面。 */
+/** Agent 服务：ReAct 循环的对外操作面（0.6.48 起按会话常驻多 agent）。 */
 export interface AgentService {
   /**
    * 提交一条用户消息（排队执行）。
    * @param images - 随消息发送的图片（data URL 清单）。
+   * @param sessionId - 目标会话（meta.id）。缺省投给当前查看的会话；指定时投给那个
+   *   会话的常驻 agent（跑动中进收件箱、闲置的唤醒一轮后台回合），没有常驻 agent
+   *   就写进会话文件等用户回去再说（不打断也不抢跑）。
    */
-  followup(text: string, images?: string[]): void
-  /** 取消当前回合。 */
-  interrupt(): void
+  followup(text: string, images?: string[], sessionId?: string): void
+  /**
+   * 取消在跑的回合。缺省停当前查看的会话；指定 jsonl 路径时停那个**后台**会话
+   * （路径语义与 sessionFor/isRunning/stop 一致，侧栏的行标识就是路径）——
+   * 挂着的审批卡随信号兜底成 reject，回合以 aborted 收尾。
+   */
+  interrupt(filePath?: string): void
+  /** 那个会话有没有常驻 agent（生产者决定「投递」还是「写文件等用户回来」）。 */
+  hasAgent(sessionId: string): boolean
+  /** 按 jsonl 路径找常驻会话实例（session.open 复用常驻会话、避免重复拿写租约）。 */
+  sessionFor(filePath: string): Session | undefined
+  /** 那个会话的常驻 agent 正在跑回合吗（切回运行中会话时转录层补「回合中」状态）。 */
+  isRunning(filePath: string): boolean
+  /**
+   * 停下并收摊那个会话的常驻 agent（归档/删除工作区的前置动作，对齐 dsh 的
+   * stopActivity）：排队输入按归档语义丢弃，在跑的回合取消，等完全收摊
+   * （注册表移出、写租约释放）才 resolve。没有常驻 agent 就是空操作。
+   */
+  stop(filePath: string): Promise<void>
 }
 
 // ── prompt ───────────────────────────────────────────────────────────────────
@@ -574,7 +612,11 @@ export interface PromptService {
    * 这条链是纯函数管道：日志原文 + 这份定义 = 模型看见的内容。
    * @param messages - 已经拼好系统提示的那份。
    */
-  rewrite(messages: ChatMessage[]): ChatMessage[]
+  /**
+   * 应用投影链。第二参数是发起请求的会话（0.6.48 常驻多 agent）：env-facts 这类
+   * 按会话取 cwd 的内置投影靠它取对归属；缺省按当前会话算。
+   */
+  rewrite(messages: ChatMessage[], session?: Session): ChatMessage[]
 }
 
 // ── team ─────────────────────────────────────────────────────────────────────
@@ -1013,9 +1055,9 @@ declare module '@deepseek-ai/cordis' {
      *               transcript 会给这条条目打上压缩标记（轨迹页据此切区段），
      *               省略 = 普通通知（错误、状态说明这类）。
      */
-    'dsc/notice'(text: string, kind?: 'compaction'): void
+    'dsc/notice'(text: string, kind?: 'compaction', sessionPath?: string): void
     /** 计划卡内容或评审结果有变（plan 插件发出，transcript 折叠成会话流里的计划条目）。 */
-    'dsc/plan'(plan: PlanView): void
+    'dsc/plan'(plan: PlanView, sessionPath?: string): void
     'dsc/session-open'(payload: SessionOpenPayload): void
     'dsc/exit'(): void
     /** 命令 handler 请求打开会话选择面板（/resume；UI 桥转发给宿主壳）。 */
@@ -1038,13 +1080,22 @@ declare module '@deepseek-ai/cordis' {
     /**
      * 一轮对话开始（agent 发出，T41）：压缩插件数着它做 /compact 的运行中守卫；
      * 别的「想知道回合开始了」的功能点也听这个，不必各自盯快照。
+     * 0.6.48 起带会话归属：后台常驻 agent 的回合也发这个事件，消费方按
+     * sessionId 判断是不是自己关心的那个会话。
      */
-    'dsc/turn-start'(): void
+    'dsc/turn-start'(payload: TurnSignal): void
     /**
      * 一轮对话结束（agent 发出，reason 与 CoreEvent 的 turn/end 一致）。
      * 目标续跑听这个；循环因此不认识「目标」这个功能。
+     * 0.6.48 起带会话归属（TurnSignal）：只想管当前查看会话的消费方自己比对。
      */
-    'dsc/turn-end'(reason: 'completed' | 'aborted' | 'error'): void
+    'dsc/turn-end'(reason: 'completed' | 'aborted' | 'error', payload: TurnSignal): void
+    /**
+     * 某个会话的运行状态变了（agent/审批插件发出，0.6.48）：侧栏跨会话状态点与
+     * 「已完成未读」徽标的数据源。state: working = 回合在跑；awaiting-approval =
+     * 挂着等审批卡；idle = 完全闲下来（转录层据此把刚收工且没在看的会话标成 just-finished）。
+     */
+    'dsc/agent-status'(payload: AgentStatusPayload): void
     /**
      * 历史刚被压缩掉（compact 插件发出）。
      * 加载时冻结的东西要重算：记忆栏就是靠这个换新的一份，不然压缩后模型还在读旧事实。

@@ -14,6 +14,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import {
   Session,
   archiveSession,
+  archivedRoot,
   countTrashFiles,
   forkSession,
   listArchivedSessions,
@@ -88,12 +89,20 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
       async open(filePath?: string) {
         // 已经在看这条会话：no-op（对齐 dsh 的会话实例常驻 + openState 短路）。
         // 重开一遍不是无害的刷新——它会重建 Session（加载时的中断修复给还在跑的回合
-        // 补「结果未知」合成件），紧接着 session-open 又中断这一轮、让 loop 把真实
-        // 结果也补上，日志里同一 callId 就留下两条结果（请求侧因此 400，见 llm.ts 的
-        // sanitizeToolOrphans）。点击自己正在看的会话要老老实实什么都不做。
+        // 补「结果未知」合成件），紧接着把正在跑的 agent 的会话顶掉，日志里同一 callId
+        // 就可能留下两条结果。点击自己正在看的会话要老老实实什么都不做。
         if (filePath !== undefined && filePath === session.filePath) return
         try {
-          const next = filePath === undefined ? Session.create(cwd) : Session.load(filePath)
+          let next: Session
+          if (filePath === undefined) {
+            next = Session.create(cwd)
+          } else {
+            // 常驻 agent 还攥着这条会话（后台回合在跑/刚切走没多久）：直接复用那个
+            // 实例——再 Session.load 一遍既拿不到写租约（agent 正攥着），又会造出
+            // 同一文件的两个内存副本。0.6.48 常驻多 agent 的关键接缝。
+            const resident = ctx.get('agent')?.sessionFor(filePath)
+            next = resident ?? Session.load(filePath)
+          }
           session = next
           saveLastSession(session)
           ctx.emit('dsc/session-open', { session: next, filePath } satisfies SessionOpenPayload)
@@ -120,15 +129,32 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
       },
 
       // ── 会话库操作（归档 / 恢复 / 删除 / 改名 / 置顶 / 分叉） ──────────────
-      archive(paths) {
+      async archive(paths) {
         const blocked = paths.filter((path) => path === session.filePath)
         if (blocked.length > 0) return { ok: false, error: '当前打开的会话不能归档，先切到别的会话' }
-        try {
-          for (const path of paths) archiveSession(path)
-          return { ok: true, notice: `已归档 ${paths.length} 个会话（设置 → 归档 里可以恢复）` }
-        } catch (error) {
-          return { ok: false, error: errText(error) }
+        const agent = ctx.get('agent')
+        const done: string[] = []
+        const failed: string[] = []
+        for (const path of paths) {
+          // 重试收敛：上次批量归档半途而废时，已归档的（在归档区里，或已从原位置挪走）
+          // 跳过不算失败也不重复报错
+          if (path.startsWith(archivedRoot() + '\\') || path.startsWith(archivedRoot() + '/')) continue
+          if (!existsSync(path)) continue
+          try {
+            // 常驻 agent 先收摊再挪文件（对齐 dsh 的 stopActivity）：后台在跑的会话
+            // 握着打开的写流，直接 rename 是原生 EPERM，整批跟着炸。
+            await agent?.stop(path)
+            archiveSession(path)
+            done.push(path)
+          } catch (error) {
+            failed.push(`${basename(path)}（${errText(error)}）`)
+          }
         }
+        if (failed.length > 0) {
+          return { ok: false, error: `已归档 ${done.length} 个，${failed.length} 个失败：${failed.join('；')}` }
+        }
+        if (done.length === 0) return { ok: true, notice: '没有要归档的会话（可能已经都在归档区）' }
+        return { ok: true, notice: `已归档 ${done.length} 个会话（设置 → 归档 里可以恢复）` }
       },
 
       archived(): ArchivedPage {

@@ -574,7 +574,11 @@ export const memoryPlugin: Plugin.Object = {
     ctx.on('dsc/compacted', () => {
       rebuild()
     })
-    ctx.on('dsc/turn-end', (reason) => {
+    ctx.on('dsc/turn-end', (reason, signal) => {
+      // 0.6.48：只认当前查看会话的回合——记忆快照跟着查看会话走，后台 agent 的
+      // 回合结束不该推进这里的研究计数、更不该偷跑一轮复盘。
+      // 载荷缺省（老式直接 emit）按当前会话算。
+      if (signal !== undefined && signal.sessionId !== ctx.session.current().meta.id) return
       failedWrites = 0
       if (reviewing) {
         reviewing = false

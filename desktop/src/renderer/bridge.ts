@@ -116,7 +116,7 @@ export function createRuntimeProxy(): RuntimeProxy {
     subscribe: () => Promise.resolve(() => undefined),
     getSnapshot: () => Promise.reject(new Error('快照经 onSnapshot 推送；代理不支持 getSnapshot')),
     submit: (text, images) => callVoid('submit', text, images),
-    interrupt: () => callVoid('interrupt'),
+    interrupt: (id) => callVoid('interrupt', id),
     openSession: (id) => callVoid('openSession', id),
     compact: () => callVoid('compact'),
     setModel: (model) => callVoid('setModel', model),

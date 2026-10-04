@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Session } from '../lib/core/session.js'
-import { writeTool, editTool } from '../lib/core/tools/fs-tools.js'
+import { readTool, writeTool, editTool } from '../lib/core/tools/fs-tools.js'
 
 let failures = 0
 const check = (name, condition, detail = '') => {
@@ -65,7 +65,10 @@ try {
   check('改了又改回去（终态=基线）聚合为空', none.length === 0, JSON.stringify(none))
 
   // ── 重复记录幂等：第二次 recordTurnChange 不覆盖基线 ──
+  // 裸写（writeFileSync）动了盘上文件，T35 的「先读后写」守卫要求先用 read 工具
+  // 重新登记台账，edit 才放行——真 agent 被要求的正是这个动作。
   writeFileSync(target, 'x\n', 'utf8')
+  await readTool.run({ path: 'a.ts' }, ctx)
   const first_ = await editTool.run({ path: 'a.ts', old: 'x', new: 'xx' }, ctx)
   if (first_.changes !== undefined) session.recordTurnChange(first_.changes.path, first_.changes.baseline ?? '')
   const second_ = await editTool.run({ path: 'a.ts', old: 'xx', new: 'xxx' }, ctx)

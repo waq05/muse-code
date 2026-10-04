@@ -43,6 +43,12 @@ export interface ToolContext {
   cwd: string
   signal: AbortSignal
   /**
+   * 发起这次调用的会话身份（meta.id / jsonl 路径）。工具生成的后续产物——后台作业
+   * 完成通知这类——按它归属投递（0.6.48 常驻多 agent：不能再看「当前查看的会话」）。
+   */
+  sessionId: string
+  sessionPath: string
+  /**
    * 发起这次调用的队友身份。子智能体插件替队友转发团队类工具（team_task）时塞进来，
    * 工具按它署名（任务板认领人、信箱回信）；主会话的调用没有这一项，按「lead」对待。
    */

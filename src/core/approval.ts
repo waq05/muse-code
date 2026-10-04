@@ -14,6 +14,10 @@ export interface ApprovalRequest {
   args?: Record<string, unknown>
   /** 当前工作目录（auto-edit 模式判定「工作区内」用）。 */
   cwd?: string
+  /** 发起调用的会话 id（meta.id）。0.6.48 常驻多 agent：授权记账与审计按它归属。 */
+  sessionId?: string
+  /** 发起调用的会话 jsonl 路径（侧栏跨会话状态点按它定位）。 */
+  sessionPath?: string
 }
 
 /**

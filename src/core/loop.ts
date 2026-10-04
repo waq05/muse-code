@@ -57,8 +57,15 @@ export interface AgentDeps {
    * 组装好「发给模型的那份消息」之后的投影链（只影响请求体，不改会话日志）。
    * 插件用它丢掉过期截图之类「留在历史里只会撑上下文、对下一轮没用」的内容；
    * 往请求里注入日志上没有的内容时，注入方自己用 appendNote 落一条备忘。
+   * 第二参数是这个 agent 自己的会话（0.6.48 起常驻多 agent：env-facts 这类要按
+   * 会话取 cwd 的投影靠它取对归属，不能再看「当前查看的会话」）。
    */
-  rewrite?(messages: ChatMessage[]): ChatMessage[]
+  rewrite?(messages: ChatMessage[], session: Session): ChatMessage[]
+  /**
+   * 完全闲下来（回合收完、没有排队的下一轮）时调一次。常驻注册表用它决定
+   * 「非当前查看的 agent 就地收摊」（释放写租约与内存）；当前查看的 agent 不收。
+   */
+  onIdle?(): void
 }
 
 /**
@@ -86,9 +93,12 @@ function summarizeArgs(argsText: string): string {
 }
 
 export class MiniAgent {
-  private session: Session
+  /** 这个 agent 从生到死只认一个会话（0.6.48 常驻模型：切会话=换 agent，不再换底层会话）。 */
+  readonly session: Session
   private abort: AbortController | null = null
   private running = false
+  /** 回合真正在跑（turn/start 起到 turn/end 发出为止）。收尾聚合的尾段不算。 */
+  private turnActive = false
   private pendingTurn = false
 
   constructor(
@@ -110,11 +120,19 @@ export class MiniAgent {
     return this.running
   }
 
-  /** 切换底层会话（/new、/resume）；当前 turn 会被打断。 */
-  switchSession(session: Session): void {
-    this.abort?.abort()
+  /**
+   * 还有没活干（回合在跑，或收件箱出账后排了下一轮）。常驻注册表据此决定收不收摊。
+   * 用 turnActive 而不是 running：turn/end 发出之后还有一段异步收尾（git 聚合），
+   * 那段时间 running 仍为 true，但回合已经结束——切走时它该算「闲」，收摊、翻徽标。
+   */
+  get busy(): boolean {
+    return this.turnActive || this.pendingTurn
+  }
+
+  /** 收摊：取消在跑的回合并关闭会话（释放写租约）。app 退出与非活跃常驻 agent 清理都走这里。 */
+  dispose(): void {
+    this.cancel()
     this.session.close()
-    this.session = session
   }
 
   /**
@@ -169,6 +187,9 @@ export class MiniAgent {
           this.pendingTurn = false
           this.enqueueTurn()
         }
+        // 完全闲下来（没排下一轮）才报 idle：常驻注册表据此收掉「用户已经切走、
+        // 又没活干」的 agent，释放会话写租约；正被查看的 agent 由监听方自行豁免。
+        if (!this.running) this.deps.onIdle?.()
       })
   }
 
@@ -193,9 +214,9 @@ export class MiniAgent {
   private async runTurn(): Promise<void> {
     const abort = new AbortController()
     this.abort = abort
-    // 回合内可能切会话（/new、/resume 会 abort 当前轮）：收尾聚合必须用「开跑时」的那个
-    // 会话的基线，而且会话已切走就不再发聚合事件（发了会污染新会话的转录）。
-    const session = this.session
+    // 0.6.48 常驻模型起一个 agent 只认一个会话：收尾聚合、收件箱出账都落在
+    // 自己的会话里，不存在「会话已切走」的归属问题。
+    this.turnActive = true
     this.deps.emit({ type: 'turn/start' })
     // T42：回合起点的 git 快照异步起跑，收尾才等它——write/edit 之外（bash/sed/构建
     // 脚本）动过的文件靠「起点 vs 终点」的 porcelain 差集兜底进轮尾卡。
@@ -235,23 +256,24 @@ export class MiniAgent {
         this.deps.emit({ type: 'turn/end', reason: 'error' })
       }
     } finally {
+      // turn/end 已经发出：从这一刻起 busy 不再把本回合算作「在跑」——
+      // 剩下的只有异步收尾（出账 + git 聚合），切走的归属决策不等它。
+      this.turnActive = false
       this.abort = null
       // 收尾出账：最后一步之后/流式定稿期间入箱的输入还欠着，这里落库（dsh：回合
       // 不许隔着未交货的收件箱收尾）。落库后它们悬在最后一条 assistant 之后，补一轮
       // 让模型接话。出错/打断一样算——输入不该因为回合失败而蒸发。
-      if (this.session === session) this.drainInbox(false)
+      this.drainInbox(false)
       // 收尾聚合（成功/中断/出错一样算——改了的文件如实展示）。条目按「下一条用户消息
       // 之前归当前轮」的口径落位，晚于 turn/end 也能进这一轮的轮尾卡区间。
-      if (this.session === session) {
-        try {
-          const files = await session.takeTurnChanges()
-          // T42：git 快照差集补上 bash/脚本改的文件（write/edit 已记的路径不重复）
-          const extra = await collectGitTurnChanges(this.cwd, await gitStart, await snapshotGitStatus(this.cwd), files.map((file) => file.path))
-          files.push(...extra)
-          if (files.length > 0) this.deps.emit({ type: 'turn/diff', files })
-        } catch {
-          // 聚合失败不遮回合本身的结果
-        }
+      try {
+        const files = await this.session.takeTurnChanges()
+        // T42：git 快照差集补上 bash/脚本改的文件（write/edit 已记的路径不重复）
+        const extra = await collectGitTurnChanges(this.cwd, await gitStart, await snapshotGitStatus(this.cwd), files.map((file) => file.path))
+        files.push(...extra)
+        if (files.length > 0) this.deps.emit({ type: 'turn/diff', files })
+      } catch {
+        // 聚合失败不遮回合本身的结果
       }
     }
   }
@@ -270,7 +292,7 @@ export class MiniAgent {
         ...this.session.messages,
       ]
       const messages =
-        this.deps.rewrite === undefined ? assembled : this.deps.rewrite(assembled)
+        this.deps.rewrite === undefined ? assembled : this.deps.rewrite(assembled, this.session)
       try {
         const result = await this.deps.stream(
           route.api,
@@ -400,6 +422,9 @@ export class MiniAgent {
         cwd: this.cwd,
         args,
         signal,
+        // 发起调用的会话身份：审批授权按会话记账、审批卡标明来处都靠它（0.6.48）
+        sessionId: this.session.meta.id,
+        sessionPath: this.session.filePath,
         ...callFacts(args, this.cwd),
       })
       if (verdict.action === 'deny') {
@@ -427,7 +452,13 @@ export class MiniAgent {
     signal: AbortSignal,
   ): Promise<ToolOutcome> {
     try {
-      const output = await tool.run(args, { cwd: this.cwd, signal })
+      const output = await tool.run(args, {
+        cwd: this.cwd,
+        signal,
+        // 工具生成的后续产物（后台作业完成通知等）按会话归属投递（0.6.48）
+        sessionId: this.session.meta.id,
+        sessionPath: this.session.filePath,
+      })
       const rawText = typeof output === 'string' ? output : output.text
       // 工具结果里的密钥形状字符串不进会话日志，也不回显给模型（遮红挂在观察者链上）。
       const text = this.deps.guards.observe(call.name, rawText)

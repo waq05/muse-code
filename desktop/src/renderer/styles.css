@@ -420,6 +420,11 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-orange) 25%, transparent);
 }
 
+/* 0.6.48：后台跑完时你没看的会话——绿色实心点（不呼吸），点开即熄 */
+.sess-item .session-dot.just-finished .dot {
+  background: var(--dsc-green);
+}
+
 @keyframes session-dot-breathe {
   0%,
   100% {
@@ -1855,6 +1860,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 后台会话的审批卡弹到当前视图时的归属标注（0.6.49）：一眼看出这张卡是谁家的 */
+.approval-owner {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
 }
 
 /* ── 审批卡内嵌的「将做的改动」（codex 审批弹窗内嵌 diff；默认收起一行，点开看逐行） ── */

@@ -115,14 +115,14 @@ export function createReadTool(lineLimit = READ_DEFAULT_LINE_LIMIT): ToolEntry {
           throw new Error(`这张图有 ${Math.round(stat.size / 1024 / 1024)}MB，超过 6MB 上限；先压缩或缩小再看`)
         }
         const bytes = await fs.readFile(file)
-        noteRead(file)
+        noteRead(file, ctx.sessionId)
         return {
           text: `已加载图片 ${file}（${mime}，${stat.size} 字节），图在附件里。`,
           images: [`data:${mime};base64,${bytes.toString('base64')}`],
         }
       }
       const raw = await fs.readFile(file, 'utf8')
-      noteRead(file)
+      noteRead(file, ctx.sessionId)
       // T34：二进制（含 NUL 字节）不硬灌——乱码只会烧上下文，给一句明确指引
       if (raw.slice(0, 8000).includes('\u0000')) {
         throw new Error('这看起来是二进制文件，read 不支持直接读。需要内容时用 bash 配合格式工具取样（如 base64 / certutil -encode / xxd）。')
@@ -178,7 +178,7 @@ export const writeTool: ToolEntry = {
     const file = abs(ctx.cwd, args.path)
     const hard = writeHardBlockReason(file)
     if (hard !== null) throw new Error(hard)
-    const stale = staleOverwriteReason(file)
+    const stale = staleOverwriteReason(file, ctx.sessionId)
     if (stale !== null) throw new Error(stale)
     const content = str(args.content, 'content')
     // T35：CAS 锚——从这一刻到 writeFile 之间文件若被第三方改过，就拒绝整写
@@ -191,7 +191,7 @@ export const writeTool: ToolEntry = {
       throw new Error('文件在你准备写入时又被其他程序改动，重试一次（先重新读它）。')
     }
     await fs.writeFile(file, content, 'utf8')
-    noteWrite(file)
+    noteWrite(file, ctx.sessionId)
     const changes = summarizeChange(file, before, content)
     return {
       text: `已写入 ${file}（${content.length} 字符）`,
@@ -223,7 +223,7 @@ export const editTool: ToolEntry = {
     if (hard !== null) throw new Error(hard)
     // T35：模型读过、之后又被第三方改过的文件不许拿旧印象去改（与 write 同一台账，
     // 但不要求「没读过就拒绝」——edit 是现读现值，这是它与整写覆盖的语义差别）
-    const stale = staleEditReason(file)
+    const stale = staleEditReason(file, ctx.sessionId)
     if (stale !== null) throw new Error(stale)
     const oldText = str(args.old, 'old')
     const newText = str(args.new, 'new')
@@ -239,7 +239,7 @@ export const editTool: ToolEntry = {
       throw new Error('文件在编辑过程中又被其他程序改动，重试一次（先重新读它）。')
     }
     await fs.writeFile(file, after, 'utf8')
-    noteWrite(file)
+    noteWrite(file, ctx.sessionId)
     const changes = summarizeChange(file, raw, after)
     return {
       text: `已编辑 ${file}`,

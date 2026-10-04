@@ -50,22 +50,28 @@ export const toolsDefaultPlugin: Plugin.Object = {
     let disposers: Array<() => void> = []
 
     // ---- T15 后台作业表 ----
-    // 完成通知做 800ms 合并：几个作业同时收尾时合成一条 followup，不炸出一串轮次
+    // 完成通知做 800ms 合并：几个作业同时收尾时合成一条 followup，不炸出一串轮次。
+    // 0.6.48：合并桶按会话分——通知投给它所属会话的常驻 agent（agent.followup 的
+    // sessionId 参数），不再看「当前查看的是哪个会话」；不知道归属的老调用方（探针）
+    // 落空桶，照旧投给当前 agent。
+    const pendingNotices = new Map<string, string[]>()
+    const noticeTimers = new Map<string, NodeJS.Timeout>()
     const table = new JobTable({
-      notify: (text) => {
-        pendingNotices.push(text)
-        if (noticeTimer === undefined) {
-          noticeTimer = setTimeout(() => {
-            noticeTimer = undefined
-            const merged = pendingNotices.splice(0)
-            if (merged.length > 0) ctx.agent.followup(merged.join('\n'))
-          }, 800)
-          noticeTimer.unref?.()
-        }
+      notify: (text, owner) => {
+        const key = owner ?? ''
+        const bucket = pendingNotices.get(key) ?? []
+        bucket.push(text)
+        pendingNotices.set(key, bucket)
+        if (noticeTimers.has(key)) return
+        const timer = setTimeout(() => {
+          noticeTimers.delete(key)
+          const merged = (pendingNotices.get(key) ?? []).splice(0)
+          if (merged.length > 0) ctx.agent.followup(merged.join('\n'), undefined, owner)
+        }, 800)
+        timer.unref?.()
+        noticeTimers.set(key, timer)
       },
     })
-    let noticeTimer: NodeJS.Timeout | undefined
-    const pendingNotices: string[] = []
 
     // ---- T20 终端会话表 ----
     // 与作业表共用同一张进程登记表（stopAllBackgroundChildren 收摊时一并收掉）
@@ -164,7 +170,8 @@ export const toolsDefaultPlugin: Plugin.Object = {
       for (const off of disposers) off()
       disposers = []
       // T15：内核收摊收掉还在跑的后台作业（跨会话存活的另一面是进程得有人收）
-      if (noticeTimer !== undefined) clearTimeout(noticeTimer)
+      for (const timer of noticeTimers.values()) clearTimeout(timer)
+      noticeTimers.clear()
       stopAllBackgroundChildren()
       offSection()
     }

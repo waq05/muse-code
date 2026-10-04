@@ -34,6 +34,10 @@ export interface ToolGuardInput {
   command?: string
   /** 这一轮的取消信号：要等人点卡的守卫拿它中止等待（用户按打断时用）。 */
   signal: AbortSignal
+  /** 发起调用的会话 id（meta.id）：审批授权记账与审计按它归属（0.6.48）。 */
+  sessionId: string
+  /** 发起调用的会话 jsonl 路径：侧栏跨会话状态点按它定位。 */
+  sessionPath: string
 }
 
 /** 注册进链条的一位守卫。 */

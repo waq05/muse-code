@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { approvalDiffOf } from '../lib/plugins/approval.js'
 import { collectWorkingTree } from '../lib/core/git-info.js'
-import { reviewMessage } from '../lib/plugins/commands.js'
+import { reviewMessage } from '../lib/core/git-info.js'
 import { parseUnifiedDiff, splitUnifiedDiffByFile } from '../desktop/src/renderer/unified-diff.ts'
 
 let failures = 0

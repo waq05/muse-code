@@ -6,11 +6,15 @@
  * 结果写 meta.json 的 `autoTitle` 字段。展示链是 用户改名 → 自动标题 → 首条消息截断，
  * 用户改过名（或已经生成过）的永不覆盖。
  *
+ * 触发按回合归属走（0.6.49 对齐 dsh 的 host 级监听）：后台收工的会话同样起名——
+ * 只读重放它的日志取首条消息，不碰写租约；载荷缺省（老式直接 emit）按当前会话算。
+ *
  * 失败完全静默：首条消息截断的兜底标题永远在，起标题失败不值得打扰用户。
  *
  * @module dsc/plugins/session-title
  */
 import type { Plugin } from '@deepseek-ai/cordis'
+import { Session } from '../core/session.js'
 import { patchSessionMeta, readSessionMeta } from '../core/session-meta.js'
 import { contentText } from '../core/llm.js'
 
@@ -47,33 +51,39 @@ export const sessionTitlePlugin: Plugin.Object = {
   name: 'session-title',
   inject: ['session', 'llm'],
   apply(ctx) {
-    /** 正在生成标题的会话 id：同会话并发只发一次请求（turn-end 可能连发）。 */
+    /** 正在生成标题的会话文件路径：同会话并发只发一次请求（turn-end 可能连发）。 */
     const inFlight = new Set<string>()
 
-    ctx.on('dsc/turn-end', (reason) => {
+    ctx.on('dsc/turn-end', (reason, signal) => {
       if (reason !== 'completed') return
-      void generate()
+      // 目标按回合归属走：后台收工的会话也起名（0.6.49 前「只认当前查看」的守卫
+      // 让后台跑完的首回合永远没有标题）。载荷缺省（老式直接 emit）按当前会话算。
+      void generate(signal?.sessionPath ?? ctx.session.current().filePath)
     })
 
-    async function generate(): Promise<void> {
-      const session = ctx.session.current()
-      const id = session.meta.id
-      if (inFlight.has(id)) return
-      // 已有用户标题或自动标题的会话不再生成（生成过就定型；要改用户自己改名）
-      const record = readSessionMeta()[id]
-      if (record?.title !== undefined || record?.autoTitle !== undefined) return
-
-      const prompts = session.messages
-        .filter((message) => message.role === 'user')
-        .map((message) => contentText(message.content).replace(/\s+/g, ' ').trim())
-        .filter((text) => text !== '')
-        .slice(0, MAX_PROMPTS)
-      if (prompts.length === 0) return
-
-      inFlight.add(id)
+    async function generate(targetPath: string): Promise<void> {
+      if (inFlight.has(targetPath)) return
+      inFlight.add(targetPath)
       const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS)
       const controller = new AbortController()
       try {
+        // 目标会话的读取源：常驻 agent 还在就读它的内存会话（权威且最新——turn-end
+        // 时刻写流缓冲可能还没冲刷，读盘会拿到缺尾的日志）；收摊了的只读重放，
+        // close 已冲刷缓冲，磁盘读可靠。
+        const resident = ctx.get('agent')?.sessionFor(targetPath)
+        const session = resident ?? Session.load(targetPath, true, { lease: false })
+        const id = session.meta.id
+        // 已有用户标题或自动标题的会话不再生成（生成过就定型；要改用户自己改名）
+        const record = readSessionMeta()[id]
+        if (record?.title !== undefined || record?.autoTitle !== undefined) return
+
+        const prompts = session.messages
+          .filter((message) => message.role === 'user')
+          .map((message) => contentText(message.content).replace(/\s+/g, ' ').trim())
+          .filter((text) => text !== '')
+          .slice(0, MAX_PROMPTS)
+        if (prompts.length === 0) return
+
         const route = ctx.llm.route()
         const result = await ctx.llm.stream(
           route.api,
@@ -109,7 +119,7 @@ export const sessionTitlePlugin: Plugin.Object = {
         // 静默：截断标题兜底
       } finally {
         clearTimeout(timer)
-        inFlight.delete(id)
+        inFlight.delete(targetPath)
       }
     }
   },

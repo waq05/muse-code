@@ -147,7 +147,13 @@ export const toolSearchPlugin: Plugin.Object = {
           parameters: entry.parameters,
           risk: entry.risk,
           where: '已从台面上撤下，调用走 tool_call（调用时会按这个真名过一遍审批与安全钩子）',
-          invoke: (callArgs, runCtx) => entry.run(callArgs, { cwd: runCtx.cwd, signal: runCtx.signal }),
+          invoke: (callArgs, runCtx) =>
+            entry.run(callArgs, {
+              cwd: runCtx.cwd,
+              signal: runCtx.signal,
+              sessionId: runCtx.sessionId,
+              sessionPath: runCtx.sessionPath,
+            }),
         })
       }
       return items
@@ -169,7 +175,13 @@ export const toolSearchPlugin: Plugin.Object = {
         parameters: live.parameters,
         risk: live.risk,
         where: '就在台面上，可以直接调用（经 tool_call 走等于多过一道审批）',
-        invoke: (callArgs, runCtx) => live.run(callArgs, { cwd: runCtx.cwd, signal: runCtx.signal }),
+        invoke: (callArgs, runCtx) =>
+          live.run(callArgs, {
+            cwd: runCtx.cwd,
+            signal: runCtx.signal,
+            sessionId: runCtx.sessionId,
+            sessionPath: runCtx.sessionPath,
+          }),
       }
     }
 
@@ -307,6 +319,8 @@ export const toolSearchPlugin: Plugin.Object = {
           cwd: runCtx.cwd,
           args: callArgs,
           signal: runCtx.signal,
+          sessionId: runCtx.sessionId,
+          sessionPath: runCtx.sessionPath,
           ...callFacts(callArgs, runCtx.cwd),
         })
         // 守卫说拒：理由原文回给模型（由循环记成这次工具失败），不静默、也不改写成别的话
