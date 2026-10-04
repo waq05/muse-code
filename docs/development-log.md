@@ -370,7 +370,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 
 ## 阶段 14：全面对标审查（codex / hermes / dsh）与九项修复
 
-四路并行源码审查（dsc 深审 + 三家参照盘点），报告落在 `docs/audit-2026-09-29.md`。审查发现两条高危并当轮修复，其余按优先级分六批落地（`180dc05` → `aff6f68`），收尾时全量 23 个检查脚本 0 FAIL。
+四路并行源码审查（dsc 深审 + 三家参照盘点），报告全文未随仓库公开（0.6.50 时从版库连历史抹除，见阶段 75），漏洞细节以下表修复记录为准。审查发现两条高危并当轮修复，其余按优先级分六批落地（`180dc05` → `aff6f68`），收尾时全量 23 个检查脚本 0 FAIL。
 
 | 发现与决策 | 理由 |
 | --- | --- |
@@ -1586,3 +1586,11 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **验证**：根 typecheck/build 绿。CI 首轮失败：`ERR_PNPM_CONFIG_CONFLICT_BUILT_DEPENDENCIES`——`--dangerously-allow-all-builds` 内部展开的 neverBuiltDependencies 与根包 `onlyBuiltDependencies: [koffi]` 互斥；去掉 flag 恰是想要的语义（根装只放行 koffi，desktop 装 electron postinstall 跳过无碍：electron-builder 自下载 Electron zip，electron-vite build 不拉起 electron）。修复后第二轮全绿（tag v0.6.50 → c87f560，全程约 100 秒：verify 4s、npm 作业按设计跳过、desktop 89 秒跑完 electron-vite + electron-builder 26.15.3 NSIS/portable，afterPack 钩子正常）。Release v0.6.50 已挂两个安装器（各约 103MB，非 draft），匿名拉 Releases API 正常返回 `tag_name: v0.6.50`——应用「检查更新」自比对即「已是最新」。另有一个环境坑：API 新建仓后**首推 tag 不触发** workflow（workflow 已注册 active、runs 恒 total_count 0），删 tag 重推即好。npm 渠道仍是缺口：仓库缺 `NPM_TOKEN` secret，CLI 未上 registry。
 
 **版本号**：未 bump（仍 0.6.50），发行基建随 0.6.50 首发走。
+
+## 阶段 75：审计报告出库（0.6.50）
+
+**动因**：仓库公开后盘点敏感面，`docs/audit-2026-09-29.md` 带 file:line 的漏洞细节不宜在公共仓长期挂全文档（尽管 10 项已全部修复）。用户拍板移除。
+
+**做法**：filter-branch 连同 git 历史彻底抹除该文件，强推 main 与 v0.6.50；阶段 14 的报告路径引用同步清掉。安全审计同时确认：全历史（121 提交）无密钥形状/私钥块/密码赋值，配置类文件与运行期产物（会话 jsonl、audit jsonl、remote-e2e 临时 HOME）从未入库——key 三来源全在仓库外的 `~/.dsc`。
+
+**版本号**：未 bump（仍 0.6.50），随 0.6.50 发行收尾。
