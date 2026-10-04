@@ -321,10 +321,18 @@ export interface ChangedFileView {
   status: 'added' | 'modified'
 }
 
-/** 会话累计 token 用量。 */
+/**
+ * 会话累计 token 用量。
+ * 缓存命中两项只在端点上报过明细的请求上累计（命中率 = 命中 /（命中 + 未命中）），
+ * 没上报明细的请求既不加命中也不加未命中——命中率才不会被稀释（口径与 usage-log 一致）。
+ */
 export interface TokenUsageView {
   inputTokens: number
   outputTokens: number
+  /** 输入里的前缀缓存命中 tokens 合计；端点从未上报过明细时缺省。 */
+  cacheHitTokens?: number
+  /** 输入里的前缀缓存未命中 tokens 合计；同上。 */
+  cacheMissTokens?: number
 }
 
 /** 用量统计的单日投影（本地时区的自然日）。 */
@@ -393,6 +401,8 @@ export interface StatusView {
   effort: EffortLevel
   turnState: 'idle' | 'thinking' | 'working' | 'awaiting-approval'
   usage: TokenUsageView | null
+  /** 当前会话的工作目录（状态栏显示；快照组装自 session.meta.cwd）。 */
+  cwd?: string
 }
 
 /** 档位按钮的一项：档位 id + 按钮文字 + 悬浮说明。 */

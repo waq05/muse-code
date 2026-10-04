@@ -474,6 +474,14 @@ export class Transcript {
         this.usage = {
           inputTokens: this.usage.inputTokens + event.inputTokens,
           outputTokens: this.usage.outputTokens + event.outputTokens,
+          // 缓存命中明细只在端点上报了的请求上累计：没上报的请求既不加命中也不加
+          // 未命中，命中率才不会被稀释（口径与 core/usage-log 的 ch/cm 一致）。
+          ...(event.cacheHitTokens === undefined && event.cacheMissTokens === undefined
+            ? {}
+            : {
+                cacheHitTokens: (this.usage.cacheHitTokens ?? 0) + (event.cacheHitTokens ?? 0),
+                cacheMissTokens: (this.usage.cacheMissTokens ?? 0) + (event.cacheMissTokens ?? 0),
+              }),
         }
         // 会话总量与本轮累计各记一份：前者给状态栏的会话累计，后者随条目送到界面
         this.turnUsage = {

@@ -20,6 +20,7 @@ import { Composer } from './Composer.js'
 import { PlanReviewCard } from './PlanReviewCard.js'
 import { SessionPicker } from './SessionPicker.js'
 import { StatusBar } from './StatusBar.js'
+import { TaskStrips } from './TaskStrips.js'
 import { BORDER, GAP, PAD, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 双击 Ctrl+C 的判定窗口。 */
@@ -211,6 +212,7 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
         turnState={snapshot.status.turnState}
         expandThinking={expandThinking}
       />
+      <TaskStrips goal={snapshot.surfaces.goal} todos={snapshot.surfaces.todos} />
       {approval !== null ? (
         <ApprovalCard request={approval} expanded={approvalExpanded} />
       ) : null}
@@ -249,7 +251,11 @@ export function App({ runtime }: { runtime: DscRuntime }): JSX.Element {
           onSubmit={handleSubmit}
         />
       )}
-      <StatusBar status={snapshot.status} />
+      <StatusBar
+        status={snapshot.status}
+        surfaces={snapshot.surfaces}
+        sessionStates={snapshot.sessionStates}
+      />
     </Box>
   )
 }

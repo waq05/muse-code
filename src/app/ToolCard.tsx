@@ -25,6 +25,13 @@ const ARG_PREVIEW_LIMIT = 80
 /** 结果摘要截断宽度。 */
 const RESULT_PREVIEW_LIMIT = 200
 
+/** 耗时的人话格式：890ms / 1.2s / 1m23s。 */
+const fmtDuration = (ms: number): string => {
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`
+}
+
 /** 单行化并截断。 */
 const oneLine = (text: string, limit: number): string => {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -52,6 +59,12 @@ export function ToolCard({ call }: { call: ToolCallView }): JSX.Element {
             {SEP.dot}
             {status.text}
           </Text>
+          {call.durationMs !== undefined ? (
+            <Text {...TEXT.label} color={status.color}>
+              {' '}
+              · {fmtDuration(call.durationMs)}
+            </Text>
+          ) : null}
         </Box>
       </Box>
       {call.resultText !== undefined && call.resultText !== '' ? (

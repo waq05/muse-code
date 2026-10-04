@@ -187,6 +187,7 @@ export const transcriptPlugin: Plugin.Object = {
             effort: ctx.llm.effort,
             turnState,
             usage: transcript.usage,
+            cwd: ctx.session.current().meta.cwd,
           },
           surfaces,
           sessions: ctx.session.sessions,

@@ -42,12 +42,12 @@
 | 项 | 做法 |
 | --- | --- |
 | 六类条目渲染 | `turn-end`：aborted→「⏹ 已停止」、error→「✗ 过程失败」（completed 不出行）；`turn-max-tokens`→「⚠ 输出达到长度上限」；`model-retry`→「↻ 第 N 次重试：原因」；`changes`/`turnDiff`→轮尾「文件已更改」聚合卡（文件名 + added/removed 行数）；`plan` 条目→计划卡（带批准/拒绝状态徽标，评审卡收起后历史仍在） |
-| todo / goal 常驻条 | 输入框上方：goal 条（目标 + 阶段 + 轮次 + `p` 暂停/继续、`x` 清空）；todo 条（active 项 + done/total 进度 + `t` 展开全清单、`c` 清空）——数据源 `surfaces.goal` / `surfaces.todos` |
+| todo / goal 常驻条 | 输入框上方纯展示条：goal 条（目标 + 阶段 + 轮次）、todo 条（active 项 + done/total 进度）——操作走 /goal 与 /todo 命令（终端里单行命令比隐藏热键更可发现，故不做热键）——数据源 `surfaces.goal` / `surfaces.todos` |
 | steering 标记 | user 条目 `steering: true` → 行首「↩ 插话」徽标 |
 | 压缩落点 | system/user 条目带 `compaction` → 独立分隔行「⎯ 已压缩历史 · 第 N 次 ⎯」 |
 | 工具耗时 | ToolCard 有 `durationMs` 时状态后追加「· 1.2s」 |
 | 后台会话状态 | `sessionStates` 非空时状态栏追加一行：working/awaiting-approval/just-finished 的会话短 id 分色列出（后台会话可感知；`i` 跳转、`s` 停止放批次三后评估） |
-| **状态栏增强（用户点名）** | 补：cwd（尾部缩略）、git 分支、协作模式（执行/计划/探索/免打扰）、权限模式（只读/自动编辑/完全访问/AI 审查）、上下文占用%（估算口径与 /status 同源）、**前缀缓存命中率**（= 命中/(命中+未命中)，会话累计口径）；tok 三段改「in↑ out↓ cache✓」。模型名已有，保留 |
+| **状态栏增强（用户点名）** | 两行制：第一行回合状态 + 协作模式 + 权限模式（档位名读 surfaces 投影）；第二行 cwd 尾部、模型、effort、会话累计用量（in↑/out↓ + **前缀缓存命中率**，= 命中/(命中+未命中)，只累计上报过明细的请求）、会话短 id；有后台会话时第三行状态点。git 分支暂不做（快照组装必须同步，异步 git 调用放不进去；分支看 dock/`/status`） |
 | 缓存数据通道 | `CoreEvent.usage` 本来就带可选 `cacheHitTokens/cacheMissTokens`（`events.ts:55`），adapter 累加后进 `TokenUsageView`（加可选字段，桌面端向后兼容） |
 | /usage 命令 | 读 `runtime.usageStats()` 聚合（~/.dsc/usage/usage.jsonl）：总量、请求轮数、缓存命中率、按模型拆分 top、活跃天数——文本报告经 notice 出条目 |
 | UI 统一 | 状态栏改两行制：第一行模式与状态（彩色标签），第二行路径/模型/用量（暗淡）；theme 增加 diff 色与标签组间距 |

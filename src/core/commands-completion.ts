@@ -22,6 +22,7 @@ export const BUILT_IN_COMMANDS: CommandSpec[] = [
   { name: 'policy', args: '[readonly|auto-edit|full-access|ai-review]', description: '查看或切换权限模式' },
   { name: 'effort', args: '[default|off|low|high|max]', description: '查看或切换思考强度' },
   { name: 'status', args: '', description: '查看上下文占用与压缩余量' },
+  { name: 'usage', args: '', description: '查看累计用量统计（含缓存命中率）' },
   { name: 'export', args: '[文件路径]', description: '导出当前会话为 markdown' },
   { name: 'review', args: '[关注点]', description: '审查工作区未提交改动' },
   { name: 'help', args: '', description: '查看帮助' },

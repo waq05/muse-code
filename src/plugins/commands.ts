@@ -16,7 +16,7 @@ import type {
   CommandService,
   CommandSpec,
 } from '../services/types.js'
-import type { DscRuntime } from '../contract.js'
+import type { DscRuntime, UsageStatsView } from '../contract.js'
 import { collectWorkingTree, reviewMessage } from '../core/git-info.js'
 import { estimateTokens } from '../core/compact.js'
 import { exportSessionMarkdown } from '../core/session-export.js'
@@ -122,6 +122,17 @@ export const commandsPlugin: Plugin.Object = {
             autoCompactPercent: compact !== undefined ? compact.describe().autoCompactPercent : 80,
           }),
         )
+      },
+    )
+    service.register(
+      { name: 'usage', args: '', description: '查看累计用量统计（含缓存命中率）' },
+      ({ runtime, ui }) => {
+        void runtime
+          .usageStats()
+          .then((stats) => ui.notice(usageReport(stats)))
+          .catch((cause: unknown) =>
+            ui.notice(`/usage 失败：${cause instanceof Error ? cause.message : String(cause)}`),
+          )
       },
     )
     service.register(
@@ -274,6 +285,44 @@ export function runCommand(
   ui: import('../services/types.js').CommandContext,
 ): boolean {
   return serviceRef !== null ? serviceRef.run(input, runtime, ui) : false
+}
+
+/**
+ * /usage 的文本组装（独立成函数便于脱离命令体系直测）。
+ * 缓存命中率只统计端点上报过明细的请求（usage-log 的口径），没上报的不掺进来。
+ */
+export function usageReport(stats: UsageStatsView): string {
+  if (stats.totalTurns === 0) return '还没有用量记录（~/.dsc/usage/usage.jsonl 里一条都没有）。'
+  const fmtTokens = (value: number): string =>
+    value >= 1_000_000
+      ? `${(value / 1_000_000).toFixed(1)}M`
+      : value >= 1000
+        ? `${(value / 1000).toFixed(1)}k`
+        : String(value)
+  const lines = [
+    `用量统计（自 ${new Date(stats.sinceTs ?? Date.now()).toISOString().slice(0, 10)}，${stats.activeDays} 天有活动）`,
+    `· 累计：输入 ${fmtTokens(stats.totalInputTokens)} / 输出 ${fmtTokens(stats.totalOutputTokens)} tokens，共 ${stats.totalTurns} 轮请求`,
+  ]
+  const cacheTotal = stats.totalCacheHitTokens + stats.totalCacheMissTokens
+  if (cacheTotal > 0) {
+    lines.push(
+      `· 前缀缓存命中：${Math.round((stats.totalCacheHitTokens / cacheTotal) * 100)}%（命中 ${fmtTokens(stats.totalCacheHitTokens)} / 未命中 ${fmtTokens(stats.totalCacheMissTokens)}，只统计上报过明细的请求）`,
+    )
+  }
+  if (stats.peakDay !== null) {
+    lines.push(
+      `· 单日峰值：${stats.peakDay.date}（${fmtTokens(stats.peakDay.inputTokens + stats.peakDay.outputTokens)} tokens）`,
+    )
+  }
+  lines.push(`· 连续活跃 ${stats.currentStreakDays} 天（最长 ${stats.longestStreakDays} 天）`)
+  const top = stats.models.slice(0, 5)
+  if (top.length > 0) {
+    lines.push('按模型（Top 5）：')
+    for (const model of top) {
+      lines.push(`· ${model.key}：${fmtTokens(model.inputTokens + model.outputTokens)} tokens（${model.turns} 轮）`)
+    }
+  }
+  return lines.join('\n')
 }
 
 /**
