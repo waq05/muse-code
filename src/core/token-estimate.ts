@@ -29,3 +29,71 @@ export function estimateTextTokens(text: string): number {
   }
   return cjk * 0.65 + other * 0.33
 }
+
+/** 结构够用的消息形状（与 core/llm 的 ChatMessage 同构；不 import，保住零依赖）。 */
+export interface SegmentMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string | null | Array<{ type: string; text?: string }>
+  reasoning_content?: string
+  tool_calls?: { function: { name: string; arguments: string } }[]
+}
+
+/** 请求按内容类型的 token 估算分段（context 进度条占用段的组成，dsh 同款五段）。 */
+export interface RequestSegments {
+  system: number
+  prompt: number
+  assistant: number
+  thinking: number
+  tools: number
+}
+
+/** 全零分段（新会话 / 尚无请求记录）。 */
+export function emptySegments(): RequestSegments {
+  return { system: 0, prompt: 0, assistant: 0, thinking: 0, tools: 0 }
+}
+
+/**
+ * 对**组装完的整份请求**按内容类型现算分段（每次请求重算，天然带「历史被压缩 /
+ * 消息滚出窗口」的重置语义，不用做增量抵账）。口径对齐 dsh projection：system 一段、
+ * user 归 prompt、assistant 正文与工具调用参数归 assistant、思考归 thinking、
+ * 工具结果归 tools。取整向上（宁可高估）。
+ *
+ * 为什么是估算不是真值：没有 tokenizer，角色标记与工具 JSON 信封也不在五段里——
+ * 这些零头体现在权威读数（真实 prompt_tokens）与分段之和的差上，界面只拿分段画颜色，
+ * 读数永远用服务端数字。
+ */
+export function estimateRequestSegments(messages: readonly SegmentMessage[]): RequestSegments {
+  const textOf = (content: SegmentMessage['content']): string => {
+    if (content === null) return ''
+    if (typeof content === 'string') return content
+    return content.map((part) => (part.type === 'text' ? (part.text ?? '') : '')).join('')
+  }
+  const segments = emptySegments()
+  for (const message of messages) {
+    switch (message.role) {
+      case 'system':
+        segments.system += estimateTextTokens(textOf(message.content))
+        break
+      case 'user':
+        segments.prompt += estimateTextTokens(textOf(message.content))
+        break
+      case 'assistant':
+        segments.assistant += estimateTextTokens(textOf(message.content))
+        segments.thinking += estimateTextTokens(message.reasoning_content ?? '')
+        for (const call of message.tool_calls ?? []) {
+          segments.assistant += estimateTextTokens(`${call.function.name}${call.function.arguments}`)
+        }
+        break
+      case 'tool':
+        segments.tools += estimateTextTokens(textOf(message.content))
+        break
+    }
+  }
+  return {
+    system: Math.ceil(segments.system),
+    prompt: Math.ceil(segments.prompt),
+    assistant: Math.ceil(segments.assistant),
+    thinking: Math.ceil(segments.thinking),
+    tools: Math.ceil(segments.tools),
+  }
+}

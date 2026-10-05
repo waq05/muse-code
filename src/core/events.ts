@@ -6,6 +6,8 @@
  * @module dsc/core/events
  */
 import type { FileChangeSummary } from './tools.js'
+import type { RequestSegments } from './token-estimate.js'
+import type { SubagentCardView } from '../contract.js'
 
 /** MiniAgent 事件。 */
 export type CoreEvent =
@@ -51,8 +53,21 @@ export type CoreEvent =
    * 一次请求的用量。cacheHit/cacheMiss 是输入里的前缀缓存明细（端点上报时才有）：
    * 命中率是「请求前缀有没有被改写」的直接读数——改一个字节就会让整段历史全价重读，
    * 用量统计页把它展示出来（2026-10-03 起）。
+   *
+   * `model` 是这次请求实际用的模型 id（0.6.60 起）：费用估算按笔归属到模型价目，
+   * 会话中途换模型不会把 A 模型的用量算到 B 的单价上。
    */
-  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheHitTokens?: number; cacheMissTokens?: number }
+  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheHitTokens?: number; cacheMissTokens?: number; model?: string }
+  /**
+   * 一次请求组装完成、马上要发出去：附带这份请求按内容类型的 token 估算分段。
+   * 发在流式**之前**，context 条在模型还没吐字时就能画出当前的上下文组成。
+   */
+  | { type: 'context'; segments: RequestSegments }
+  /**
+   * 子代理活动快照（subagent 插件转发，仅当队友的父会话正被查看）：adapter 按
+   * 队友名原位更新内联卡。每次都是全量行，没有增量语义。
+   */
+  | { type: 'subagent'; row: SubagentCardView }
   | { type: 'error'; message: string }
   | { type: 'turn/start' }
   | { type: 'turn/end'; reason: 'completed' | 'aborted' | 'error' }

@@ -1696,3 +1696,19 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **思考行**：`💭` 换 `⚓` + 整行斜体（展开态全量、折叠态 100 字预览，内容也斜体——dsh preview 同款）；流式时行首盲文 spinner（⠋⠙⠹… 120ms/帧，本地帧状态只重渲染自己）。
 
 **验证**：features 29 / picker-mouse 27 / markdown 26 / composer / resident 32/0 / remote-host 140/140 全绿（remote-e2e 72/74 维持基线两项预存在）；双包 typecheck 绿；`msc --version` → 0.6.59；实机截图：boot 态全宽进度条 + 左右分组字段 + `⌸ ❯` 输入框，对话态 ⚓ 斜体思考行 + 亮蓝填充条（10.4k/1.0M 1.0%），滚动态蓝底 pill + 大字回显。批三（可选）：context 按内容类型分段、子代理内联 waterfall 卡、思考时长、费用峰谷。
+
+## 阶段 83：视觉对齐批三——context 分段条 / 子代理内联卡 / 思考时长 / 峰谷费用（0.6.60）
+
+**对齐目标**（计划书批三，dsh StatusMetrics 五段条 / SubagentMessage / AssistantThinkingMessage / deepseekPricing 规格）。
+
+**context 分段条**：`StatusView` 新增 `contextUsed`（最近一次请求的 prompt_tokens，权威占用）与 `contextSegments`（内容类型分段估算）——loop 每次组装完请求就发 `context` 事件，`estimateRequestSegments` 对整份消息现算五段（system / user→prompt / assistant 正文+工具调用参数→assistant / reasoning→thinking / tool 结果→tools，dsh projection 同口径），每次重算天然带压缩与滚出的重置语义。StatusBar 第一行升级为 dsh 同款分段条：每个可见段至少 1 列 + largest-remainder 分列（`allocateBarColumns` 移植），空闲段 = 窗口 − 权威占用（分段之和≠读数，估算只管颜色组成），读数 `9.9k/1.0M 1.0%` 右缘挂空闲段、放不下退到纯百分比。分段色取 dsh 蓝系谱整体提亮一档（dsh 的深海军蓝按它家浅灰空闲段设计，压在 msc 深底上会沉底）。窗口未知时整条画空闲段——状态栏恒定两行是选择器几何，条不能塌。
+
+**读数换权威分子的理由**：0.6.59 用 usage 累计（多轮计费和），早滚出窗口的内容也被算进去，条只会虚胖；prompt_tokens 是服务端对最近一次请求的真值。`ctx 1.0%` 右组字段同口径跟进。
+
+**子代理内联卡**：contract 新增 `kind: 'subagent'` 条目（`SubagentCardView`），subagent 插件在队友的 emit 回调里做活动追踪（正文 delta 按行攒瀑布 ≤8 行、工具调用记 lastTool、usage 累计 token）并转发 `subagent` 事件——**只在父会话正被查看时投递**（转录是当前查看会话的那一份，往里折别家会话就是串台）；转录层按队友名原位 upsert（React key 不换，卡就地刷新）。ChatView 新 `SubagentCard`：跑动 = spinner 头行（bold 任务 · 模型 · 轮数 · 工具数 · 跳秒耗时 · tok）+ 当前工具行 + 恒定 3 行 `│` 瀑布（逐码点硬截防折行破恒高）；收工折成头行一行（失败保留 `└` 错误行）。卡片可点 → 复用 `openAgentTranscript` 开队友只读转录浮层。会话切回时按名册种回头行卡（rebuild 路径才种——redundant 路径直播卡还在，拿名册粗数据覆盖会倒退）；`replayIsRedundant` 把 subagent 条目与 system 一并豁免比对。切走期间才开工的队友缺卡，下一次事件转发自动补上。
+
+**思考时长**：转录层在直播尾 thinking 段记 `startedAt`（第一口 reasoning delta），`message` 定稿时算耗时挂 `durationMs`（重放造不出来 = 缺省，界面降级）；直播中的思考卡实时显示已思考时长。ChatView ≥1s 才显示 `· Ns`（`48s` / `3m12s`，dsh duration 同款）。`shape()` 比对剔除 `durationMs`——否则恢复会话永远判「内容变了」整表重建。
+
+**峰谷费用**：新 `core/pricing.ts`（与 dsh deepseekPricing 同源：DeepSeek 官方价目表前缀最长匹配 + 北京时间工作日 9-12/14-18 峰谷，空闲半价）。usage 事件补 `model`（费用按笔归属到请求当时的模型，中途换模型不串价）；转录层按模型分峰谷桶（命中/未命中/输出三分项，msc 的 input 含命中所以先拆分；无明细全按未命中价 = 保守上限）。状态行 tok 后新增 `≈¥2.35 峰`（峰/谷标记=当前时段）；**只有 DeepSeek 官方端点（provider 名含 deepseek）且模型在价目表里才显示**——其它 provider / 未收录模型一律不给金额，宁可不显示不给错数字。
+
+**验证**：新 `scripts/batch3-test.mjs` 17 项（isPeakHour 时段边界 / 价目前缀匹配 / 命中未命中拆分 / 峰谷分桶计价数学 / 未收录模型不估价 / 分段五段归位 / context·usage 折叠 / 思考时长含重放降级 / subagent 同名 upsert）；features 29 / picker 27 / markdown 26 / composer / resident 32/0 / remote-host 140/140 / 其余电池全绿（remote-e2e 72/74 维持基线）；双包 typecheck 绿；`msc --version` → 0.6.60；实机走查（假端点先回 subagent 工具调用再派 writer，队友请求按工牌识别拖 3.5s）：一帧抓齐跑动态卡（spinner + `1s` 跳秒 + `│` 瀑布 + 运行中）、折叠态卡（✓ + `1轮 · 0工具 · 3s · 10.4k tok · 已完成`）、分段条蓝段 + `9.9k/1.0M 1.0%`、后台芯片 `◐`、卡片点击开队友转录浮层；假 provider 不显示 ≈¥ 符合预期。**踩坑实录**：CUA 的 app.paste() 对 wt 静默落空（不报错也不达）——消息注入要走 `Set-Clipboard` + 终端自己的 Ctrl+Shift+V；StatusBar 对快照缺新字段必须自带兜底（测试 mock 是合法的旧形状消费者）。

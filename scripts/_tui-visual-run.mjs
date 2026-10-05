@@ -3,6 +3,10 @@
  * 驱动真 TUI，回包是富 markdown（标题/粗体/表格/列表/行内代码/链接），把渲染层
  * 的差距直接暴露在实机截图里。思考流用 reasoning_content 驱动。
  *
+ * 0.6.60 批三：端点会先回一次 subagent 工具调用（后台派 writer 队友），队友的
+ * 请求按系统提示里的「你在团队里的位置」识别，拖 3.5 秒再回话——实机截图正好
+ * 抓到子代理内联卡的跑动态（spinner 头行 + 瀑布），收工后折成一行头。
+ *
  * 用法：node scripts/_tui-visual-run.mjs   （Ctrl+C 两次退出；HOME 全程隔离）
  */
 import { spawn } from 'node:child_process'
@@ -72,6 +76,49 @@ const server = createServer((req, res) => {
       res.end(sseDeltas([{ content: '视觉走查的会话标题' }]) + sseEnd())
       return
     }
+    // 队友的请求：系统提示里有它的团队工牌。拖 3.5s 再分两批回话，
+    // 让父会话的截图窗口正好落在内联卡的「跑动中」。
+    const isTeammate = messages.some(
+      (m) => m.role === 'system' && typeof m.content === 'string' && m.content.includes('你在团队里的位置'),
+    )
+    if (isTeammate) {
+      await sleep(1500)
+      res.write(sseDeltas([{ content: '收到，先把仓库结构过一遍。\n' }, { content: 'README 在根目录，内容比预期短。\n' }]))
+      await sleep(2000)
+      res.end(
+        sseDeltas([{ content: '摘要完成：README 覆盖安装与命令，缺贡献说明；建议补一节。' }]) + sseEnd(),
+      )
+      return
+    }
+    // 主会话第一跳：回一次 subagent 工具调用（后台派 writer），把内联卡驱动起来
+    const hasToolResult = messages.some((m) => m.role === 'tool')
+    if (!hasToolResult && Array.isArray(payload.tools) && payload.tools.some((t) => t?.function?.name === 'subagent')) {
+      res.end(
+        sseDeltas([{ reasoning_content: '这个活可以分给队友，后台派一个 writer。' }]) +
+          sseDeltas([
+            {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call-spawn-1',
+                  function: {
+                    name: 'subagent',
+                    arguments: JSON.stringify({
+                      action: 'spawn',
+                      role: 'writer',
+                      task: '把仓库的 README 读一遍，摘要成三句话发回来',
+                      background: true,
+                    }),
+                  },
+                },
+              ],
+            },
+          ]) +
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n` +
+          'data: [DONE]\n\n',
+      )
+      return
+    }
     // 思考流 → markdown 正文，分两段写出（finish 只在最后，别把回合提前收掉）
     const contentChunks = MARKDOWN_REPLY.match(/[\s\S]{1,60}/g) ?? []
     res.write(
@@ -107,6 +154,12 @@ writeFileSync(
     'defaultModel: m',
     '',
   ].join('\n'),
+  'utf8',
+)
+// 批三走查要驱动真子代理：条目树里把 subagent 插件打开（官方插件默认关）
+writeFileSync(
+  join(dscHome, 'plugins.json'),
+  `${JSON.stringify({ version: 1, entries: [{ file: 'subagent', disabled: false, config: {} }] }, null, 2)}\n`,
   'utf8',
 )
 

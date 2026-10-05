@@ -243,7 +243,17 @@ export type TranscriptEntry =
    * `steering` = 这条消息是在助手回合**还没跑完**时插进来的（对照 dsh 的 steering 节点）。
    */
   | { kind: 'user'; id: number; text: string; images?: string[]; ts?: number; compaction?: CompactionMark; steering?: boolean }
-  | { kind: 'thinking'; id: number; text: string; ts?: number }
+  /**
+   * durationMs 是这段思考从第一口 reasoning delta 到定稿的耗时（≥1s 界面才显示）。
+   * 为什么可选：重放历史日志造不出它（日志只存定稿文本），老会话回看就降级不显示。
+   */
+  | { kind: 'thinking'; id: number; text: string; ts?: number; durationMs?: number }
+  /**
+   * 子代理内联卡（实时条目，不落盘）：队友在跑的时候长在转录里，收工折成一行头。
+   * 由 subagent 插件把队友的事件流转成 SubagentCardView 推进来（dsc/subagent 事件），
+   * 同名原位更新（React key 不换，卡片就地刷新）。
+   */
+  | { kind: 'subagent'; id: number; sub: SubagentCardView; ts?: number }
   /** usage 是整轮累计口径，见本类型头部的说明。 */
   | { kind: 'text'; id: number; text: string; ts?: number; usage?: { inputTokens: number; outputTokens: number } }
   /** usage 同上（一轮以工具结果收尾、没有最终正文时，数字落在这张卡上）。 */
@@ -285,6 +295,51 @@ export type TranscriptEntry =
  * 从事件折条目时把它丢了，于是界面上「跑挂了的一轮」和「好好答完的一轮」长得一模一样。
  */
 export type TurnEndReason = 'completed' | 'aborted' | 'error'
+
+/**
+ * 子代理内联卡的数据（dsh SubagentMessage 同位物）：头行「状态点 + 任务 + 轮数/工具数/
+ * 耗时/token + 状态词」，跑动时再加当前工具行与输出瀑布。数据是插件侧的实时快照，
+ * 每次事件整体替换。
+ */
+export interface SubagentCardView {
+  /** 队友名（同会话内唯一，卡片按它原位更新）。 */
+  name: string
+  /** 角色名（工牌冻结的那份）。 */
+  role: string
+  /** 派给它的任务原文（界面自己截断）。 */
+  task: string
+  /** 运行状态；`idle` = 正常收工，`stopped` = 被打断，`failed` = 过程失败。 */
+  state: 'working' | 'idle' | 'failed' | 'stopped'
+  /** 用的模型（`端点/模型`；跟随主会话模型时填当时的模型）。 */
+  model?: string
+  /** 已发起的模型请求轮数。 */
+  rounds: number
+  /** 已执行的工具调用次数。 */
+  toolCalls: number
+  /** 开工时刻（毫秒 epoch；名册种子卡才有，实时转发必有）。 */
+  startedAt?: number
+  /** 收工时刻；还在跑就没有。 */
+  finishedAt?: number
+  /** 当前（或最后一把）工具：跑动时画「当前工具行」。 */
+  lastTool?: { name: string; args: string; status: 'running' | 'done' | 'failed' }
+  /** 输出瀑布的行池（最新在后；界面只取最后几行，每行硬截单行宽）。 */
+  outputLines?: string[]
+  /** 累计 token（输入+输出，端点真值；一次都没回过用量时缺省）。 */
+  tokens?: number
+  /** 过程失败的原因（state=failed 时界面画一条错误行）。 */
+  error?: string
+  /** 队友会话的 jsonl 路径（点卡片开只读转录浮层）。 */
+  file?: string
+}
+
+/** context 条按内容类型的分段（token 估算值，只描述占用段的颜色组成）。 */
+export interface ContextSegmentsView {
+  system: number
+  prompt: number
+  assistant: number
+  thinking: number
+  tools: number
+}
 
 /** 差异里的一行（与 core/diff-text.ts 的 DiffLine 同构，视图层零宿主依赖）。 */
 export interface DiffLineView {
@@ -403,6 +458,19 @@ export interface StatusView {
   usage: TokenUsageView | null
   /** 当前模型的上下文窗口（状态栏 context 进度条的分母；未知 0 = 不画刻度）。 */
   contextWindow: number
+  /**
+   * 最近一次请求的 prompt_tokens（权威占用读数，读数与空闲段按它算）。
+   * 为什么不用 usage 累计：那是整会话的计费和，多轮会把早已滚出窗口的内容也算进去，
+   * 条只会虚胖。还没有任何请求回过用量时为 0。
+   */
+  contextUsed: number
+  /** 最近一次请求组装的内容类型分段（估算；没有请求记录时全 0 = 条上只有空闲段）。 */
+  contextSegments: ContextSegmentsView
+  /**
+   * 会话费用估算（人民币）：只有当 provider 是 DeepSeek 官方且模型在价目表里、
+   * 且至少回过一笔用量时才有。峰谷按北京时段分桶计价（见 core/pricing）。
+   */
+  cost?: { total: number; peakNow: boolean }
   /** 当前会话的工作目录（状态栏显示；快照组装自 session.meta.cwd）。 */
   cwd?: string
 }

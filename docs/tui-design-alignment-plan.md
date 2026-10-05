@@ -42,8 +42,12 @@
 5. **输入框 ⌸ 按钮**：`❯` 左侧加 `⌸ `（dim，点击=打开会话选择器，对齐 dsh home 按钮）；工作中 `❯` 变暗。
 6. 思考行：`⚓` + 整行斜体 + （P2 时长）文案对齐；流式 spinner 盲文帧（蓝色脉动简化为 accent 恒色）。
 
-### 批次三（0.6.60）— P2 打磨（按需）
-thinking 时长（core 在 thinking 条目补 duration）、子代理内联 waterfall 卡（core 需转发子代理输出行，受协议限制则只做头部行）、context 条按内容类型分段、cost 峰谷（需计价数据）、H2 蓝标题 hover 提亮（鼠标已是点击语义，缓）。
+### 批次三（0.6.60）— P2 打磨 ✅（2026-10-06 完成）
+- **context 条按内容类型分段** ✅：loop 每次组装请求发 `context` 事件，`estimateRequestSegments` 现算五段（无增量抵账，压缩/滚出自动重置）；`StatusView.contextUsed` 换成最近请求的 prompt_tokens（权威占用，替代 0.6.59 的 usage 累计——那会把滚出窗口的内容也算进去）；StatusBar 移植 dsh `allocateBarColumns`（可见段保底 1 列 + largest-remainder），分段色取 dsh 蓝系谱提亮一档适配深底。
+- **子代理内联 waterfall 卡** ✅：contract `kind:'subagent'` 条目 + subagent 插件活动转发（正文行攒瀑布、lastTool、token 累计；仅父会话被查看时投递）+ 转录层按名 upsert + 会话切回按名册种卡；跑动 = spinner 头行 + 当前工具行 + 恒 3 行 `│` 瀑布，收工折头行，失败留 `└` 错误行；点击开队友转录浮层。
+- **thinking 时长** ✅：直播尾 thinking 段记 startedAt，message 定稿挂 `durationMs`（重放无此数据降级不显示）；≥1s 显示 `· Ns`。
+- **cost 峰谷** ✅（数据源已解）：新 `core/pricing.ts`（DeepSeek 官方价目 + 北京时段峰谷，与 dsh deepseekPricing 同源）；usage 事件带 model 按笔归账、峰谷分桶；状态行 `≈¥x.xx 峰/谷` 仅在 DeepSeek 官方端点且模型收录时出现——不显示好过给错数字。
+- H2 hover 提亮：维持「缓」（鼠标已是点击语义，悬浮态对终端点击流意义有限）。
 
 ## 三、风险与对策
 - **恒定帧几何**：间距/边距/状态栏行数一变，picker 与鼠标命中的构造行号全要跟改——每批跑全电池（28+29 项）+ 假端点截图对照。

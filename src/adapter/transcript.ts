@@ -17,7 +17,9 @@ import type { CoreEvent } from '../core/events.js'
 import { contentImages, contentText, type ChatMessage } from '../core/llm.js'
 import type { FileChangeSummary } from '../core/tools.js'
 import { SUMMARY_BANNER } from '../core/compact-anchors.js'
-import type { CompactionMark, TokenUsageView, ToolCallView, ToolStatus, TranscriptEntry } from '../contract.js'
+import { addUsageToBuckets, emptyCostBuckets, isPeakHour, type CostBuckets } from '../core/pricing.js'
+import { emptySegments, type RequestSegments } from '../core/token-estimate.js'
+import type { CompactionMark, SubagentCardView, TokenUsageView, ToolCallView, ToolStatus, TranscriptEntry } from '../contract.js'
 
 /** 工具卡条目（替换对象实现不可变更新）。 */
 type ToolEntry = Extract<TranscriptEntry, { kind: 'tool' }>
@@ -28,6 +30,8 @@ interface LiveSegment {
   text: string
   /** 这一段最后一次追加内容的时刻（界面按它算时间；重放老日志时没有）。 */
   ts?: number
+  /** 这段思考第一口 delta 的时刻（定稿时算耗时用；text 段没有）。 */
+  startedAt?: number
 }
 
 const RESULT_TEXT_LIMIT = 1500
@@ -38,6 +42,8 @@ export class Transcript {
   private list: TranscriptEntry[] = []
   /** callId → 工具条目在 `list` 中的下标（append-only 保证下标稳定）。 */
   private toolIndex = new Map<string, number>()
+  /** 队友名 → 子代理卡条目在 `list` 中的下标（同名原位更新）。 */
+  private subagentIndex = new Map<string, number>()
   /**
    * 流式期间已经报出工具名、还在等参数的条目（对照 dsh 的 `preparing` 阶段）。
    *
@@ -53,6 +59,16 @@ export class Transcript {
   private segments: LiveSegment[] = []
   /** 本会话累计 token 用量。 */
   usage: TokenUsageView = { inputTokens: 0, outputTokens: 0 }
+  /**
+   * 最近一次请求的 prompt_tokens（context 条的权威占用读数）。
+   * 为什么不用 usage 累计：那是整会话计费和，多轮会把滚出窗口的内容也算进去，
+   * 条只会虚胖；真实占用就该用服务端对最近一次请求报的数。
+   */
+  contextUsed = 0
+  /** 最近一次请求的内容类型分段（`context` 事件随每笔请求重算）。 */
+  contextSegments: RequestSegments = emptySegments()
+  /** 费用估算的峰谷分桶（按模型分账；`usage` 事件带 model 后逐笔累加）。 */
+  costBuckets = new Map<string, CostBuckets>()
   /**
    * 本轮（最近一条用户消息起）累计 token 用量。
    *
@@ -103,6 +119,10 @@ export class Transcript {
         id: -(position + 1),
         text: segment.text,
         ...(segment.ts === undefined ? {} : { ts: segment.ts }),
+        // 直播中的思考卡实时显示已思考时长（快照每次重建，数值随渲染刷新）
+        ...(segment.kind === 'thinking' && segment.startedAt !== undefined
+          ? { durationMs: Math.max(0, Date.now() - segment.startedAt) }
+          : {}),
       }),
     )
     // 准备中的工具用**正 id**：负 id 是「这段内容还在长」的标记（整轮折叠与轮次划分都拿它
@@ -162,11 +182,15 @@ export class Transcript {
   clear(): void {
     this.list = []
     this.toolIndex.clear()
+    this.subagentIndex.clear()
     this.prepared = []
     this.seq = 1
     this.segments = []
     this.usage = { inputTokens: 0, outputTokens: 0 }
     this.turnUsage = { inputTokens: 0, outputTokens: 0 }
+    this.contextUsed = 0
+    this.contextSegments = emptySegments()
+    this.costBuckets = new Map()
     this.working = false
     this.inTurn = false
     this.compactionCount = 0
@@ -359,11 +383,22 @@ export class Transcript {
       }
       case 'message': {
         const hadLive = this.segments.length > 0
+        // 这轮思考的耗时 = 最后一段连续 thinking 的第一口 delta 到定稿的时长。
+        // 从尾部往回扫，把紧挨着的 thinking 段的最早 startedAt 拿出来；正文夹在
+        // 中间就只算最后那截（界面上一行思考标签对应的是「刚才这段思考」）。
+        let thinkingMs: number | undefined
+        for (let index = this.segments.length - 1; index >= 0; index -= 1) {
+          const segment = this.segments[index]
+          if (segment === undefined || segment.kind !== 'thinking') break
+          if (segment.startedAt !== undefined && this.eventTs !== null && this.eventTs >= segment.startedAt) {
+            thinkingMs = this.eventTs - segment.startedAt
+          }
+        }
         this.segments = []
         this.working = false
         let changed = hadLive
         if (event.reasoning !== '') {
-          this.pushThinking(event.reasoning)
+          this.pushThinking(event.reasoning, thinkingMs)
           changed = true
         }
         if (event.text !== '') {
@@ -488,7 +523,30 @@ export class Transcript {
           inputTokens: this.turnUsage.inputTokens + event.inputTokens,
           outputTokens: this.turnUsage.outputTokens + event.outputTokens,
         }
+        // context 条的权威占用读数 = 最近一次请求的 prompt_tokens（含缓存命中，
+        // 服务端口径）；费用分桶按笔归属到请求当时的模型，峰谷看用量发生的时刻。
+        this.contextUsed = event.inputTokens
+        {
+          const buckets = this.costBuckets.get(event.model ?? '') ?? emptyCostBuckets()
+          addUsageToBuckets(buckets, event, isPeakHour(this.eventTs === null ? undefined : new Date(this.eventTs)))
+          this.costBuckets.set(event.model ?? '', buckets)
+        }
         return true
+      case 'context':
+        this.contextSegments = { ...event.segments }
+        return true
+      case 'subagent': {
+        // 同名原位更新（dsh SubagentRow 的 upsert 语义）：React key 不换，卡片就地刷新
+        const index = this.subagentIndex.get(event.row.name)
+        const previous = index === undefined ? undefined : this.list[index]
+        if (previous !== undefined && previous.kind === 'subagent') {
+          this.list[index!] = { ...previous, sub: event.row, ...(this.eventTs === null ? {} : { ts: this.eventTs }) }
+          return true
+        }
+        this.list.push(this.stamp({ kind: 'subagent', id: this.seq++, sub: event.row }))
+        this.subagentIndex.set(event.row.name, this.list.length - 1)
+        return true
+      }
       case 'error':
         this.system(`错误：${event.message}`)
         return true
@@ -529,7 +587,8 @@ export class Transcript {
       last.text += text
       last.ts = ts
     } else {
-      this.segments.push({ kind, text, ts })
+      // 思考段记下第一口 delta 的时刻：定稿时算耗时，直播时算「已思考 Ns」
+      this.segments.push({ kind, text, ts, ...(kind === 'thinking' ? { startedAt: ts } : {}) })
     }
   }
 
@@ -553,13 +612,17 @@ export class Transcript {
   }
 
   /** 定稿思考：合并进相邻的最后一个 thinking 条目（折叠展示）。 */
-  private pushThinking(text: string): void {
+  private pushThinking(text: string, durationMs?: number): void {
     const last = this.list[this.list.length - 1]
     if (last !== undefined && last.kind === 'thinking') {
-      this.list[this.list.length - 1] = this.stamp({ ...last, text: `${last.text}\n${text}` })
+      this.list[this.list.length - 1] = this.stamp({
+        ...last,
+        text: `${last.text}\n${text}`,
+        ...(durationMs === undefined ? {} : { durationMs }),
+      })
       return
     }
-    this.list.push(this.stamp({ kind: 'thinking', id: this.seq++, text }))
+    this.list.push(this.stamp({ kind: 'thinking', id: this.seq++, text, ...(durationMs === undefined ? {} : { durationMs }) }))
   }
 }
 

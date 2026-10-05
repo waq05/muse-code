@@ -1031,6 +1031,7 @@ export function App({
                 ) : undefined
               }
               onPreviewImages={handlePreviewImages}
+              onOpenAgent={(file) => openAgentTranscript(file, shortId(file))}
               registerClick={registerClick}
             />
           </Box>

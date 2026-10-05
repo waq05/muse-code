@@ -25,6 +25,7 @@ import type { ToolGuardChain } from './tool-guards.js'
 import { callFacts, stripBaseline, type FileChangeSummary, type ToolEntry } from './tools.js'
 import { collectGitTurnChanges, snapshotGitStatus } from './git-info.js'
 import { errText } from './err-text.js'
+import { estimateRequestSegments } from './token-estimate.js'
 
 export interface AgentDeps {
   /** 每次请求时动态读取（支持 /model 热切换）。 */
@@ -293,6 +294,9 @@ export class MiniAgent {
       ]
       const messages =
         this.deps.rewrite === undefined ? assembled : this.deps.rewrite(assembled, this.session)
+      // context 条的分段在请求组装完、流还没开的时候画出来：模型还没吐字，
+      // 界面就能显示这次的上下文由什么组成（每次重算，压缩/滚出自动重置）。
+      this.deps.emit({ type: 'context', segments: estimateRequestSegments(messages) })
       try {
         const result = await this.deps.stream(
           route.api,
@@ -340,6 +344,7 @@ export class MiniAgent {
             outputTokens: result.usage.outputTokens,
             ...(result.usage.cacheHitTokens === undefined ? {} : { cacheHitTokens: result.usage.cacheHitTokens }),
             ...(result.usage.cacheMissTokens === undefined ? {} : { cacheMissTokens: result.usage.cacheMissTokens }),
+            model: route.model,
           })
         }
         return result

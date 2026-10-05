@@ -113,6 +113,12 @@ interface Teammate {
   error?: string
   /** 等下一次 turn/end 的 waiter 队列。 */
   waiters: Array<() => void>
+  /** 输出瀑布的行池（最新在后，只留 8 行；正文行与工具结果首行都进）。 */
+  outputLines: string[]
+  /** 当前（或最后一把）工具，画内联卡的「当前工具行」。 */
+  lastTool?: { name: string; args: string; status: 'running' | 'done' | 'failed' }
+  /** 累计 token（输入+输出端点真值；内联卡显示用）。 */
+  tokens: number
 }
 
 /** 调这两个工具的人是谁（决定任务板认领人、信箱署名、能不能再往下派）。 */
@@ -376,9 +382,13 @@ export const subagentPlugin: Plugin.Object = {
         startedAt: Date.now(),
         lastText: '',
         waiters: [],
+        outputLines: [],
+        tokens: 0,
         agent: undefined as unknown as MiniAgent,
       }
 
+      /** 正文按行攒的缓冲（delta 碎片凑整行进瀑布）。 */
+      let lineBuffer = ''
       teammate.agent = new MiniAgent(
         {
           route: () => {
@@ -407,11 +417,40 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
               if (teammate.rounds >= teammate.badge.maxTurns) teammate.agent.cancel()
             } else if (event.type === 'tool/call') {
               teammate.toolCalls += 1
+              teammate.lastTool = {
+                name: event.name,
+                args: event.args.replace(/\s+/g, ' ').trim().slice(0, 60),
+                status: 'running',
+              }
+            } else if (event.type === 'tool/result') {
+              if (teammate.lastTool !== undefined) {
+                teammate.lastTool = {
+                  ...teammate.lastTool,
+                  status: event.error !== undefined && event.error !== 'rejected' ? 'failed' : 'done',
+                }
+              }
+              // 工具结果首行进瀑布：跑动期间 teammate 说话少、动手多，结果行才是活信号
+              const firstLine = event.text.split('\n').map((line) => line.trim()).find((line) => line !== '')
+              if (firstLine !== undefined) pushLines(teammate.outputLines, firstLine)
+            } else if (event.type === 'delta' && event.kind === 'text') {
+              // 正文增量按行攒：成行的推进瀑布（跟主会话直播尾同一节奏，不需要节流器）
+              lineBuffer += event.text
+              let newline = lineBuffer.indexOf('\n')
+              while (newline >= 0) {
+                pushLines(teammate.outputLines, lineBuffer.slice(0, newline))
+                lineBuffer = lineBuffer.slice(newline + 1)
+                newline = lineBuffer.indexOf('\n')
+              }
+            } else if (event.type === 'usage') {
+              teammate.tokens += event.inputTokens + event.outputTokens
             } else if (event.type === 'turn/end') {
+              if (lineBuffer.trim() !== '') pushLines(teammate.outputLines, lineBuffer)
+              lineBuffer = ''
               settle(teammate, event.reason, lastError.get(teammate.name))
             } else if (event.type === 'error') {
               lastError.set(teammate.name, event.message)
             }
+            forwardSubagent()
           },
         },
         session,
@@ -422,7 +461,45 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
       // T21：新队友一上场就是 working，快照的状态面跟着失效
       ctx.transcript.touch()
       teammate.agent.followup(input.task)
+      // 开卡先落一张头行（事件流到达前的 0 空窗），之后每次事件原位刷新
+      forwardSubagent()
       return teammate
+
+      /** 正文行进瀑布：只留最后 8 行，瀑布永远显示「最新发生的事」。 */
+      function pushLines(pool: string[], line: string): void {
+        const trimmed = line.trim()
+        if (trimmed === '') return
+        pool.push(trimmed)
+        if (pool.length > 8) pool.splice(0, pool.length - 8)
+      }
+
+      /**
+       * 把队友的当前快照转发给父会话的内联卡。只在父会话正被查看时投递——
+       * 转录是「当前查看会话」的那一份，往里折别家会话的卡就是串台；切回时
+       * 转录插件按名册种回头行卡，之后的转发接上原位刷新。
+       */
+      function forwardSubagent(): void {
+        if (ctx.session.current() !== teammate.parentSession) return
+        ctx.transcript.emit({
+          type: 'subagent',
+          row: {
+            name: teammate.name,
+            role: teammate.role,
+            task: teammate.task,
+            state: teammate.state,
+            model: teammate.badge.model ?? ctx.llm.model,
+            rounds: teammate.rounds,
+            toolCalls: teammate.toolCalls,
+            startedAt: teammate.startedAt,
+            ...(teammate.finishedAt !== undefined ? { finishedAt: teammate.finishedAt } : {}),
+            ...(teammate.lastTool !== undefined ? { lastTool: { ...teammate.lastTool } } : {}),
+            ...(teammate.outputLines.length > 0 ? { outputLines: [...teammate.outputLines] } : {}),
+            ...(teammate.tokens > 0 ? { tokens: teammate.tokens } : {}),
+            ...(teammate.error !== undefined ? { error: teammate.error } : {}),
+            file: teammate.session.filePath,
+          },
+        })
+      }
     }
 
     /** 队友报错文本暂存（emit 的 error 事件比 turn/end 早一步）。 */

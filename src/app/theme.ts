@@ -136,6 +136,20 @@ export const DIFF_COLOR = {
   del: PALETTE.error,
 } as const
 
+/**
+ * context 条按内容类型的分段色（0.6.60 批三）：沿用 dsh StatusMetrics 的蓝色系
+ * 谱系（system → tools 由深到亮，语义就是「越新越亮」），但整体提亮一档——
+ * dsh 的深海军蓝系按它自家的浅灰空闲段设计，压在 msc 的深色空闲段上会沉底看不见。
+ * 顺序与 core/estimateRequestSegments 的五段一一对应。
+ */
+export const CONTEXT_SEGMENTS = [
+  { key: 'system', color: '#2B3D78' },
+  { key: 'prompt', color: '#344A92' },
+  { key: 'assistant', color: '#4D6BFE' },
+  { key: 'thinking', color: '#5A7CFF' },
+  { key: 'tools', color: '#93BEFF' },
+] as const
+
 /** 强调色：输入行提示符、光标、活动块的描边，对应渲染层的 `--dsc-accent`。 */
 export const ACCENT = PALETTE.accent
 
