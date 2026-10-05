@@ -1678,3 +1678,21 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **DSC_HOME 统一（顺手修）**：`migrate.ts` 等把 `join(homedir(), '.dsc', ...)` 钉死在真实用户目录、`path-policy` 的 `DSC_HOME` 只管部分路径——走查第一轮隔离失效的根因。codemod 把 25 个文件的 dsc 自有存储路径统一改为 `path-policy.dscPath()`（默认值不变 = homedir/.dsc，设 `DSC_HOME` 即整体隔离）；dsh 的 `.dsh` 路径保持真实主目录（迁移源不受 DSC_HOME 影响）。
 
 **验证**：新 `scripts/markdown-render-test.mjs` 26 项（解析 15 + 渲染 11 含表格竖线对齐）；tui-features 29、picker-mouse 27、composer、resident-agents 32/0、remote-host 140/140、其余电池全绿（remote-e2e 72/74 的两项为基线预存在）；双包 typecheck 绿；`msc --version` → 0.6.58；实机截图（boot 大字渐变块 / 对话态金色用户行+蓝标题+对齐表格+链接补注）与 dsh 实机图并排核对通过。批二预告：context 进度条、回到底部 pill（蓝底+Enter/End）、块间距+页边距、`⌸` 会话按钮、思考行 ⚓ 斜体。
+
+## 阶段 82：视觉对齐批二——context 进度条 / 回底 pill / 页边距 / ⌸ 按钮 / ⚓ 思考行（0.6.59）
+
+**对齐目标**（计划书批二，dsh StatusLine/PromptInput/NewMessagesPill/PageMargin 规格）。
+
+**context 进度条**：`StatusView` 新增 `contextWindow`（快照组装自 `ctx.llm.contextWindow`），StatusBar 第一行改为全宽背景色带——占用段亮蓝（≥80% 琥珀、≥95% 红），空闲段深底，右缘读数 `10.4k/1.0M 1.0%`（formatTokens 与 dsh 同口径）；占用段最长压到「宽−读数−1」保证读数永远在条内。顺手修了三个潜在炸点：`findModel`/`routeFor`/`setModel` 在空 provider 表（最小假 ctx 测试环境）下直接 TypeError——快照现在每帧读 contextWindow 把它暴露了，全部加空表防护。
+
+**状态行左右两组**：左 `● 状态 · 模型 · effort · 缓存% · tok↑↓ · 模式 · 权限`，右 `ctx% · cwd · 会话id · 后台芯片`（space-between）。行数仍恒 2（进度条 + 字段行），选择器几何不变。
+
+**回到底部 pill**：描边暗条升级为 dsh 的蓝底 #5E88CC + 深字 #22262E 粗体 `↓ 回到底部（Enter/End）`（>99 条新内容时附条数）；新增 Enter/End 键位——pill 可见且输入为空时跳回最新（输入非空时 End 仍归 Composer 光标）。
+
+**页边距与密度**：根帧 `paddingX=2`（dsh PageMargin normal），会话流条目间空一行（GAP.tight）。连带三处几何修正：审批卡/计划卡的页脚按钮列原点改为点击时现量 `absoluteLeft`（对页边距免疫）；IME 光标停靠的列原点同样现量（`cursor.ts` 收 `absoluteLeft` + promptCols 参数）；鼠标测试点击列 +2。
+
+**输入框 ⌸**：`❯` 左侧新增 `⌸ ` 会话列表按钮（dsh home 按钮同字符——字形即"目上加一横"，点击 = 打开 /resume，与 /resume 命令共用 `openSessionPicker` 通道）；回合跑动中 `❯` 变暗（dsh working dim）。
+
+**思考行**：`💭` 换 `⚓` + 整行斜体（展开态全量、折叠态 100 字预览，内容也斜体——dsh preview 同款）；流式时行首盲文 spinner（⠋⠙⠹… 120ms/帧，本地帧状态只重渲染自己）。
+
+**验证**：features 29 / picker-mouse 27 / markdown 26 / composer / resident 32/0 / remote-host 140/140 全绿（remote-e2e 72/74 维持基线两项预存在）；双包 typecheck 绿；`msc --version` → 0.6.59；实机截图：boot 态全宽进度条 + 左右分组字段 + `⌸ ❯` 输入框，对话态 ⚓ 斜体思考行 + 亮蓝填充条（10.4k/1.0M 1.0%），滚动态蓝底 pill + 大字回显。批三（可选）：context 按内容类型分段、子代理内联 waterfall 卡、思考时长、费用峰谷。

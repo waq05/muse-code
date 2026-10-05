@@ -55,7 +55,7 @@ import { TaskStrips } from './TaskStrips.js'
 import { TranscriptOverlay } from './TranscriptOverlay.js'
 import { Welcome } from './Welcome.js'
 import { extractImages, readImageAsDataUrl } from './attach.js'
-import { BORDER, GAP, PAD, STATUS_COLOR, TEXT } from './theme.js'
+import { BORDER, GAP, PAD, PALETTE, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 双击 Ctrl+C 的判定窗口。 */
 const EXIT_WINDOW_MS = 2000
@@ -70,7 +70,7 @@ const WELCOME_MAX_ENTRIES = 30
 /** 选择器框的固定行数：上下边框 2 + 标题 1 + 筛选行 1 + 提示行 1（改名行与提示行 1:1 互换）。 */
 const PICKER_CHROME = 5
 
-/** 「已离开最新」提示条：整行可点，点了回到底部。 */
+/** 「已离开最新」提示条（0.6.59 对齐 dsh 的 pill）：蓝底深字，整枚可点回底。 */
 function TailIndicator({
   hidden,
   onJump,
@@ -87,9 +87,11 @@ function TailIndicator({
     return true
   })
   return (
-    <Box ref={ref} borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline} marginTop={GAP.tight}>
-      <Text {...TEXT.label} color={STATUS_COLOR.pending} wrap="truncate-end">
-        ⇡ 已回看历史，下方有 {hidden} 条新内容 · 点击本行或 PgDn 回到底部
+    <Box ref={ref} marginTop={GAP.tight}>
+      <Text backgroundColor={PALETTE.pillBg} color={PALETTE.pillText} bold>
+        {' ↓ 回到底部（Enter/End）'}
+        {hidden > 99 ? ` · ${hidden} 条新` : ''}
+        {' '}
       </Text>
     </Box>
   )
@@ -527,6 +529,15 @@ export function App({
     setAgentIndex(0)
   }, [])
 
+  /** 打开会话选择器（/resume 命令、输入框 ⌸ 按钮、点击入口共用一条通道）。 */
+  const openSessionPicker = useCallback(() => {
+    setPicker(true)
+    setPickerIndex(0)
+    setPickerQuery('')
+    setPickerPage('active')
+    void runtime.refreshSessions()
+  }, [runtime])
+
   /** 名单浮层的行（队友在前、后台会话在后；与渲染同一条装配规则）。 */
   const agentRows =
     agentView !== null && agentView.mode === 'list'
@@ -858,6 +869,14 @@ export function App({
       }
       return
     }
+    // 回到底部 pill 可见且输入为空时：Enter/End 跳回最新（codex/dsh 同语义；
+    // 输入非空时 End 仍归 Composer 的光标移动）。
+    if (chatAnchor !== null && !modal && !panelOpen && draftRef.current === '') {
+      if (key.end || key.return) {
+        setChatAnchor(null)
+        return
+      }
+    }
     // Esc（对齐 codex）：回合跑着 = 打断；空闲且输入框为空 = prime 撤回——双击
     // Esc 把上一轮撤掉、原话放回输入框（dsh 同款 3 秒窗口）。补全面板开着时
     // Esc 只关面板。
@@ -908,13 +927,7 @@ export function App({
     }
     if (text.startsWith('/')) {
       runCommand(text, runtime, {
-        openPicker: () => {
-          setPicker(true)
-          setPickerIndex(0)
-          setPickerQuery('')
-          setPickerPage('active')
-          void runtime.refreshSessions()
-        },
+        openPicker: openSessionPicker,
         openModels: () => {
           setModelPicker(true)
           setModelIndex(0)
@@ -962,7 +975,7 @@ export function App({
   const agentWindow = (agentEntries ?? []).slice(Math.max(0, agentEnd - OVERLAY_WINDOW), agentEnd)
 
   return (
-    <Box height={frameRows} width="100%" flexDirection="column" overflow="hidden">
+    <Box height={frameRows} width="100%" flexDirection="column" overflow="hidden" paddingX={PAD.page}>
       {preview !== null ? (
         <PreviewOverlay
           title={preview.title}
@@ -1077,6 +1090,8 @@ export function App({
               attachments={attachments}
               onRemoveAttachment={removeAttachment}
               onPreviewAttachment={previewAttachment}
+              onOpenSessions={openSessionPicker}
+              working={snapshot.status.turnState !== 'idle'}
               registerClick={registerClick}
               onSubmit={handleSubmit}
             />

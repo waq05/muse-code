@@ -12,7 +12,7 @@
  *
  * @module dsc-tui/app/ChatView
  */
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Box, Text } from 'ink'
 import type { DOMElement } from 'ink'
 import type { JSX, ReactNode } from 'react'
@@ -21,6 +21,19 @@ import { MarkdownView } from './MarkdownView.js'
 import { ToolCard } from './ToolCard.js'
 import { useClickRegion, type RegisterClick } from './click.js'
 import { ACCENT, DIFF_COLOR, GAP, INDENT, PALETTE, STATUS_COLOR, TEXT } from './theme.js'
+
+/** 流式思考的盲文 spinner 帧（dsh 同款字符，80-120ms 一拍）。 */
+const BRAILLE = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
+/** 盲文 spinner：本地帧状态只重渲染自己，不动会话流的 reconcile。 */
+function BrailleSpinner(): JSX.Element {
+  const [frame, setFrame] = useState(0)
+  useEffect(() => {
+    const timer = setInterval(() => setFrame((current) => (current + 1) % BRAILLE.length), 120)
+    return () => clearInterval(timer)
+  }, [])
+  return <Text color={PALETTE.accent}>{BRAILLE[frame]}</Text>
+}
 
 const oneLine = (text: string, limit: number): string => {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -111,26 +124,18 @@ export function Entry({
         </Box>
       )
     case 'thinking': {
-      if (expandThinking) {
-        return (
-          <Box flexDirection="column" gap={GAP.none}>
-            <Text {...TEXT.label} color={STATUS_COLOR.pending}>
-              💭 思考中
-            </Text>
-            <Box marginLeft={INDENT.detail}>
-              <Text {...TEXT.secondary}>{entry.text}</Text>
-            </Box>
-          </Box>
-        )
-      }
-      // 标签与内容分行（0.6.57）：同一行排的话长思考一折行，标签就混进正文里认不出。
+      // 标签与内容分行（0.6.57）；0.6.59 对齐 dsh：⚓ + 整行斜体，流式时盲文 spinner。
       return (
         <Box flexDirection="column" gap={GAP.none}>
-          <Text {...TEXT.label} color={STATUS_COLOR.pending}>
-            💭 思考中（ctrl+t 展开）
+          <Text italic {...TEXT.secondary}>
+            {streaming ? <BrailleSpinner /> : <Text color={STATUS_COLOR.pending}>⚓</Text>}{' '}
+            {streaming ? '思考中' : '思考'}
+            {expandThinking ? '' : '（ctrl+t 展开）'}
           </Text>
           <Box marginLeft={INDENT.detail}>
-            <Text {...TEXT.secondary}>{oneLine(entry.text, 100)}</Text>
+            <Text {...TEXT.secondary} italic>
+              {expandThinking ? entry.text : oneLine(entry.text, 100)}
+            </Text>
           </Box>
         </Box>
       )
@@ -246,7 +251,7 @@ export function ChatView({
   // 直播尾（负 id）与最后定稿 text 条目才带光标闪烁位。
   const lastId = tail[tail.length - 1]?.id
   return (
-    <Box flexDirection="column" flexShrink={0} gap={GAP.none}>
+    <Box flexDirection="column" flexShrink={0} gap={GAP.tight}>
       {header}
       {tail.map((entry) => (
         <Entry

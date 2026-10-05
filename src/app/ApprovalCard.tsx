@@ -16,7 +16,7 @@ import type { JSX } from 'react'
 import type { ApprovalRequestView } from '../contract.js'
 import { BORDER, GAP, PAD, STATUS_COLOR, TEXT } from './theme.js'
 import { DiffBlock } from './DiffBlock.js'
-import { displayWidth, useClickRegion, type RegisterClick } from './click.js'
+import { absoluteLeft, displayWidth, useClickRegion, type RegisterClick } from './click.js'
 
 const oneLine = (text: string, limit: number): string => {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -92,7 +92,8 @@ export function ApprovalCard({
     // 页脚在底边框上第一行；内容列从「左边框 + paddingX」之后起算。几何点击时现量。
     const footerRow = top + height - 2
     if (row !== footerRow) return false
-    const contentCol = col - (1 + PAD.inline)
+    // 页边距/边框/padding 的列原点点击时现量（对根帧 paddingX 变化免疫）
+    const contentCol = col - ((absoluteLeft(rootRef.current) ?? 0) + 1 + PAD.inline)
     const hit = spans.find((span) => contentCol >= span.from && contentCol < span.to)
     if (hit === undefined) return false
     onAction(hit.id)

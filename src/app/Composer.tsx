@@ -66,6 +66,10 @@ export interface ComposerProps {
   attachments?: ComposerAttachment[]
   onRemoveAttachment?: (id: number) => void
   onPreviewAttachment?: (id: number) => void
+  /** 输入框左侧 ⌸ 会话列表按钮（对齐 dsh 的 home 按钮；省略 = 不渲染）。 */
+  onOpenSessions?: () => void
+  /** 回合跑动中：❯ 提示符变暗（dsh 同语义）。 */
+  working?: boolean
   registerClick?: RegisterClick
   onSubmit: (text: string) => void
 }
@@ -139,6 +143,8 @@ export function Composer({
   attachments,
   onRemoveAttachment,
   onPreviewAttachment,
+  onOpenSessions,
+  working = false,
   registerClick,
   onSubmit,
 }: ComposerProps): JSX.Element {
@@ -201,12 +207,27 @@ export function Composer({
   // IME 光标停靠（0.6.57，ink useCursor）：声明 caret 的逻辑行列，帧尾光标停到
   // 输入框内——Windows Terminal 的拼音预览因此画在输入框里。
   const inputBoxRef = useRef<DOMElement | null>(null)
+  const homeRef = useRef<DOMElement | null>(null)
+  useClickRegion(
+    homeRef,
+    onOpenSessions === undefined ? undefined : registerClick,
+    onOpenSessions === undefined
+      ? undefined
+      : (col, row, top, height) => {
+          if (row < top || row >= top + height) return false
+          onOpenSessions()
+          return true
+        },
+  )
   const caretBefore = value.slice(0, caret).split('\n')
+  // 列原点：边框 1 + padding 1 + 「⌸ 」2（可选）+「❯ 」2
+  const promptCols = 2 + (onOpenSessions !== undefined ? 2 : 0)
   useParkedCursor(
     inputBoxRef,
     caretBefore.length - 1,
     displayWidth(caretBefore[caretBefore.length - 1] ?? ''),
     !disabled,
+    promptCols,
   )
 
   /** 修改输入并把光标带到位（函数式更新：同批多次按键不丢状态）。 */
@@ -385,7 +406,12 @@ export function Composer({
         </Box>
       ) : null}
       <Box ref={inputBoxRef} borderStyle="round" borderColor={disabled ? BORDER.frame : BORDER.active} paddingX={PAD.inline}>
-        <Text color={ACCENT}>
+        {onOpenSessions !== undefined ? (
+          <Box ref={homeRef}>
+            <Text {...TEXT.secondary}>⌸ </Text>
+          </Box>
+        ) : null}
+        <Text color={working && !disabled ? BORDER.frame : ACCENT}>
           ❯{' '}
         </Text>
         {value === '' && placeholder !== undefined ? (

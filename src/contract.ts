@@ -401,6 +401,8 @@ export interface StatusView {
   effort: EffortLevel
   turnState: 'idle' | 'thinking' | 'working' | 'awaiting-approval'
   usage: TokenUsageView | null
+  /** 当前模型的上下文窗口（状态栏 context 进度条的分母；未知 0 = 不画刻度）。 */
+  contextWindow: number
   /** 当前会话的工作目录（状态栏显示；快照组装自 session.meta.cwd）。 */
   cwd?: string
 }

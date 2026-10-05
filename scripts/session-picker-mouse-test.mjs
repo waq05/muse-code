@@ -191,7 +191,7 @@ check('鼠标跟踪全时开启', output.includes('\x1b[?1000;1006h'))
 await press('\x1b[<64;10;5M\x1b[<64;10;5M\x1b[<64;10;5M')
 frame = lastFrame()
 check('滚轮上×3 停在条目-117', frame.includes('条目-116') && !frame.includes('条目-119'), JSON.stringify(frame.includes('条目-116')))
-check('回底提示条出现', frame.includes('回到底部') && frame.includes('下方有 3 条'))
+check('回底提示条出现（pill 样式）', frame.includes('回到底部') && frame.includes('Enter/End'))
 check('滚轮回看帧仍 39 行', contentLines(frame).length === 39, String(contentLines(frame).length))
 
 // 2. 点击提示条回到底部
@@ -202,7 +202,7 @@ check('点击提示条回到底部（条目-119 回来）', !frame.includes('回
 
 // 3. PgUp/PgDn 回看
 await press('\x1b[5~')
-check('PgUp 回看 10 条出现提示条', lastFrame().includes('回到底部') && lastFrame().includes('下方有 10 条'))
+check('PgUp 回看 10 条出现提示条', lastFrame().includes('回到底部') && lastFrame().includes('Enter/End'))
 await press('\x1b[6~')
 check('PgDn 回到底部提示条消失', !lastFrame().includes('回到底部') && lastFrame().includes('条目-119'))
 
@@ -257,7 +257,7 @@ await sleep(150)
 frame = lastFrame()
 const approvalRow = lineOf(frame, '允许一次') + 1
 check('审批卡出现且页脚可寻址', approvalRow > 0)
-await press(`\x1b[<0;3;${approvalRow}M`)
+await press(`\x1b[<0;5;${approvalRow}M`)
 check('点击 [y] 允许一次', approvalAnswers.length === 1 && approvalAnswers[0] === 'allow-once', JSON.stringify(approvalAnswers))
 runtime.setSnapshot(makeSnapshot())
 

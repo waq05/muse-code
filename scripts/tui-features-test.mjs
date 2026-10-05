@@ -57,6 +57,7 @@ const makeSnapshot = (overrides = {}) => {
       model: 'test-model',
       effort: 'medium',
       usage: null,
+      contextWindow: 1_000_000,
       sessionId: '/w/s.jsonl',
       cwd: '/w',
     },
@@ -203,20 +204,21 @@ check('欢迎页出现（Muse Code + 版本）', frame.includes('Muse Code') && 
 check('欢迎页含模型与目录', frame.includes('模型 test-model') && frame.includes('/w'))
 check('欢迎页提示双击 Esc 撤回', frame.includes('双击 Esc 撤回上一轮'))
 
-// 2. 思考分行：标签行不含内容，内容在下一行
-const thinkLine = lineOf(frame, '💭 思考中')
+// 2. 思考分行：⚓ 斜体标签行不含内容，内容在下一行（0.6.59 对齐 dsh）
+const thinkLine = lineOf(frame, '⚓ 思考')
 check('思考标签行存在', thinkLine >= 0)
 check('思考标签与内容分行', thinkLine >= 0 && !contentLines(frame)[thinkLine].includes('纯问答') && contentLines(frame)[thinkLine + 1].includes('纯问答'), JSON.stringify(contentLines(frame).slice(thinkLine, thinkLine + 2)))
 
-// 3. 状态栏两行：状态+模型同一行，目录+会话同一行，整帧仍 39 行
-const statusLine = contentLines(frame).find((line) => line.includes('空闲'))
-check('状态栏第一行合并状态与模型', statusLine !== undefined && statusLine.includes('test-model') && statusLine.includes('标准'), JSON.stringify(statusLine))
-const infoLine = contentLines(frame).find((line) => line.includes('会话'))
-check('状态栏第二行合并目录与会话短 id', infoLine !== undefined && infoLine.includes('/w') && infoLine.includes('会话 s'), JSON.stringify(infoLine))
-check('状态栏两行是无框的最后两行', contentLines(frame)[contentLines(frame).length - 2] === statusLine && contentLines(frame)[contentLines(frame).length - 1] === infoLine)
+// 3. 状态栏：第一行 context 进度条 + 第二行左右两组字段，整帧仍 39 行
+const allLines = contentLines(frame)
+const statusLine = allLines.find((line) => line.includes('空闲'))
+check('字段行合并状态与模型（左组）', statusLine !== undefined && statusLine.includes('test-model') && statusLine.includes('标准'), JSON.stringify(statusLine))
+const barLine = allLines[allLines.length - 2]
+check('context 进度条在倒数第二行（读数 0/1.0M）', barLine.includes('--%') === false && barLine.includes('0/1.0M'), JSON.stringify(barLine))
+check('字段行在最后一行（右组 ctx/cwd/会话）', allLines[allLines.length - 1] === statusLine && statusLine.includes('ctx') && statusLine.includes('/w') && statusLine.includes('会话 s'))
 
 // 4. 恒定帧仍是 39 行
-check('恒定帧仍为 39 行', contentLines(frame).length === 39, String(contentLines(frame).length))
+check('恒定帧仍为 39 行', allLines.length === 39, String(allLines.length))
 
 // 5. IME 光标停靠：帧尾有「回到 caret 列 + 显示光标」序列（cursorTo 是 G 序列）
 check(
@@ -251,8 +253,8 @@ check('第二枚芯片出现', chipRow >= 0)
 await press(`\x1b[<0;3;${chipRow + 1}M`)
 check('点芯片主体打开预览', lastFrame().includes('BLOCK-CHARS'))
 await press('\x1b')
-// ✕ 在芯片主体之后两列：主体显示宽度 14（[图#2]=6 + 空格 1 + pic.png 7），✕ 区在 14-15 列
-await press(`\x1b[<0;16;${chipRow + 1}M`)
+// ✕ 在芯片主体之后两列（页边距 +2 后主体从 col 2 起、宽 14，✕ 区在 16-17 列）
+await press(`\x1b[<0;18;${chipRow + 1}M`)
 check('点 ✕ 摘下芯片', !lastFrame().includes('[图#2]'), JSON.stringify(contentLines(lastFrame()).slice(-10)))
 
 // 9. 双击 Esc 撤回上一轮

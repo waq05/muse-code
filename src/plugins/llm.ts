@@ -68,7 +68,8 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
     ])
 
     function findModel(providerName: string, modelName: string): ModelInfo | undefined {
-      return config.providers[providerName]?.models.find((model) => model.id === modelName)
+      // provider 表可能缺（最小假 ctx 的测试/插件环境），空表按查不到算
+      return (config.providers ?? {})[providerName]?.models.find((model) => model.id === modelName)
     }
 
     /** 这个模型声明了什么能力；查不到（老配置、临时路由）按旧行为算。 */
@@ -82,7 +83,7 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
      * 档位在这个模型上不存在时退回「默认」（不发字段），而不是把端点不认识的值发出去。
      */
     function routeFor(providerName: string, modelName: string, effort: EffortLevel): LlmRoute {
-      const provider = config.providers[providerName]
+      const provider = (config.providers ?? {})[providerName]
       if (provider === undefined) {
         throw new Error(
           `没有名为 ${providerName} 的模型端点（检查 ~/.dsc/config.yaml 的 providers 段与对应 API key 环境变量）`,
@@ -158,10 +159,10 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
         ctx.emit('dsc/changed')
       },
       setModel(provider, model) {
-        const target = config.providers[provider]
+        const target = (config.providers ?? {})[provider]
         if (target === undefined) {
           throw new Error(
-            `没有名为 ${provider} 的端点；可用：${Object.keys(config.providers).join('、') || '（无）'}`,
+            `没有名为 ${provider} 的端点；可用：${Object.keys(config.providers ?? {}).join('、') || '（无）'}`,
           )
         }
         if (!target.models.some((entry) => entry.id === model)) {
