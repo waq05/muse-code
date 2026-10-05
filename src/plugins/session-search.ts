@@ -13,6 +13,7 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
+import { bootNoticeOnce } from '../core/boot-notices.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import { defaultSessionIndexOptions, SESSION_INDEX_BOUNDS, SESSION_INDEX_FILE, SessionIndex } from '../core/session-index.js'
 import type { SessionIndexHit, SessionIndexOptions, SessionIndexSearchOptions } from '../core/session-index.js'
@@ -88,16 +89,21 @@ export const sessionSearchPlugin: Plugin.Object = {
         const step = Math.max(Math.ceil(total / 10), 1)
         if (done < total && done - lastReported < step) return
         lastReported = done
-        ctx.transcript.system(`会话索引${label}：${String(done)}/${String(total)} 个文件`)
+        // 启动提示只展示一次（0.6.64）：同进度同文本不再说第二遍（key 带进度值，
+        // 真有新文件要解析时数字变了自然重发）
+        const text = `会话索引${label}：${String(done)}/${String(total)} 个文件`
+        if (bootNoticeOnce(`session-index.progress:${label}:${String(done)}/${String(total)}`, text)) {
+          ctx.transcript.system(text)
+        }
       }
       void task(onProgress)
         .then((parsed) => {
           if (disposed || parsed <= 0) return
           const stats = index.stats()
-          ctx.transcript.system(
+          const ready =
             `会话索引就绪：${String(stats.files)} 个会话文件、${String(stats.terms)} 个词项` +
-              `（这次解析了 ${String(parsed)} 个文件）。用 session_search 工具或 /search 检索。`,
-          )
+            `（这次解析了 ${String(parsed)} 个文件）。用 session_search 工具或 /search 检索。`
+          if (bootNoticeOnce('session-index.ready', ready)) ctx.transcript.system(ready)
         })
         .catch((error: unknown) => {
           if (!disposed) ctx.transcript.system(`会话索引没能建起来：${errText(error)}`)

@@ -1771,3 +1771,17 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **测试与验证**：新 `scripts/commands-battery.mjs` 43 项（起真内核挂 serviceRef 走 runCommand 同链：spec 表八命令、/fork 真落盘验证哨兵与 forkedFrom sidecar、/thinking 三态+无回调兜底、/plugins 清单、/permission 与 /policy 逐字一致+前缀切档、/update 假源两态、裸命令回调/兜底双路、duringTask 闸、三个浮层渲染冒烟）；`session-picker-mouse-test.mjs` 加多工作区段（fixture 60 条同 cwd 不动=单工作区直落路径回归，新增 5b 键盘两级/5c 工作区层鼠标+筛选，**终端加宽到 200 列**——110 列提示行被 truncate-end 截掉行尾 Esc 提示是存量行为，得让它在测试里可见）+ 组件级双 props 冒烟并入命令电池。全量 18 电池全绿；remote-e2e 72/74 与上期 stash 基线完全一致（存量）；双包 typecheck 绿；`msc --version` → 0.6.63。
 
 **教训**：① 注册表 Map 后写者胜——往 commands 加新命令前先全仓 grep `name: '<命令>'`，plugin-manager 的旧 /plugins 就藏在另一文件里；② 「声明表」与「注册表」两份 spec 会漂移，闸读哪份就修哪份（合并优于复制）；③ ink truncate-end 会让长提示行的行尾内容在任何断言里不可见，测试终端列数要按最长提示行给足。
+
+## 阶段 87：补全面板可滚动见全部命令 + 启动提示只说一次 + 设置根页只列分区（0.6.64）
+
+用户三条反馈（并带一句「是不是没重新打包」的误会）：① `/` 补全面板只显示 8 条命令——0.6.63 新加的 /fork /thinking /plugins /update 全被截掉，误以为没实现（其实截图里 /permission 和 /resume 新描述就是 0.6.63 的产物）；② 启动时那组 ① 系统提示（索引回填/就绪、沙箱已就绪、远程待命、会话横幅）每次启动都再来一遍，只想看一次；③ 设置页细节项根本没隐藏——0.6.62 只给 browser/tui 做了组收拢，其余 23 个分区还是整卡平铺，要的是「根页只显示设置名，点进去才是详细设置」。
+
+**① 补全面板（Composer.tsx）**：`completions` 的 `.slice(0, 8)` 摘掉（BUILT_IN 21 + 插件命令 22 ≈ 43 条全量入面板）；面板视口 `PANEL_ROWS = 10`，窗口起点**复用 settingsWindowStart**（纯函数派生零新状态，焦点越缘窗口跟滑，与设置页同一套语义）；footer 截断时显示 `1–10/N 条`。@ 提及分支自带 limit 8 不动。**宽度账教训**：MARK.selected 是「❯ 」两列——分区行 pad 少减 1 就把贴右缘的 › 挤出 truncate-end，断言 `lineOf(…).includes('›')` 两轮 FAIL 才对出来。
+
+**② 启动提示只展示一次（新 core/boot-notices.ts）**：机理先搞清——这组 ① 行是四个发射点**每次启动无条件重发**（kernel.ts emitStartupNotes 的会话横幅、session-search 的索引回填/就绪、sandbox 挂载探测后的 mountLine、remote 抢不到端口的待命行），而 transcript 的 system 条目**只存内存不落盘**，所以「重复」= 每次启动再印一遍。修法 = `bootNoticeOnce(key, text)`：状态落 `~/.dsc/boot-notices.json`（key → 上次文本，模块级缓存 + best-effort 读写，坏了当没见过），同 key 同文返回 false 跳过、**变文自动重发**（沙箱档位/索引词项数/接管 pid 变了仍会提示）。四个发射点各接一行判断；索引进度行的 key 带进度值（每条进度只说一次）。电池挖出一个前提：双次启动要模拟真实入口必须 `resumeSessionPath: 'auto'` 且上次会话 jsonl **真实存在**（指针指向没落过盘的会话会静默开新会话，横幅文本变→重发，那是对的），所以电池先造好 jsonl + `.last-session` 指针再启动。
+
+**③ 设置页两级导航（settings-model/SettingsOverlay/App）**：把 0.6.62 的组子页机制上提一层——`SettingsRow` 新增 `kind:'section'` 行，`buildSettingsRows(sections, section?, group?)` 三模式：根页 = 每分区一行导航（`❯ 标题 · 副标题 … ›`，25 个分区一屏放得下，单分区正文装配抽成 sectionBodyRows 复用）；分区页 = 该分区一张卡片（custom 分区指引行 / 普通分区块内字段 + 组导航行）；组子页原样。App 加 `settingsSection` 状态，**Esc 三级退栈**（组子页 → 分区页 → 根页 → 关页），鼠标点击白名单加 section 行，面包屑 `设置 › 分区 › 组`，聚焦分区行 help 显示副标题。桌面端不动（滚动态弹窗本来就有组头）。
+
+**测试**：`settings-test.mjs` 导航全链路重排 18 段 60+ 断言（根页只列分区/进分区/字段操作原样保留/custom 指引跳转/鼠标三级链路/逐级退栈）；`composer-test.mjs` 加窗口段（首屏含 /fork /thinking、footer 计数 1–10/N、↓×11 后 /new 滚出 /plugins 入窗）；新 `boot-notices-test.mjs` 9 项（helper 直测 5 + 双内核启动 4，**取数走 kernel.transcript.getSnapshot()**——它就是 TUI 订阅的那份运行时快照，kernel.runtime 的 getSnapshot 形状不同）。全量 19 电池全绿，双包 typecheck 绿，`msc --version` → 0.6.64。
+
+**教训**：① 好几轮「用户说没实现」其实是「实现了但入口看不见」——补全面板截断把新命令藏住了，回复用户前先对着他的截图找证据（/permission 在 = 新版在跑）；② 写「宽度敏感」的行渲染，mark/空格/separator 的每一列都要进账本，MARK 是两列字符串这种事眼睛看不出来；③ 电池断言「不存在」前先想清楚什么合法内容会撞上（外框圆角就是 ╭─ 开头）。

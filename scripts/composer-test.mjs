@@ -130,6 +130,16 @@ await press('/ne')
 await press(KEY.enter)
 check('/ne + Enter 自动展开为 /new', submitted[submitted.length - 1] === '/new', JSON.stringify(submitted))
 
+// 11. 补全面板窗口（0.6.64）：候选全量入面板（不再截 8 条），视口 10 行越缘滑动
+frame = await press('/')
+check('首屏候选完整（/fork /thinking 可见，不再截 8 条）', frame.includes('/fork') && frame.includes('/thinking') && frame.includes('/permission'), JSON.stringify(frame.slice(-500)))
+check('footer 带窗口计数（1–10/总数）', /1–10\/\d+ 条/.test(frame), JSON.stringify(frame.split('\n').find((line) => line.includes('↑↓ 选择'))))
+for (let i = 0; i < 11; i += 1) await press(KEY.down)
+frame = output
+check('↓×11 窗口滑动（/new 滚出、/plugins 入窗）', !frame.includes('/new') && frame.includes('/plugins'), JSON.stringify(frame.split('\n').filter((line) => line.includes('/')).slice(0, 3)))
+frame = await press(KEY.esc)
+check('Esc 关面板', !frame.includes('↑↓ 选择'))
+
 instance.unmount()
 stdin.end()
 

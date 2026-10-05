@@ -94,6 +94,7 @@ export function SettingsOverlay({
   viewport,
   editing,
   notice,
+  section,
   group,
 }: {
   sections: SettingsSectionView[]
@@ -106,7 +107,9 @@ export function SettingsOverlay({
   viewport: number
   editing: SettingsEdit | null
   notice: { ok: boolean; text: string } | null
-  /** 当前展开的子页（null = 根页）：标题行变面包屑，Esc 提示换「返回」。 */
+  /** 当前展开的分区页（null = 根页）：标题行变面包屑，Esc 提示换「返回」。 */
+  section?: string | null
+  /** 当前展开的组子页（null = 不在组子页）。 */
   group?: SettingsGroupRef | null
 }): JSX.Element {
   const { stdout } = useStdout()
@@ -114,6 +117,7 @@ export function SettingsOverlay({
   // 内宽 = 终端列 − 整帧页边距 − 外框描边 2 − 框内 padding
   const innerWidth = Math.max(24, columns - PAD.page * 2 - 2 - PAD.inline * 2)
   const sectionById = new Map(sections.map((section) => [section.id, section]))
+  const activeSection = section == null ? undefined : sectionById.get(section)
   const groupSection = group == null ? undefined : sectionById.get(group.sectionId)
   const groupSpec = groupSection?.groups?.find((entry) => entry.id === group?.groupId)
   const focusables = focusableRows(rows, sections)
@@ -146,6 +150,31 @@ export function SettingsOverlay({
         )
       case 'spacer':
         return <Text key={index}> </Text>
+      case 'section': {
+        // 分区导航行（0.6.64，组行同款）：标题 + 暗淡副标题，`›` 贴右缘
+        const labelText = clipToWidth(row.title, Math.max(8, innerWidth - 12))
+        const subText = row.subtitle === undefined ? '' : clipToWidth(row.subtitle, Math.max(4, Math.floor(innerWidth / 3)))
+        // 宽度账：标记「❯ 」2 + 标题 + 空格 1 + 副标题 + pad + › 1 ≤ innerWidth
+        const pad = Math.max(1, innerWidth - 4 - displayWidth(labelText) - displayWidth(subText))
+        return (
+          <Text key={index} wrap="truncate-end">
+            {focused ? MARK.selected : MARK.idle}
+            <Text bold={focused} color={PALETTE.text}>
+              {labelText}
+            </Text>
+            {subText === '' ? null : (
+              <Text {...TEXT.secondary}>
+                {' '}
+                {subText}
+              </Text>
+            )}
+            {' '.repeat(pad)}
+            <Text {...(focused ? {} : TEXT.secondary)} color={focused ? ACCENT : undefined}>
+              ›
+            </Text>
+          </Text>
+        )
+      }
       case 'group': {
         // 组导航行（dsh GroupRow 同款）：label 左、`›` 贴右缘，聚焦时强调色
         const labelText = clipToWidth(row.title, Math.max(8, innerWidth - 12))
@@ -205,14 +234,19 @@ export function SettingsOverlay({
   // 底部提示条：聚焦字段的 help（可复制的 info 追加复制提示）截断后靠左，按键靠右
   const focusedRow = rows[focusRow]
   const focusedField = focusedRow?.kind === 'field' ? sectionById.get(focusedRow.sectionId)?.fields[focusedRow.fieldIndex] : undefined
-  let help = focusedRow?.kind === 'group' ? (focusedRow.description ?? '') : (focusedField?.help ?? '')
+  let help =
+    focusedRow?.kind === 'group'
+      ? (focusedRow.description ?? '')
+      : focusedRow?.kind === 'section'
+        ? (focusedRow.subtitle ?? '')
+        : (focusedField?.help ?? '')
   if (focusedField?.type === 'info' && focusedField.copyable === true) {
     help = `${help === '' ? '' : `${help} · `}Enter 复制`
   }
   const keys =
     editing !== null
       ? 'Enter 确认并保存 · Esc 取消'
-      : groupSpec !== undefined
+      : groupSpec !== undefined || activeSection !== undefined
         ? 'Enter 切换/编辑 · Esc 返回'
         : 'Enter 切换/编辑 · Esc 关闭'
   const helpText = clipToWidth(help, Math.max(0, innerWidth - displayWidth(keys) - 2))
@@ -234,6 +268,12 @@ export function SettingsOverlay({
               设置
               <Text {...TEXT.secondary}>{` › ${groupSection.title} › `}</Text>
               {groupSpec.title}
+            </>
+          ) : activeSection !== undefined ? (
+            <>
+              设置
+              <Text {...TEXT.secondary}>{' › '}</Text>
+              {activeSection.title}
             </>
           ) : (
             `设置（${sections.length} 个分区）`

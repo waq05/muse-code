@@ -18,6 +18,7 @@ import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { Context, type Plugin } from '@deepseek-ai/cordis'
 import type { DscCoreConfig } from '../core/config.js'
+import { bootNoticeOnce } from '../core/boot-notices.js'
 import { DSC_CONFIG_YAML, parseTolerantYaml, type MigrationReport } from '../core/migrate.js'
 import { getPluginConfig, isPluginEnabled, migrateTeamSplit, registerPluginMeta, type PluginMeta } from '../core/plugin-registry.js'
 import { mountAllExternalPlugins, registerBuiltinMount } from '../core/plugin-loader.js'
@@ -418,8 +419,9 @@ export function emitStartupNotes(
       root.session.current().fileChanges,
     )
   }
-  root.transcript.system(
-    `会话 ${root.session.current().meta.id.slice(0, 8)} · 模型 ${root.llm.provider}/${root.llm.model}`,
-  )
+  // 启动提示只展示一次（0.6.64）：同一会话同一模型的开机横幅只在首次见到时写，
+  // 换会话/换模型自然重现。恢复会话时转录里本来就有历史可辨认，状态栏也带短 id。
+  const bootBanner = `会话 ${root.session.current().meta.id.slice(0, 8)} · 模型 ${root.llm.provider}/${root.llm.model}`
+  if (bootNoticeOnce('boot.session-model', bootBanner)) root.transcript.system(bootBanner)
   root.transcript.touch()
 }

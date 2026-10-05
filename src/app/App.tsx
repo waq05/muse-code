@@ -214,6 +214,8 @@ export function App({
   const [settingsNotice, setSettingsNotice] = useState<{ ok: boolean; text: string } | null>(null)
   /** 当前展开的设置子页（null = 根页；dsh 式一层分组，Esc 先退子页再关页）。 */
   const [settingsGroup, setSettingsGroup] = useState<SettingsGroupRef | null>(null)
+  /** 当前展开的分区页（0.6.64 两级导航：null = 根页只列分区名；组子页在分区页之下）。 */
+  const [settingsSection, setSettingsSection] = useState<string | null>(null)
   /** 状态栏段显隐（0.6.62）：启动读一次 prefs，设置页改动后就地更新。 */
   const [statusBarPrefs, setStatusBarPrefs] = useState<StatusBarPrefsView>(DEFAULT_STATUS_BAR_PREFS)
   const lastCtrlC = useRef(0)
@@ -500,7 +502,10 @@ export function App({
   const chatWindow = snapshot.entries.slice(Math.max(0, chatEnd - CHAT_WINDOW), chatEnd)
 
   // ---- 设置页（/settings）的行模型与窗口切片（几何与 SettingsOverlay 共表）----
-  const settingsRows = useMemo(() => buildSettingsRows(settingsSections, settingsGroup), [settingsSections, settingsGroup])
+  const settingsRows = useMemo(
+    () => buildSettingsRows(settingsSections, settingsSection, settingsGroup),
+    [settingsSections, settingsSection, settingsGroup],
+  )
   const settingsFocusables = useMemo(
     () => focusableRows(settingsRows, settingsSections),
     [settingsRows, settingsSections],
@@ -681,8 +686,15 @@ export function App({
 
   /** 行的主动作（Enter 与「点击该行」共用）：switch/select 改值即存，text/number 进编辑。 */
   const activateSettingsRow = (row: SettingsRow | undefined, direction: 1 | -1): void => {
+    if (row?.kind === 'section') {
+      // 进分区页（0.6.64 两级导航）：焦点与草稿归零；Esc 由键盘分支逐级退栈
+      setSettingsSection(row.sectionId)
+      setSettingsIndex(0)
+      setSettingsEdit(null)
+      return
+    }
     if (row?.kind === 'group') {
-      // 进子页（dsh 同款）：焦点与草稿归零；Esc 由键盘分支先退子页再关页
+      // 进组子页（dsh 同款）：焦点与草稿归零；Esc 由键盘分支先退子页再关页
       setSettingsGroup({ sectionId: row.sectionId, groupId: row.groupId })
       setSettingsIndex(0)
       setSettingsEdit(null)
@@ -875,6 +887,7 @@ export function App({
     setSettingsEdit(null)
     setSettingsNotice(null)
     setSettingsGroup(null)
+    setSettingsSection(null)
     setSettingsOpen(true)
     for (const section of sections) {
       void runtime
@@ -1032,7 +1045,7 @@ export function App({
         const slice = row - 1 - SETTINGS_LIST_TOP
         if (slice < 0 || slice >= settingsViewport) return
         const target = settingsRows[settingsWindow + slice]
-        if (target === undefined || (target.kind !== 'field' && target.kind !== 'hint' && target.kind !== 'group')) return
+        if (target === undefined || (target.kind !== 'field' && target.kind !== 'hint' && target.kind !== 'group' && target.kind !== 'section')) return
         const fields = settingsSections.find((section) => section.id === target.sectionId)?.fields ?? []
         if (!isFocusableRow(target, fields)) return
         activateSettingsRow(target, 1)
@@ -1345,9 +1358,12 @@ export function App({
         return
       }
       if (key.escape) {
-        // 先退子页再关页（dsh 同款：子页里 Esc 是「返回上级」）
+        // 逐级退栈（dsh 同款：子页里 Esc 是「返回上级」）：组子页 → 分区页 → 根页 → 关页
         if (settingsGroup !== null) {
           setSettingsGroup(null)
+          setSettingsIndex(0)
+        } else if (settingsSection !== null) {
+          setSettingsSection(null)
           setSettingsIndex(0)
         } else {
           setSettingsOpen(false)
@@ -1552,6 +1568,7 @@ export function App({
           viewport={settingsViewport}
           editing={settingsEdit}
           notice={settingsNotice}
+          section={settingsSection}
           group={settingsGroup}
         />
       ) : (

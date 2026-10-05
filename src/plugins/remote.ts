@@ -43,6 +43,7 @@ import type { Duplex } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { WebSocket, WebSocketServer } from 'ws'
+import { bootNoticeOnce } from '../core/boot-notices.js'
 import { errText } from '../core/err-text.js'
 import { REMOTE_PORT_MAX, REMOTE_PORT_MIN, type RemotePrefs } from '../core/prefs.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
@@ -632,9 +633,11 @@ export const remotePlugin: Plugin.Object = {
     const startServer = (prefs: RemotePrefs): void => {
       if (!owner.tryAcquire(prefs.port)) {
         const info = owner.peek()
-        reportProblem(
-          `远程控制由另一个 Muse Code 进程（pid ${String(info?.pid ?? 0)}）接管，本进程待命`,
-        )
+        // 启动提示只展示一次（0.6.64）：接管方 pid 没变就不重复说（重试周期里
+        // reportProblem 自己的 lastProblem 节流也只覆盖本进程）。
+        const standby =
+          `远程控制由另一个 Muse Code 进程（pid ${String(info?.pid ?? 0)}）接管，本进程待命`
+        if (bootNoticeOnce('remote.standby', standby)) reportProblem(standby)
         armRetry()
         return
       }

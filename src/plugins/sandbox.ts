@@ -32,6 +32,7 @@ import { mkdirSync } from 'node:fs'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import { DSC_HOME } from '../core/path-policy.js'
+import { bootNoticeOnce } from '../core/boot-notices.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import { registerCommandRunner } from '../core/tools/command-runner.js'
 import { readSandboxRequest } from '../core/tools/sandbox-args.js'
@@ -670,9 +671,12 @@ export const sandboxPlugin: Plugin.Object = {
     })
 
     // 挂载后立刻探一次后端，并把现状写进会话流：降级（partial）必须看得见。
+    // 启动提示只展示一次（0.6.64）：档位/强制等级/网络没变就不重复说。
     void refreshBackend()
       .then(() => {
-        if (!disposed) ctx.transcript.system(mountLine())
+        if (disposed) return
+        const line = mountLine()
+        if (bootNoticeOnce('sandbox.ready', line)) ctx.transcript.system(line)
       })
       .catch((error: unknown) => {
         if (!disposed) ctx.transcript.system(`沙箱后端探测失败（照常执行 + 审批卡兜底）：${errText(error)}`)

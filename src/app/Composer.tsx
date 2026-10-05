@@ -31,7 +31,11 @@ import {
 import { useParkedCursor } from './cursor.js'
 import { displayWidth, measuredSpan, useClickRegion, type RegisterClick } from './click.js'
 import { loadHistory, recordHistory } from './history-store.js'
+import { settingsWindowStart } from './settings-model.js'
 import { ACCENT, BORDER, GAP, MARK, PAD, SEP, STATUS_COLOR, TEXT } from './theme.js'
+
+/** 补全面板视口行数：候选再多也只画这行窗口，聊天区不被挤没（选中越缘窗口跟滑）。 */
+const PANEL_ROWS = 10
 
 /** fs-list 透传回包的最小形状（desktop-dock 插件定义，这里只认形状）。 */
 export type DirLister = (dir: string) => Promise<{ entries: { name: string; dir: boolean }[] }>
@@ -172,12 +176,16 @@ export function Composer({
       }))
     }
     if (!completionsEnabled) return []
-    // 命令候选可能一大把（/ 开头全匹配）：面板最多 8 行，别把恒定帧里的聊天区挤没。
-    return completionsFor(value, models).slice(0, 8)
+    // 命令候选全量（内置 + 插件 + 技能命令，40+ 条）；面板只画 PANEL_ROWS 行窗口，
+    // 选中项越缘窗口跟着滑（settingsWindowStart 焦点跟随语义，与设置页同款）。
+    return completionsFor(value, models)
   }, [value, suppressedFor, mention, mentionFiles, completionsEnabled, models])
 
   const panelOpen = completions.length > 0
   const safeIndex = Math.max(0, Math.min(completionIndex, completions.length - 1))
+  /** 面板视口：候选超过 PANEL_ROWS 时只画选中项附近的窗口（纯派生，无新状态）。 */
+  const panelStart = settingsWindowStart(safeIndex, PANEL_ROWS, completions.length)
+  const panelVisible = completions.slice(panelStart, panelStart + PANEL_ROWS)
 
   useEffect(() => {
     onPanelOpenChange?.(panelOpen)
@@ -376,8 +384,8 @@ export function Composer({
     <Box flexDirection="column" gap={GAP.none}>
       {panelOpen ? (
         <Box borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline} flexDirection="column" gap={GAP.none}>
-          {completions.map((item, position) => {
-            const selected = position === safeIndex
+          {panelVisible.map((item, position) => {
+            const selected = panelStart + position === safeIndex
             return (
               <Text key={item.label} color={selected ? ACCENT : undefined}>
                 {selected ? MARK.selected : MARK.idle}
@@ -389,7 +397,12 @@ export function Composer({
               </Text>
             )
           })}
-          <Text {...TEXT.secondary}>↑↓ 选择 · Tab 补全 · Esc 关闭</Text>
+          <Text {...TEXT.secondary}>
+            {completions.length > panelVisible.length
+              ? `${panelStart + 1}–${panelStart + panelVisible.length}/${completions.length} 条 · `
+              : ''}
+            ↑↓ 选择 · Tab 补全 · Esc 关闭
+          </Text>
         </Box>
       ) : null}
       {attachments !== undefined && attachments.length > 0 ? (

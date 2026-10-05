@@ -2,10 +2,11 @@
  * TUI 设置页（/settings）的确定性测试：mock runtime 提供分区注册表的四个方法，
  * 走真命令链（输入 /settings 回车）驱动 App 渲染浮层，逐键断言帧内容与调用记录。
  *
- * 覆盖：整屏渲染（卡片顶边/字段值区右对齐）· select 循环即存 · switch 翻转即存 ·
+ * 覆盖：两级导航（0.6.64：根页分区行 → 分区页字段 → 组子页，Esc 逐级退栈）·
+ * 字段渲染（卡片顶边/字段值区右对齐）· select 循环即存 · switch 翻转即存 ·
  * text 编辑（进入/输入/提交/Esc 取消）· number 校验（非法留编辑态弹红）·
  * info.copyable 复制 · button 执行动作 · custom 分区指引行跳转（关页开模型浮层）·
- * Esc 关页 · 鼠标点行激活 · 滚轮移动焦点 · 思考块默认展开分区。
+ * Esc 关页 · 鼠标点行激活（分区/组/字段三级）· 滚轮移动焦点 · 思考块默认展开分区。
  *
  * 运行：node scripts/settings-test.mjs（先 pnpm build）
  *
@@ -33,7 +34,7 @@ commandsPlugin.apply({
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** mock 分区表：一个全字段类型的声明式分区 + custom 分区 + tui 分区。 */
+/** mock 分区表：一个全字段类型的声明式分区 + custom 分区 + 两个带组的分区。 */
 const SECTIONS = [
   {
     id: 'general',
@@ -210,18 +211,25 @@ const check = (name, condition, detail = '') => {
 
 console.log('TUI 设置页测试')
 
-// 1. 打开：走真命令链 /settings → openSettings
+// 1. 打开：根页只列分区导航行（0.6.64 两级导航，字段收进分区页）
 let frame = await press('/settings')
 frame = await press(KEY.enter)
-check('整屏浮层出现', frame.includes('设置（4 个分区）'), JSON.stringify(frame.slice(-400)))
-check('卡片顶边带标题与副标题', frame.includes('╭─ 通用 · 测试分区') && frame.includes('╭─ 模型 · 端点与 key'))
+check('整屏浮层出现（根页只列分区）', frame.includes('设置（4 个分区）'), JSON.stringify(frame.slice(-400)))
+check('根页每分区一行带 ›', lineOf(frame, '通用', true)?.includes('›') === true && lineOf(frame, '浏览器自动化')?.includes('›') === true && lineOf(frame, '终端界面')?.includes('›') === true, JSON.stringify(lines(frame).slice(0, 9)))
+check('分区行带副标题', lineOf(frame, '通用', true)?.includes('测试分区') === true)
+check('根页没有平铺字段（外框圆角除外没有卡片顶边）', !frame.includes('权限模式') && !frame.includes('开关项') && !frame.includes('打开模型选择器'), JSON.stringify(frame.slice(-300)))
+check('根页首个聚焦 1/4 且 Esc 是关闭', frame.includes('1/4') && frame.includes('Enter 切换/编辑 · Esc 关闭'))
+
+// 2. Enter 进通用分区页：字段才展开
+frame = await press(KEY.enter)
+check('分区页面包屑', frame.includes('设置 › 通用'), JSON.stringify(frame.slice(-400)))
+check('卡片顶边带标题与副标题', frame.includes('╭─ 通用 · 测试分区'))
 check('首个聚焦行是 select 且值右对齐', lineOf(frame, '权限模式', true)?.includes('‹ 甲 ›') === true, JSON.stringify(lineOf(frame, '权限模式', true)))
 check('switch 未开显示 [  ]', lineOf(frame, '开关项')?.includes('[  ]') === true)
 check('text 值与（未设置）占位', frame.includes('初始') && lineOf(frame, '空文本项')?.includes('（未设置）') === true)
-check('custom 分区显示指引行与说明', frame.includes('打开模型选择器') && frame.includes('端点与 API key 在桌面端设置'))
-check('底部提示条带聚焦 help 与按键', frame.includes('选一个') && frame.includes('Enter 切换/编辑 · Esc 关闭'))
+check('分区页 Esc 提示换「返回」', frame.includes('Enter 切换/编辑 · Esc 返回'))
 
-// 2. → 循环 select：改值即存
+// 3. → 循环 select：改值即存
 frame = await press(KEY.right)
 check('→ 循环 select 调 setSettingValue', saveCalls.at(-1)?.join('|') === 'general|policy|b', JSON.stringify(saveCalls.at(-1)))
 check('select 循环后值区更新', lineOf(frame, '权限模式')?.includes('‹ 乙 ›') === true)
@@ -229,7 +237,7 @@ check('保存回执进 notice 行', frame.includes('✓ 已保存测试'))
 frame = await press(KEY.left)
 check('← 循环回第一个选项', saveCalls.at(-1)?.join('|') === 'general|policy|a')
 
-// 3. switch 翻转即存（↓ 到开关项；状态依赖的按键必须分次 press——同 chunk
+// 4. switch 翻转即存（↓ 到开关项；状态依赖的按键必须分次 press——同 chunk
 // 到达的多个键共享旧闭包，这是测试注入口的物理约束，不是实现的锅）
 await press(KEY.down)
 frame = await press(KEY.enter)
@@ -238,7 +246,7 @@ check('switch 翻转后显示 [✓]', lineOf(frame, '开关项')?.includes('[✓
 frame = await press(KEY.enter)
 check('再按 Enter 翻回 false', saveCalls.at(-1)?.join('|') === 'general|toggle|false')
 
-// 4. text 编辑：进入 → 输入 → 提交
+// 5. text 编辑：进入 → 输入 → 提交
 await press(KEY.down)
 frame = await press(KEY.enter)
 check('Enter 进编辑态显示草稿与光标', lineOf(frame, '文本项')?.includes('初始▌') === true, JSON.stringify(lineOf(frame, '文本项')))
@@ -253,14 +261,14 @@ check(
   JSON.stringify(saveCalls.at(-1)) + ' / ' + JSON.stringify(lineOf(frame, '文本项')),
 )
 
-// 5. Esc 取消编辑（↓ 到数字项再进编辑态）
+// 6. Esc 取消编辑（↓ 到数字项再进编辑态）
 await press(KEY.down)
 frame = await press(KEY.enter)
 check('数字项 Enter 进编辑态', lineOf(frame, '数字项')?.includes('5▌') === true, JSON.stringify(frame.slice(-700)))
 frame = await press(KEY.esc)
 check('Esc 取消编辑不写入', !saveCalls.some((call) => call[1] === 'count'), JSON.stringify(saveCalls))
 
-// 6. number 校验：非法留编辑态弹红
+// 7. number 校验：非法留编辑态弹红
 await press(KEY.enter)
 await press(KEY.backspace)
 await press('99')
@@ -272,59 +280,71 @@ await press('9')
 frame = await press(KEY.enter)
 check('合法数字提交', saveCalls.at(-1)?.join('|') === 'general|count|9', JSON.stringify(saveCalls.at(-1)))
 
-// 7. 空文本项：空草稿直接提交空串
+// 8. 空文本项：空草稿直接提交空串
 await press(KEY.down)
 await press(KEY.enter)
 frame = await press(KEY.enter)
 check('空文本直接提交空串', saveCalls.at(-1)?.join('|') === 'general|empty|', JSON.stringify(saveCalls.at(-1)))
 
-// 8. info.copyable 复制（焦点跳过普通 info，直接到 copyable）
+// 9. info.copyable 复制（焦点跳过普通 info，直接到 copyable）
 await press(KEY.down)
 frame = await press(KEY.enter)
 check('copyable info 复制回执', frame.includes('已复制') || frame.includes('复制失败'), JSON.stringify(frame.slice(-900)))
 
-// 9. button 执行动作
+// 10. button 执行动作
 await press(KEY.down)
 frame = await press(KEY.enter)
 check('button 调 runSettingAction', actionCalls.at(-1)?.join('|') === 'general|check-update', JSON.stringify(actionCalls))
 check('动作回执进 notice 行', frame.includes('✓ 已是最新版'))
 
-// 10. ↓ 焦点跳过普通 info 落到指引行；Enter 跳转模型浮层
-frame = await press(KEY.down)
-check('custom 指引行可聚焦', lineOf(frame, '打开模型选择器', true) !== undefined)
+// 11. Esc 回根页（焦点回第一个分区）
+frame = await press(KEY.esc)
+check('分区页 Esc 回根页', frame.includes('设置（4 个分区）') && lineOf(frame, '通用', true)?.includes('›') === true, JSON.stringify(frame.slice(-400)))
+
+// 12. 模型分区（custom）：指引行与跳转
+await press(KEY.down)
+frame = await press(KEY.enter)
+check('custom 分区页显示指引行与说明', frame.includes('打开模型选择器') && frame.includes('端点与 API key 在桌面端设置'), JSON.stringify(frame.slice(-500)))
+check('指引行可聚焦', lineOf(frame, '打开模型选择器', true) !== undefined)
 frame = await press(KEY.enter)
 check('指引行 Enter 关设置页开模型浮层', frame.includes('模型选择（') && !frame.includes('设置（4 个分区）'), JSON.stringify(frame.slice(-300)))
 
-// 11. Esc 关模型浮层，重开设置页后 Esc 关页
+// 13. Esc 关模型浮层，重开设置页落回根页，Esc 关页
 await press(KEY.esc)
 await press('/settings')
 frame = await press(KEY.enter)
-check('重开设置页（值已就地保存）', frame.includes('设置（4 个分区）') && lineOf(frame, '权限模式')?.includes('‹ 甲 ›') === true, JSON.stringify(frame.slice(-600)))
+check('重开设置页落回根页（改动已保存）', frame.includes('设置（4 个分区）'))
 frame = await press(KEY.esc)
-check('Esc 关闭设置页', !frame.includes('设置（4 个分区）'))
+check('根页 Esc 关闭设置页', !frame.includes('设置（4 个分区）'))
 
-// 12. 鼠标：点 switch 行（slice 2 → 屏幕行 5）翻转；滚轮移动焦点
+// 14. 鼠标：根页点分区行进入 → 分区页点 switch 行翻转；滚轮移动焦点
 await press('/settings')
 frame = await press(KEY.enter)
+frame = await press('\x1b[<0;10;3M')
+check('鼠标点分区行进入分区页', frame.includes('设置 › 通用'), JSON.stringify(frame.slice(-300)))
 frame = await press('\x1b[<0;10;5M')
 check('鼠标点 switch 行翻转', saveCalls.at(-1)?.join('|') === 'general|toggle|true', JSON.stringify(saveCalls.at(-1)))
-// 点击只激活不动焦点（焦点仍在 0）：滚轮先下移一档再上移回退，才能看到序号变化
 frame = await press('\x1b[<65;10;8M')
-check('滚轮下移焦点（2/12）', frame.includes('2/12'), JSON.stringify(lines(frame).find((line) => line.includes('设置（'))))
+check('滚轮下移焦点（2/7）', frame.includes('2/7'), JSON.stringify(lines(frame).find((line) => line.includes('设置 ›'))))
 frame = await press('\x1b[<64;10;8M')
-check('滚轮上移焦点（标题序号回退 1/12）', frame.includes('1/12'), JSON.stringify(lines(frame).find((line) => line.includes('设置（'))))
+check('滚轮上移焦点回 1/7', frame.includes('1/7'), JSON.stringify(lines(frame).find((line) => line.includes('设置 ›'))))
 frame = await press('\x1b[<65;10;8M')
 frame = await press('\x1b[<65;10;8M')
-check('滚轮再下移两步（3/12）', frame.includes('3/12'), JSON.stringify(lines(frame).find((line) => line.includes('设置（'))))
+check('滚轮再下移两步（3/7）', frame.includes('3/7'), JSON.stringify(lines(frame).find((line) => line.includes('设置 ›'))))
 
-// 13. tui 分区：思考块默认展开开关（焦点从 3/12 一路 ↓ 到第 11 个可聚焦行）
-for (let i = 0; i < 8; i += 1) await press(KEY.down)
+// 15. Esc 回根页 → ↓×3 到终端界面 → Enter → 翻转思考块默认展开
+await press(KEY.esc)
+await press(KEY.down)
+await press(KEY.down)
+await press(KEY.down)
+frame = await press(KEY.enter)
+check('终端界面分区页字段可见', frame.includes('设置 › 终端界面') && lineOf(frame, '思考块默认展开') !== undefined, JSON.stringify(frame.slice(-500)))
 frame = await press(KEY.enter)
 check('tui 分区开关写入 reasoningDefaultOpen', saveCalls.at(-1)?.join('|') === 'tui|reasoningDefaultOpen|true', JSON.stringify(saveCalls.at(-1)))
 
-// 14. tui 状态栏子页：↓ 到组行（12/12），Enter 进子页，翻转 statusBar.cost
+// 16. tui 状态栏组子页：↓ 到组行，Enter 进子页，翻转 statusBar.cost
 frame = await press(KEY.down)
-check('tui 组行可聚焦（12/12）', frame.includes('12/12'), JSON.stringify(lines(frame).find((line) => line.includes('设置（'))))
+check('tui 组行可聚焦（2/2）', frame.includes('2/2'), JSON.stringify(lines(frame).find((line) => line.includes('设置 ›'))))
 frame = await press(KEY.enter)
 check('状态栏子页面包屑', frame.includes('设置 › 终端界面 › 状态栏'), JSON.stringify(frame.slice(-500)))
 check('子页卡片标题换组名', frame.includes('╭─ 状态栏 · 终端界面') === true)
@@ -334,27 +354,38 @@ frame = await press(KEY.down)
 frame = await press(KEY.enter)
 check('状态栏开关写入 statusBar.cost=false', saveCalls.at(-1)?.join('|') === 'tui|statusBar.cost|false', JSON.stringify(saveCalls.at(-1)))
 frame = await press(KEY.esc)
-check('子页 Esc 回根页', frame.includes('设置（4 个分区）') && lineOf(frame, '启动与实例')?.includes('›') === true, JSON.stringify(frame.slice(-400)))
+check('组子页 Esc 回分区页（不是根页）', frame.includes('设置 › 终端界面') && !frame.includes('› 状态栏'), JSON.stringify(frame.slice(-400)))
+frame = await press(KEY.esc)
+check('分区页 Esc 回根页', frame.includes('设置（4 个分区）'))
 
-// 15. browser 子页导航：↓ 到 browser 启动组（从 1/12 ↓ 8 步到 9/12）
-for (let i = 0; i < 8; i += 1) await press(KEY.down)
+// 17. browser 分区：分区页只列组行 → 启动与实例子页
+await press(KEY.down)
+await press(KEY.down)
 frame = await press(KEY.enter)
-check('browser 子页：组字段齐全', frame.includes('设置 › 浏览器自动化 › 启动与实例') && lineOf(frame, '无窗口运行') !== undefined && lineOf(frame, 'profile 目录') !== undefined, JSON.stringify(frame.slice(-600)))
+check('browser 分区页只列组行', frame.includes('设置 › 浏览器自动化') && lineOf(frame, '启动与实例', true)?.includes('›') === true && lineOf(frame, '安全策略')?.includes('›') === true, JSON.stringify(frame.slice(-500)))
+frame = await press(KEY.enter)
+check('browser 启动与实例子页字段齐全', frame.includes('设置 › 浏览器自动化 › 启动与实例') && lineOf(frame, '无窗口运行') !== undefined && lineOf(frame, 'profile 目录') !== undefined, JSON.stringify(frame.slice(-600)))
 check('browser 组内字段照常渲染', lineOf(frame, '无窗口运行')?.includes('[  ]') === true)
 frame = await press(KEY.esc)
+check('组子页 Esc 回 browser 分区页', frame.includes('设置 › 浏览器自动化') && !frame.includes('› 启动与实例'))
+frame = await press(KEY.esc)
 
-// 16. 鼠标点组行进子页，再点子页里的 switch 行翻转
-// （组行在模型行 17：models 是 custom 分区占两行指引，屏幕行 = 17 + 3 = 20）
-frame = await press('\x1b[<0;10;20M')
+// 18. 鼠标全链路：根页点分区行 → 点组行 → 点子页 switch，Esc 三级退栈
+// （根页 slice = 屏幕行 − 3；browser 行在屏幕行 5；分区页组行/子页 switch 都在屏幕行 4）
+frame = await press('\x1b[<0;10;5M')
+check('鼠标点分区行进入 browser 分区页', frame.includes('设置 › 浏览器自动化'), JSON.stringify(frame.slice(-300)))
+frame = await press('\x1b[<0;10;4M')
 check('鼠标点组行进子页', frame.includes('设置 › 浏览器自动化 › 启动与实例'), JSON.stringify(frame.slice(-300)))
 frame = await press('\x1b[<0;10;4M')
 check('鼠标点子页 switch 行翻转', saveCalls.at(-1)?.join('|') === 'browser|headless|true', JSON.stringify(saveCalls.at(-1)))
 frame = await press(KEY.esc)
-check('鼠标进子页后 Esc 回根页', frame.includes('设置（4 个分区）'))
-
-await press(KEY.esc)
+frame = await press(KEY.esc)
+check('两级 Esc 后回根页', frame.includes('设置（4 个分区）'))
+frame = await press(KEY.esc)
+check('根页 Esc 关页', !frame.includes('设置（4 个分区）'))
+await press(KEY.down)
 frame = await press(KEY.down)
-check('关页后按键不再进设置路由', !frame.includes('设置（4 个分区）'))
+check('关页后按键不再进设置路由', !frame.includes('设置（4 个分区）') && !frame.includes('设置 ›'))
 
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 项失败`)
 process.exit(failures === 0 ? 0 : 1)
