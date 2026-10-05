@@ -63,10 +63,12 @@ check(
 
 /** 派发一条命令：收 notice 与回调命中的假 CommandContext。 */
 const makeUi = (overrides = {}) => {
-  const calls = { notices: [], openPresets: 0, openSkills: 0, toggleThinking: [] }
+  const calls = { notices: [], openModels: 0, openPresets: 0, openSkills: 0, toggleThinking: [] }
   const ui = {
     openPicker() {},
-    openModels() {},
+    openModels() {
+      calls.openModels += 1
+    },
     openPresets() {
       calls.openPresets += 1
     },
@@ -96,7 +98,11 @@ const sourceLines = [
 const sourcePath = join(home, '.dsc', 'sessions', 'w', 'src-1.jsonl')
 writeFileSync(sourcePath, `${sourceLines.join('\n')}\n`, 'utf8')
 const forkRuntime = {
-  getSnapshot: () => ({ status: { turnState: 'idle', sessionId: sourcePath } }),
+  // 真机快照形状：sessionId 是 uuid，sessionPath 才是 jsonl 路径（0.6.65 之前
+  // mock 把 uuid 造成了路径，/fork 拿 uuid 落盘时按 cwd 解析出 ENOENT 没被测出）
+  getSnapshot: () => ({
+    status: { turnState: 'idle', sessionId: '01890a5e-aaaa-4bbb-8ccc-ddddeeeeffff', sessionPath: sourcePath },
+  }),
   listUserMessages: (path) => Promise.resolve(readUserMessages(path)),
   forkSession: (path, index) => Promise.resolve({ ok: true, path: forkSession(path, index) }),
 }
@@ -118,6 +124,14 @@ const forkRuntime = {
   runCommand('/fork', { getSnapshot: () => ({ status: { turnState: 'idle', sessionId: null } }) }, ui)
   await sleep(50)
   check('空会话 /fork 给人话提示', (calls.notices[0] ?? '').includes('还没有可分叉的会话'), JSON.stringify(calls.notices))
+}
+
+console.log('── 裸 /model：只开选择器，不再发常驻用法提示（0.6.66）──')
+{
+  const { ui, calls } = makeUi()
+  runCommand('/model', { getSnapshot: () => ({ status: { turnState: 'idle' } }) }, ui)
+  check('裸 /model 开模型选择器', calls.openModels === 1, JSON.stringify(calls))
+  check('裸 /model 不再发用法 notice', calls.notices.length === 0, JSON.stringify(calls.notices))
 }
 
 console.log('── /thinking：toggleThinking 回调（缺省翻转、显式 on/off）──')

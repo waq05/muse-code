@@ -22,6 +22,7 @@ import { render } from 'ink'
 process.env.DSC_HOME = mkdtempSync(join(tmpdir(), 'dsc-statusbar-test-'))
 const { StatusBar, shortId } = await import('../lib/app/StatusBar.js')
 const { DEFAULT_STATUS_BAR_PREFS } = await import('../lib/contract.js')
+const { absoluteTop, measuredSpan } = await import('../lib/app/click.js')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -62,12 +63,12 @@ const clean = (frame) => frame.replace(/\x1b\[[0-9;?<]*[A-Za-z]/g, '')
 
 let instance = null
 /** 渲一帧 StatusBar：columns 决定丢段预算，config 决定段显隐。 */
-const renderBar = async ({ columns = 110, config = DEFAULT_STATUS_BAR_PREFS, status = STATUS, subagents = [] }) => {
+const renderBar = async ({ columns = 110, config = DEFAULT_STATUS_BAR_PREFS, status = STATUS, subagents = [], registerClick, onOpenAgent }) => {
   if (instance !== null) instance.unmount()
   output = ''
   stdout.columns = columns
   instance = render(
-    React.createElement(StatusBar, { status, surfaces: SURFACES, subagents, config }),
+    React.createElement(StatusBar, { status, surfaces: SURFACES, subagents, config, registerClick, onOpenAgent }),
     // useStdout 读的就是这份 stdout 的 columns——必须传外面这份（列宽在这儿改）
     { stdout, exitOnCtrlC: false, patchConsole: false },
   )
@@ -139,6 +140,56 @@ frame = await renderBar({ columns: 110, subagents: [{ sessionPath: '/w/7b5cc3a9-
 check('待审批队友芯片渲染（⚠）', frame.includes('⚠ 7b5cc3a9'))
 frame = await renderBar({ columns: 110, subagents: [] })
 check('没有干活队友就没有芯片（收工/切会话即消失）', !frame.includes('◐') && !frame.includes('7b5cc3a9'), JSON.stringify(frame.slice(0, 200)))
+
+// 5b. chip 点击命中几何（0.6.66）：hit 要按列区分同排多枚 chip——只查行会让
+// 任何点击都命中第一个注册的 chip。直接调组件登记的 hit，几何现量（同 App 派发）。
+{
+  const clicks = []
+  const registerClick = (entry) => {
+    clicks.push(entry)
+    return () => {}
+  }
+  await renderBar({
+    columns: 160,
+    subagents: [
+      { sessionPath: '/w/11111111-aaaa.jsonl', state: 'working' },
+      { sessionPath: '/w/22222222-bbbb.jsonl', state: 'working' },
+    ],
+    registerClick,
+    onOpenAgent: () => {},
+  })
+  const chipHits = clicks.filter((entry) => {
+    const span = measuredSpan(entry.node.current)
+    const top = absoluteTop(entry.node.current)
+    return span !== null && top !== null && span.width > 0 && span.width < 40
+  })
+  check('两枚 chip 各登记了一个点击区', chipHits.length === 2, String(clicks.length))
+  const spans = chipHits.map((entry) => measuredSpan(entry.node.current))
+  const tops = chipHits.map((entry) => absoluteTop(entry.node.current))
+  if (spans[0] !== null && spans[1] !== null && tops[0] !== null && tops[1] !== null) {
+    const insideSecond = spans[1].left + 1
+    const rowSecond = tops[1]
+    check(
+      '点第二枚 chip 只命中第二枚',
+      chipHits[0].hit(insideSecond, rowSecond, tops[0], 1) === false
+        && chipHits[1].hit(insideSecond, rowSecond, tops[1], 1) === true,
+      `col=${insideSecond} spans=${JSON.stringify(spans)}`,
+    )
+    const outside = spans[0].left - 2
+    check(
+      '点空白列谁都不命中',
+      chipHits.every((entry, index) => entry.hit(outside, tops[index], tops[index], 1) === false),
+      `col=${outside}`,
+    )
+    const insideFirst = spans[0].left + 1
+    check(
+      '点第一枚 chip 命中第一枚',
+      chipHits[0].hit(insideFirst, tops[0], tops[0], 1) === true
+        && chipHits[1].hit(insideFirst, tops[1], tops[1], 1) === false,
+      `col=${insideFirst}`,
+    )
+  }
+}
 
 // 6. 窄终端丢段：tokens（优先级 0）先丢，session 次之；状态点与模型永不丢
 frame = await renderBar({

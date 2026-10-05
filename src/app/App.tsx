@@ -328,6 +328,15 @@ export function App({
     draftRef.current = text
   }, [])
 
+  // notice 8 秒自动过期：提示盒常驻会挡住后续操作语义（用户反馈：命令提示
+  // 一直展示）；有新 notice 就重置计时。不做「打字即清」——双击 Esc 撤回会把
+  // 文本灌回输入框（非空草稿事件），当场抹掉刚设置的撤回提示（电池实锤）。
+  useEffect(() => {
+    if (notice === null) return
+    const timer = setTimeout(() => setNotice(null), 8_000)
+    return () => clearTimeout(timer)
+  }, [notice])
+
   // 图片预览的字符画现算：preview（含 index）一变就重渲染当前那张。
   useEffect(() => {
     if (preview === null) {

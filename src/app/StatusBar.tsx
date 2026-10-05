@@ -21,7 +21,7 @@ import { Box, Text, useStdout } from 'ink'
 import type { DOMElement } from 'ink'
 import type { JSX } from 'react'
 import type { RuntimeSnapshot, RuntimeSurfaces, StatusBarPrefsView, StatusView } from '../contract.js'
-import { useClickRegion, type RegisterClick } from './click.js'
+import { measuredSpan, useClickRegion, type RegisterClick } from './click.js'
 import { displayWidth } from './markdown.js'
 import { CONTEXT_SEGMENTS, GAP, PAD, PALETTE, SEP, STATUS_COLOR, TEXT } from './theme.js'
 
@@ -125,6 +125,10 @@ function BackgroundChip({
   const dot = BACKGROUND_DOT[state]
   useClickRegion(ref, registerClick, (col, row, top, height) => {
     if (row < top || row >= top + height) return false
+    // 同排还有别的 chip 与文本段：只查行不查列会让任何点击都命中第一个注册的
+    // chip（0.6.66 实锤），列区间也要对上——量不到列就宁可无操作。
+    const span = measuredSpan(ref.current)
+    if (span === null || col < span.left || col >= span.left + span.width) return false
     onOpen(sessionPath)
     return true
   })

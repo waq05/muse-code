@@ -240,6 +240,8 @@ export const transcriptPlugin: Plugin.Object = {
               ? {}
               : { cost: { total: costEstimate.total, peakNow: isPeakHour() } }),
             cwd: ctx.session.current().meta.cwd,
+            // jsonl 绝对路径：sessionId 是 uuid，落盘类命令（/fork）得用这个
+            sessionPath: ctx.session.current().filePath,
           },
           surfaces,
           sessions: ctx.session.sessions,

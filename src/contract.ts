@@ -473,6 +473,11 @@ export interface StatusView {
   cost?: { total: number; peakNow: boolean }
   /** 当前会话的工作目录（状态栏显示；快照组装自 session.meta.cwd）。 */
   cwd?: string
+  /**
+   * 当前会话的 jsonl 绝对路径。sessionId 是 uuid，拿它当文件用会按进程 cwd
+   * 解析出 ENOENT（/fork 0.6.65 实锤）——需要落盘路径的命令一律用这个。
+   */
+  sessionPath?: string
 }
 
 /** 档位按钮的一项：档位 id + 按钮文字 + 悬浮说明。 */

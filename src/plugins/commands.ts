@@ -117,7 +117,8 @@ export const commandsPlugin: Plugin.Object = {
       ({ args, runtime, ui }) => {
         const model = args[0]
         if (model === undefined || model === '') {
-          ui.notice('用法：/model [端点/]模型名')
+          // 裸 /model 直接开选择器；用法提示只活在补全面板里（打 / 就能看到），
+          // 这里再发一条就变成常驻盒（0.6.66 用户反馈）。
           ui.openModels()
           return
         }
@@ -343,8 +344,10 @@ export const commandsPlugin: Plugin.Object = {
       // 的 fork）。按分叉点选副本走 /resume 里的 Ctrl+F，这里只做整本。
       { name: 'fork', args: '', description: '分叉当前会话为可恢复的副本（当前会话不变）' },
       ({ runtime, ui }) => {
-        const path = runtime.getSnapshot().status.sessionId
-        if (path === null) {
+        // sessionId 是 uuid，当文件用会按进程 cwd 解析出 ENOENT（0.6.66 实锤：
+        // C:\Windows\System32\<uuid>）；落盘一律走 sessionPath。
+        const path = runtime.getSnapshot().status.sessionPath
+        if (path === undefined || path === '') {
           ui.notice('当前还没有可分叉的会话（先聊一句再分叉）。')
           return
         }

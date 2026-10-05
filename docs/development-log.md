@@ -1797,3 +1797,19 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **测试**：statusbar-test 换新字段（干活队友 ◐ / 待审批 ⚠ / 空列表无 chip / 窄终端 chip 先于 cwd 被丢）；resident-agents-test 加第 11、12 段——用真队友驱动 subagents 断言（派出开工 → chip 恰一枚；切走会话 → chip 空而全局面仍亮；收工 → chip 空名册落 idle；手写名册僵尸 → 读作 stopped 且不进 chip），40 PASS / 0 FAIL。全量 19 电池绿，双包 typecheck 绿。
 
 **教训**：① 「用户说没实现」先拿他的截图对质现状，再看是什么污染了观感——这轮层级没改一行，改的是数据源；② 直连 Session 类的电池必须三件套隔离，漏一个就往真实 HOME 写（且污染会静默累积到用户看得见的程度）；③ 测试里驱动真队友三道坎：subagent 插件 `defaultDisabled` 要预写 `~/.dsc/plugins.json` 条目树、SSE `tool_calls.arguments` 必须是 JSON **字符串**（传对象 → 工具卡 `argsText.replace` 炸、回合 reason=error）、假端点分派顺序先认标题请求再认任务标记。
+
+## 阶段 89：退出进备用屏 + chip 点击按列命中 + 命令提示不常驻 + /fork 路径修复（0.6.66）
+
+用户三条反馈（两张截图）：①退出显示有问题（残帧、状态栏碎片和 PS 提示交错，顶部还有 4 条「读取会话消息失败 ENOENT」）；②点底部会进第一个子代理的会话；③命令用法提示常驻输入框上方，应只在输入 / 时展示。
+
+**① 退出残帧的根治 = 整帧搬进备用屏（DEC 1049）**。病根：msc 直接在主屏内联渲染，帧是「终端行数−1」的整屏视口——一旦画面被滚动挪了锚点（截图一里 ① 行提示已经滚出屏顶），ink 卸载时按行数回擦就擦错位置；`runtime.exit()` 是同一 tick 里 emit dsc/exit → process.exit(0)，擦除序列在这种场景救不回来。dsh-tui 把整棵树包在 AlternateScreen（1049 + SGR 鼠标）、codex 用 AltScreenGuard——退出写 1049l 主屏原样还原。改法集中在 tui.ts：render 前 TTY 写 `?1049h+2J+H`；teardown（dsc/exit 与 disposer 共用，幂等）里 unmount 后写 `?1049l` + 一行告别；`process.on('exit')` 兜底只还原不告别（崩溃时「会话已保存」不一定是真话）。App 卸载清理里的鼠标 `1000;1006l` 先于 1049l，同步有序。备用屏还把「帧从屏顶排」的点击坐标假设从『通常成立』变成『恒真』。
+
+**② chip 点击永远进第一个子代理 = 点击区只查行不查列**。BackgroundChip 的 hit 只判 row 区间，而 App 派发按注册序首个命中消费——同排的第二个 chip、ctx 段、空白处点击全部命中第一枚。Composer 的可点区早就用 measuredSpan 查列（click.ts 的设计本意），chip 漏了这半边；补上列区间判断（量不到宁可无操作）。
+
+**③ notice 盒常驻 = 没有过期机制**。改法两刀：裸 `/model` 删掉用法 notice（handler 本来就同时 openModels，纯重复；用法提示只活在打 `/` 的补全面板里）；notice 盒 8 秒自动过期（新 notice 重置计时）。**「打字即清」试过被电池打回**：双击 Esc 撤回会把文本灌回输入框，非空草稿事件当场抹掉刚设置的撤回提示（tui-features-test FAIL 实锤），撤回该规则只留定时器。
+
+**④ 顺带修 /fork 的 ENOENT（截图一顶部 4 条报错）**。commands.ts 拿 `status.sessionId`（真实运行时是 **uuid**）当文件路径传 listUserMessages → 按进程 cwd 解析 → `C:\Windows\System32\<uuid>` ENOENT，之后 forkSession(0) 又炸一次。电池 mock 把 sessionId 造成了路径（commands-battery.mjs），掩盖真机形状。修法：contract StatusView 加可选 `sessionPath`（transcript getSnapshot 带出 filePath），/fork 优先用 sessionPath；电池 mock 换成真机形状（uuid + sessionPath 分离）回归此 bug；顺带断言裸 /model 只开选择器不发 notice。
+
+**测试**：statusbar-test 新增 5b 段——传 registerClick 收集器直测 hit 几何（两枚 chip 时点第二枚列区间只命中第二枚、空白列全不命中、第一枚区间只命中第一枚；**registerClick 要配 onOpenAgent 传**，BackgroundChip 的点击区注册被 onOpenAgent 门控）；commands-battery 加裸 /model 段 + /fork 真机形状。全量电池绿，双包 typecheck 绿，`msc --version` → 0.6.66。
+
+**教训**：① 「整屏视口 + 内联渲染」在滚动面前是脆的，锚点一漂移擦除就全错——全屏 TUI 的标准答案是备用屏，ink 原生没有就手写 1049 序列 + exit 兜底；② mock 快照要复刻**真机的字段语义**（uuid vs 路径），不然测试在给 bug 背书；③ 给提示加「交互即清」前，先枚举所有会触发同类事件的**程序化**路径（撤回灌文本、preset 回填），它们和用户打字不可区分。
