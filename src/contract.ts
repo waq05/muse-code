@@ -722,6 +722,36 @@ export type UiDensity = 'compact' | 'standard' | 'roomy'
  */
 export type UiProcessFold = 'compact' | 'standard' | 'detailed' | 'verbose'
 
+/**
+ * TUI 底部状态栏各段的显隐（存在 `~/.dsc/settings.json` 的 `ui.statusBar`）。
+ * 全部必填：读档由 {@link normalizeStatusBarPrefs} 补齐，消费方不需要判缺。
+ * 出厂口径对齐 dsh 底栏设置的默认——只留「身份 + 在看什么」，effort/模式/
+ * Token 累计/会话 ID 这类设定完就不再看的默认收掉，要的在 设置 → 终端界面 →
+ * 状态栏 子页里打开。
+ */
+export interface StatusBarPrefsView {
+  /** 模型名。 */
+  model: boolean
+  /** 思考强度（effort 档位）。 */
+  effort: boolean
+  /** 缓存命中率。 */
+  cache: boolean
+  /** Token 累计（input/output）。 */
+  tokens: boolean
+  /** 本会话费用估算（仅 DeepSeek 官方端点有数据）。 */
+  cost: boolean
+  /** 会话模式（执行/计划/探索/免打扰）。 */
+  mode: boolean
+  /** 权限模式。 */
+  policy: boolean
+  /** 上下文用量百分比。 */
+  ctx: boolean
+  /** 工作目录。 */
+  cwd: boolean
+  /** 当前会话短 id。 */
+  session: boolean
+}
+
 /** 侧栏界面偏好，存在 `~/.dsc/settings.json`，桌面端与以后别的界面共用。 */
 export interface UiPrefsView {
   sessionSort: SessionSortKey
@@ -781,6 +811,36 @@ export interface UiPrefsView {
    * 通知由桌面主进程创建，点击唤回主窗口；前台时不弹——那时提示音已经足够。
    */
   turnCompleteNotify: boolean
+  /** TUI 底部状态栏各段的显隐；读档缺键由 {@link normalizeStatusBarPrefs} 回落默认。 */
+  statusBar: StatusBarPrefsView
+}
+
+/** 状态栏段显隐的出厂默认（口径见 {@link StatusBarPrefsView}）。 */
+export const DEFAULT_STATUS_BAR_PREFS: StatusBarPrefsView = {
+  model: true,
+  effort: false,
+  cache: true,
+  tokens: false,
+  cost: true,
+  mode: false,
+  policy: true,
+  ctx: true,
+  cwd: true,
+  session: false,
+}
+
+/**
+ * 把老存档 / 老宿主 / 手改坏档里的 `ui.statusBar` 归一成全键视图：对象缺失或
+ * 单键缺失都回落出厂默认（与 prefs.ts 的读档白名单同一口径，坏档不拦启动）。
+ * 桌面渲染层与 TUI 共用这一份——prefs.ts 带着 node 内置模块，渲染层 import 不得。
+ */
+export function normalizeStatusBarPrefs(value: unknown): StatusBarPrefsView {
+  const source = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+  const merged = { ...DEFAULT_STATUS_BAR_PREFS }
+  for (const key of Object.keys(DEFAULT_STATUS_BAR_PREFS) as (keyof StatusBarPrefsView)[]) {
+    if (typeof source[key] === 'boolean') merged[key] = source[key] as boolean
+  }
+  return merged
 }
 
 /** 分叉结果：成功时带新会话的 jsonl 路径，UI 拿它直接切过去。 */
@@ -931,12 +991,25 @@ export interface SettingsOption {
  * 所以字段必须可 JSON 序列化——插件给的是声明和回调，不是 React 组件。
  */
 export type SettingsField =
-  | { type: 'text'; key: string; label: string; placeholder?: string; help?: string; mono?: boolean }
-  | { type: 'number'; key: string; label: string; min?: number; max?: number; step?: number; help?: string }
-  | { type: 'select'; key: string; label: string; options: SettingsOption[]; help?: string }
-  | { type: 'switch'; key: string; label: string; help?: string }
-  | { type: 'info'; label?: string; text: string; mono?: boolean; copyable?: boolean; help?: string }
-  | { type: 'button'; action: string; label: string; style?: 'primary' | 'ghost'; help?: string }
+  | { type: 'text'; key: string; label: string; placeholder?: string; help?: string; mono?: boolean; group?: string }
+  | { type: 'number'; key: string; label: string; min?: number; max?: number; step?: number; help?: string; group?: string }
+  | { type: 'select'; key: string; label: string; options: SettingsOption[]; help?: string; group?: string }
+  | { type: 'switch'; key: string; label: string; help?: string; group?: string }
+  | { type: 'info'; label?: string; text: string; mono?: boolean; copyable?: boolean; help?: string; group?: string }
+  | { type: 'button'; action: string; label: string; style?: 'primary' | 'ghost'; help?: string; group?: string }
+
+/**
+ * 分区内的一个分组（dsh 同款机制）：`fields` 里带 `group: id` 的字段收进这组，
+ * TUI 在根页只画一行「组标题 … ›」，Enter 进子页才见到组内字段；桌面端不做
+ * 子页导航，渲染成组头（相邻同组字段聚在一张组标题下）。组的 key 仍是分区里
+ * 的扁平键，values/save 链路与顶层字段零差别。
+ */
+export interface SettingsGroupView {
+  id: string
+  title: string
+  /** 聚焦组行时提示条里的一句话说明。 */
+  description?: string
+}
 
 /** 一个设置分区的投影（顺序由 order 决定，小者在前）。 */
 export interface SettingsSectionView {
@@ -945,6 +1018,8 @@ export interface SettingsSectionView {
   /** nav 行下方的一句话说明。 */
   subtitle?: string
   order: number
+  /** 分组声明（display 顺序）；字段按 `group` id 归组，没进组的字段留在根页。 */
+  groups?: SettingsGroupView[]
   /**
    * 内核内置分区，或声明了 inSettings 的插件代管分区（插件里的内核级功能，
    * 例如远程控制：它登记在插件上，但界面归设置页）。

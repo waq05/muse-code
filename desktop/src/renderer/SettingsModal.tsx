@@ -11,7 +11,7 @@
  *
  * @module desktop/renderer/SettingsModal
  */
-import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type JSX, type ReactNode } from 'react'
 import {
   DEFAULT_EFFORT_MAP,
   DEFAULT_THINKING_LEVELS,
@@ -470,7 +470,21 @@ export function GenericFields(props: {
       {props.section.fields.length === 0 && (
         <div className="settings-empty">该分区没有可配置项。</div>
       )}
-      {props.section.fields.map(render)}
+      {/* 组头（0.6.62）：字段声明了 group 且与上一个字段不同组时插一行组标题。
+          桌面端不做 TUI 那种子页导航——这里是滚动态弹窗，组头收拢就够。 */}
+      {props.section.fields.map((field, index) => {
+        const group = field.group
+        return (
+          <Fragment key={'key' in field ? field.key : `field-${index}`}>
+            {group !== undefined && group !== props.section.fields[index - 1]?.group ? (
+              <div className="settings-group-title">
+                {props.section.groups?.find((entry) => entry.id === group)?.title ?? group}
+              </div>
+            ) : null}
+            {render(field, index)}
+          </Fragment>
+        )
+      })}
       {props.extra}
       {/* 弹窗自己走 portal 挂到 body 上（设置面板有 overflow 与 backdrop-filter），
           所以它长在 JSX 的哪一层都不影响画面。 */}

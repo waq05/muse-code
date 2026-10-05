@@ -215,7 +215,7 @@ const statusLine = allLines.find((line) => line.includes('空闲'))
 check('字段行合并状态与模型（左组）', statusLine !== undefined && statusLine.includes('test-model') && statusLine.includes('标准'), JSON.stringify(statusLine))
 const barLine = allLines[allLines.length - 2]
 check('context 进度条在倒数第二行（读数 0/1.0M）', barLine.includes('--%') === false && barLine.includes('0/1.0M'), JSON.stringify(barLine))
-check('字段行在最后一行（右组 ctx/cwd/会话）', allLines[allLines.length - 1] === statusLine && statusLine.includes('ctx') && statusLine.includes('/w') && statusLine.includes('会话 s'))
+check('字段行在最后一行（右组 ctx/cwd；会话段 0.6.62 出厂关）', allLines[allLines.length - 1] === statusLine && statusLine.includes('ctx') && statusLine.includes('/w') && !statusLine.includes('会话'))
 
 // 4. 恒定帧仍是 39 行
 check('恒定帧仍为 39 行', allLines.length === 39, String(allLines.length))

@@ -9,13 +9,17 @@
  * 静默时空行防跳动）+ 提示条（聚焦字段的 help + 右侧按键提示）。help 不进卡片行，
  * 聚焦行才在提示条里出现——每行高度恒为 1，行模型才守得住。
  *
+ * 子页（0.6.62）：带组的分区在根页画组导航行 `❯ 标题 … ›`，传 group 参时整份
+ * rows 已是子页内容（settings-model 负责），这里只多两处观感——标题行变面包屑
+ * `设置 › 分区 › 组`、提示条 Esc 换「返回」。
+ *
  * @module dsc-tui/app/SettingsOverlay
  */
 import { Box, Text, useStdout } from 'ink'
 import type { JSX } from 'react'
 import type { SettingsField, SettingsSectionView, SettingsValues } from '../contract.js'
 import { displayWidth } from './click.js'
-import { focusableRows, type SettingsRow } from './settings-model.js'
+import { focusableRows, type SettingsGroupRef, type SettingsRow } from './settings-model.js'
 import { ACCENT, BORDER, GAP, MARK, PAD, PALETTE, SEP, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 设置页固定框架行数：外框上下边 2 + 标题 1 + 底部 notice 1 + 提示条 1。 */
@@ -90,6 +94,7 @@ export function SettingsOverlay({
   viewport,
   editing,
   notice,
+  group,
 }: {
   sections: SettingsSectionView[]
   rows: SettingsRow[]
@@ -101,12 +106,16 @@ export function SettingsOverlay({
   viewport: number
   editing: SettingsEdit | null
   notice: { ok: boolean; text: string } | null
+  /** 当前展开的子页（null = 根页）：标题行变面包屑，Esc 提示换「返回」。 */
+  group?: SettingsGroupRef | null
 }): JSX.Element {
   const { stdout } = useStdout()
   const columns = stdout?.columns ?? 100
   // 内宽 = 终端列 − 整帧页边距 − 外框描边 2 − 框内 padding
   const innerWidth = Math.max(24, columns - PAD.page * 2 - 2 - PAD.inline * 2)
   const sectionById = new Map(sections.map((section) => [section.id, section]))
+  const groupSection = group == null ? undefined : sectionById.get(group.sectionId)
+  const groupSpec = groupSection?.groups?.find((entry) => entry.id === group?.groupId)
   const focusables = focusableRows(rows, sections)
   const focusOrdinal = focusables.indexOf(focusRow)
   const visible = rows.slice(windowStart, windowStart + Math.max(1, viewport))
@@ -137,6 +146,23 @@ export function SettingsOverlay({
         )
       case 'spacer':
         return <Text key={index}> </Text>
+      case 'group': {
+        // 组导航行（dsh GroupRow 同款）：label 左、`›` 贴右缘，聚焦时强调色
+        const labelText = clipToWidth(row.title, Math.max(8, innerWidth - 12))
+        const pad = Math.max(1, innerWidth - 2 - displayWidth(labelText) - 1)
+        return (
+          <Text key={index} wrap="truncate-end">
+            {focused ? MARK.selected : MARK.idle}
+            <Text bold={focused} color={PALETTE.text}>
+              {labelText}
+            </Text>
+            {' '.repeat(pad)}
+            <Text {...(focused ? {} : TEXT.secondary)} color={focused ? ACCENT : undefined}>
+              ›
+            </Text>
+          </Text>
+        )
+      }
       case 'hint':
         return (
           <Text key={index} wrap="truncate-end">
@@ -179,11 +205,16 @@ export function SettingsOverlay({
   // 底部提示条：聚焦字段的 help（可复制的 info 追加复制提示）截断后靠左，按键靠右
   const focusedRow = rows[focusRow]
   const focusedField = focusedRow?.kind === 'field' ? sectionById.get(focusedRow.sectionId)?.fields[focusedRow.fieldIndex] : undefined
-  let help = focusedField?.help ?? ''
+  let help = focusedRow?.kind === 'group' ? (focusedRow.description ?? '') : (focusedField?.help ?? '')
   if (focusedField?.type === 'info' && focusedField.copyable === true) {
     help = `${help === '' ? '' : `${help} · `}Enter 复制`
   }
-  const keys = editing !== null ? 'Enter 确认并保存 · Esc 取消' : 'Enter 切换/编辑 · Esc 关闭'
+  const keys =
+    editing !== null
+      ? 'Enter 确认并保存 · Esc 取消'
+      : groupSpec !== undefined
+        ? 'Enter 切换/编辑 · Esc 返回'
+        : 'Enter 切换/编辑 · Esc 关闭'
   const helpText = clipToWidth(help, Math.max(0, innerWidth - displayWidth(keys) - 2))
 
   return (
@@ -198,7 +229,15 @@ export function SettingsOverlay({
     >
       <Box flexShrink={0} flexDirection="column" gap={GAP.none}>
         <Text {...TEXT.label} color={ACCENT} wrap="truncate-end">
-          设置（{sections.length} 个分区）
+          {groupSpec !== undefined && groupSection !== undefined ? (
+            <>
+              设置
+              <Text {...TEXT.secondary}>{` › ${groupSection.title} › `}</Text>
+              {groupSpec.title}
+            </>
+          ) : (
+            `设置（${sections.length} 个分区）`
+          )}
           {focusOrdinal >= 0 ? (
             <Text {...TEXT.secondary}>
               {SEP.gap}

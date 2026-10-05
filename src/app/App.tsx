@@ -40,8 +40,10 @@ import type {
   SettingsSectionView,
   SettingsValue,
   SettingsValues,
+  StatusBarPrefsView,
   TranscriptEntry,
 } from '../contract.js'
+import { DEFAULT_STATUS_BAR_PREFS, normalizeStatusBarPrefs } from '../contract.js'
 import { runCommand } from '../plugins/commands.js'
 import { AgentsOverlay, buildAgentRows } from './AgentsOverlay.js'
 import { absoluteTop, measuredHeight, useClickRegion, type ClickEntry, type RegisterClick } from './click.js'
@@ -61,6 +63,7 @@ import {
   focusableRows,
   isFocusableRow,
   settingsWindowStart,
+  type SettingsGroupRef,
   type SettingsRow,
 } from './settings-model.js'
 import { shortId, StatusBar } from './StatusBar.js'
@@ -187,6 +190,10 @@ export function App({
   const [settingsIndex, setSettingsIndex] = useState(0)
   const [settingsEdit, setSettingsEdit] = useState<{ sectionId: string; key: string; draft: string } | null>(null)
   const [settingsNotice, setSettingsNotice] = useState<{ ok: boolean; text: string } | null>(null)
+  /** 当前展开的设置子页（null = 根页；dsh 式一层分组，Esc 先退子页再关页）。 */
+  const [settingsGroup, setSettingsGroup] = useState<SettingsGroupRef | null>(null)
+  /** 状态栏段显隐（0.6.62）：启动读一次 prefs，设置页改动后就地更新。 */
+  const [statusBarPrefs, setStatusBarPrefs] = useState<StatusBarPrefsView>(DEFAULT_STATUS_BAR_PREFS)
   const lastCtrlC = useRef(0)
   /** 可切换模型列表：进程内静态，取一次即可。 */
   const models = useMemo(() => runtime.listModels(), [runtime])
@@ -239,7 +246,10 @@ export function App({
   // 的临时开关。旧测试的 runtime mock 没有这个方法——缺了就静默跳过。
   useEffect(() => {
     if (typeof runtime.getUiPrefs !== 'function') return
-    if (runtime.getUiPrefs().reasoningDefaultOpen === true) setExpandThinking(true)
+    const prefs = runtime.getUiPrefs()
+    if (prefs.reasoningDefaultOpen === true) setExpandThinking(true)
+    // 状态栏段显隐（0.6.62）：缺键归一（老 mock / 老宿主）后装填。
+    setStatusBarPrefs(normalizeStatusBarPrefs(prefs.statusBar))
   }, [runtime])
 
   // 鼠标跟踪全时开启（SGR 点击/滚轮；不启用 1002/1003——拖拽选区留给终端原生行为）。
@@ -380,7 +390,7 @@ export function App({
   const chatWindow = snapshot.entries.slice(Math.max(0, chatEnd - CHAT_WINDOW), chatEnd)
 
   // ---- 设置页（/settings）的行模型与窗口切片（几何与 SettingsOverlay 共表）----
-  const settingsRows = useMemo(() => buildSettingsRows(settingsSections), [settingsSections])
+  const settingsRows = useMemo(() => buildSettingsRows(settingsSections, settingsGroup), [settingsSections, settingsGroup])
   const settingsFocusables = useMemo(
     () => focusableRows(settingsRows, settingsSections),
     [settingsRows, settingsSections],
@@ -483,6 +493,10 @@ export function App({
         setSettingsNotice({ ok: true, text: mutation.notice ?? '已保存' })
         // 思考块默认展开除了新会话语义，当前会话也当场跟着切
         if (sectionId === 'tui' && key === 'reasoningDefaultOpen') setExpandThinking(value === true)
+        // 状态栏段开关（0.6.62）：就地改 state，关页即见（静默保存，无回执）
+        if (sectionId === 'tui' && key.startsWith('statusBar.')) {
+          setStatusBarPrefs((current) => ({ ...current, [key.slice('statusBar.'.length)]: value === true }))
+        }
       })
       .catch((cause: unknown) =>
         setSettingsNotice({ ok: false, text: cause instanceof Error ? cause.message : String(cause) }),
@@ -533,6 +547,13 @@ export function App({
 
   /** 行的主动作（Enter 与「点击该行」共用）：switch/select 改值即存，text/number 进编辑。 */
   const activateSettingsRow = (row: SettingsRow | undefined, direction: 1 | -1): void => {
+    if (row?.kind === 'group') {
+      // 进子页（dsh 同款）：焦点与草稿归零；Esc 由键盘分支先退子页再关页
+      setSettingsGroup({ sectionId: row.sectionId, groupId: row.groupId })
+      setSettingsIndex(0)
+      setSettingsEdit(null)
+      return
+    }
     if (row?.kind === 'hint') {
       if (row.jump === 'model-picker') {
         setSettingsOpen(false)
@@ -719,6 +740,7 @@ export function App({
     setSettingsIndex(0)
     setSettingsEdit(null)
     setSettingsNotice(null)
+    setSettingsGroup(null)
     setSettingsOpen(true)
     for (const section of sections) {
       void runtime
@@ -842,7 +864,7 @@ export function App({
         const slice = row - 1 - SETTINGS_LIST_TOP
         if (slice < 0 || slice >= settingsViewport) return
         const target = settingsRows[settingsWindow + slice]
-        if (target === undefined || (target.kind !== 'field' && target.kind !== 'hint')) return
+        if (target === undefined || (target.kind !== 'field' && target.kind !== 'hint' && target.kind !== 'group')) return
         const fields = settingsSections.find((section) => section.id === target.sectionId)?.fields ?? []
         if (!isFocusableRow(target, fields)) return
         activateSettingsRow(target, 1)
@@ -1111,7 +1133,13 @@ export function App({
         return
       }
       if (key.escape) {
-        setSettingsOpen(false)
+        // 先退子页再关页（dsh 同款：子页里 Esc 是「返回上级」）
+        if (settingsGroup !== null) {
+          setSettingsGroup(null)
+          setSettingsIndex(0)
+        } else {
+          setSettingsOpen(false)
+        }
         return
       }
       if (key.upArrow) {
@@ -1282,6 +1310,7 @@ export function App({
           viewport={settingsViewport}
           editing={settingsEdit}
           notice={settingsNotice}
+          group={settingsGroup}
         />
       ) : (
         <>
@@ -1374,6 +1403,7 @@ export function App({
           status={snapshot.status}
           surfaces={snapshot.surfaces}
           sessionStates={snapshot.sessionStates}
+          config={statusBarPrefs}
           onOpenAgent={(sessionPath) => openAgentTranscript(sessionPath, shortId(sessionPath))}
           registerClick={registerClick}
         />

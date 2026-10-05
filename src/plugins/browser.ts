@@ -1346,22 +1346,24 @@ export const browserPlugin: Plugin.Object = {
       })
       const running = launcher !== null && launcher.alive
       return [
-        { type: 'switch', key: 'headless', label: '无窗口运行', help: '开着看不到浏览器窗口，适合无人值守；要看它到底在点什么就关掉它（重启浏览器后生效）。' },
+        { type: 'switch', key: 'headless', label: '无窗口运行', group: 'startup', help: '开着看不到浏览器窗口，适合无人值守；要看它到底在点什么就关掉它（重启浏览器后生效）。' },
         {
           type: 'text',
           key: 'executablePath',
           label: '浏览器可执行文件',
           placeholder: '留空 = 自动探测 Chrome / Edge',
           mono: true,
+          group: 'startup',
           help: '探测顺序：Program Files 的 Chrome → Program Files(x86) 的 Edge → Program Files 的 Edge → %LOCALAPPDATA% 的 Chrome / Edge。',
         },
-        { type: 'info', label: '当前探测结果', text: probe ?? '没找到 Chrome 或 Edge（请填上面的路径）', mono: true, copyable: true },
+        { type: 'info', label: '当前探测结果', text: probe ?? '没找到 Chrome 或 Edge（请填上面的路径）', mono: true, copyable: true, group: 'startup' },
         {
           type: 'text',
           key: 'profileDir',
           label: 'profile 目录',
           placeholder: '留空 = 每次启动自建临时目录，退出时删掉',
           mono: true,
+          group: 'startup',
           help: '留空最干净。填了固定目录就由你负责清理；绝不要填日常浏览器的 profile（Chrome 136+ 会静默忽略远程调试）。',
         },
         {
@@ -1369,9 +1371,10 @@ export const browserPlugin: Plugin.Object = {
           key: 'allowedDomains',
           label: '允许域名',
           placeholder: '留空 = 不限制；例如 example.com,*.internal.example.com',
+          group: 'safety',
           help: '逗号分隔。普通项是允许名单（填了就只有它们能打开），`!` 开头是拒绝名单（例如 !bad.com）。云元数据与私网地址无条件拒。',
         },
-        { type: 'number', key: 'maxSnapshotChars', label: '快照字符上限', min: 500, max: 200000, step: 500, help: '按行截断，绝不会把一行元素切一半；更长的输出由 spill 插件落盘。' },
+        { type: 'number', key: 'maxSnapshotChars', label: '快照字符上限', min: 500, max: 200000, step: 500, group: 'runtime', help: '按行截断，绝不会把一行元素切一半；更长的输出由 spill 插件落盘。' },
         {
           type: 'select',
           key: 'dialogPolicy',
@@ -1381,16 +1384,17 @@ export const browserPlugin: Plugin.Object = {
             { value: 'auto_dismiss', label: '一律自动关掉' },
             { value: 'auto_accept', label: '一律自动接受' },
           ],
+          group: 'safety',
           help: '页面弹 alert/confirm/prompt 时怎么办。must_respond 下挂着不管会阻塞这个页面的命令，300 秒后自动关掉。',
         },
-        { type: 'switch', key: 'enableEvaluate', label: '允许求值', help: '关掉后 browser action=evaluate 与守卫都会拒绝；快照、点击、输入不受影响。' },
-        { type: 'text', key: 'downloadDir', label: '下载目录', placeholder: '留空 = 浏览器默认下载目录', mono: true, help: '下载的文件落在这里；留空的话文件会跑到临时 profile 里，关掉浏览器就没了。' },
-        { type: 'number', key: 'waitTimeoutMs', label: '可交互等待上限', min: 500, max: 60000, step: 500, help: '以毫秒为单位。这是简化版等待（只看框算不算得出来），不是 Playwright 级的 actionability。' },
-        { type: 'number', key: 'consoleBuffer', label: '控制台缓冲条数', min: 0, max: 2000, step: 20 },
-        { type: 'number', key: 'networkBuffer', label: '网络缓冲条数', min: 0, max: 2000, step: 10 },
-        { type: 'info', label: '当前状态', text: running ? `运行中：pid ${launcher?.pid ?? '?'}，profile ${launcher?.profileDir ?? '?'}，快照代际 ${generation}` : '未启动（第一次调用工具时自动拉起）', mono: true },
-        { type: 'button', action: 'look-tab', label: '看当前标签页', style: 'ghost', help: '读当前标签页的地址与标题；浏览器没启动会顺手启动它。' },
-        { type: 'button', action: 'close-browser', label: '关闭浏览器', style: 'ghost', help: '整棵进程树杀掉，并删掉自建 profile（你配置的 profile 目录不删）。' },
+        { type: 'switch', key: 'enableEvaluate', label: '允许求值', group: 'safety', help: '关掉后 browser action=evaluate 与守卫都会拒绝；快照、点击、输入不受影响。' },
+        { type: 'text', key: 'downloadDir', label: '下载目录', placeholder: '留空 = 浏览器默认下载目录', mono: true, group: 'startup', help: '下载的文件落在这里；留空的话文件会跑到临时 profile 里，关掉浏览器就没了。' },
+        { type: 'number', key: 'waitTimeoutMs', label: '可交互等待上限', min: 500, max: 60000, step: 500, group: 'runtime', help: '以毫秒为单位。这是简化版等待（只看框算不算得出来），不是 Playwright 级的 actionability。' },
+        { type: 'number', key: 'consoleBuffer', label: '控制台缓冲条数', min: 0, max: 2000, step: 20, group: 'runtime' },
+        { type: 'number', key: 'networkBuffer', label: '网络缓冲条数', min: 0, max: 2000, step: 10, group: 'runtime' },
+        { type: 'info', label: '当前状态', text: running ? `运行中：pid ${launcher?.pid ?? '?'}，profile ${launcher?.profileDir ?? '?'}，快照代际 ${generation}` : '未启动（第一次调用工具时自动拉起）', mono: true, group: 'status' },
+        { type: 'button', action: 'look-tab', label: '看当前标签页', style: 'ghost', group: 'status', help: '读当前标签页的地址与标题；浏览器没启动会顺手启动它。' },
+        { type: 'button', action: 'close-browser', label: '关闭浏览器', style: 'ghost', group: 'status', help: '整棵进程树杀掉，并删掉自建 profile（你配置的 profile 目录不删）。' },
       ]
     }
 
@@ -1399,6 +1403,14 @@ export const browserPlugin: Plugin.Object = {
       title: '浏览器自动化',
       subtitle: 'DOM 级控制：无障碍快照 + ref 定位，动作按 ref 走，不靠截图比坐标',
       order: 34,
+      // 15 个字段全平铺会把设置页撑爆（0.6.62 起）：TUI 根页只画 4 行组导航，
+      // Enter 进子页；桌面端在插件中心详情页里按组头收拢。
+      groups: [
+        { id: 'startup', title: '启动与实例', description: '浏览器从哪启动、用什么 profile、下载到哪' },
+        { id: 'safety', title: '安全策略', description: '域名名单、页面弹窗与 JS 求值的放行口径' },
+        { id: 'runtime', title: '运行与缓冲', description: '快照长度、等待上限与控制台/网络缓冲' },
+        { id: 'status', title: '运行状态', description: '当前实例状态与两个即时动作' },
+      ],
       fields,
       values: (): Record<string, SettingsValue> => ({
         headless: config.headless,

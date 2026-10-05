@@ -55,20 +55,44 @@ const SECTIONS = [
   },
   { id: 'models', title: '模型', subtitle: '端点与 key', order: 10, builtin: true, custom: true, fields: [] },
   {
+    id: 'browser',
+    title: '浏览器自动化',
+    subtitle: '测试分组',
+    order: 34,
+    builtin: false,
+    custom: false,
+    groups: [
+      { id: 'startup', title: '启动与实例', description: '从哪启动' },
+      { id: 'safety', title: '安全策略', description: '放行口径' },
+    ],
+    fields: [
+      { type: 'switch', key: 'headless', label: '无窗口运行', group: 'startup', help: '不开窗' },
+      { type: 'text', key: 'profileDir', label: 'profile 目录', group: 'startup', help: '实例目录' },
+      { type: 'select', key: 'dialogPolicy', label: '对话框策略', group: 'safety', options: [{ value: 'a', label: '甲' }, { value: 'b', label: '乙' }], help: '弹窗怎么办' },
+      { type: 'button', label: '关闭浏览器', action: 'close-browser', group: 'safety', help: '杀进程' },
+    ],
+  },
+  {
     id: 'tui',
     title: '终端界面',
     subtitle: 'TUI 偏好',
     order: 35,
     builtin: true,
     custom: false,
-    fields: [{ type: 'switch', key: 'reasoningDefaultOpen', label: '思考块默认展开', help: '新会话默认摊开' }],
+    groups: [{ id: 'status-bar', title: '状态栏', description: '选底栏显示哪些信息' }],
+    fields: [
+      { type: 'switch', key: 'reasoningDefaultOpen', label: '思考块默认展开', help: '新会话默认摊开' },
+      { type: 'switch', key: 'statusBar.model', label: '显示模型', group: 'status-bar' },
+      { type: 'switch', key: 'statusBar.cost', label: '显示会话费用', group: 'status-bar' },
+    ],
   },
 ]
 
 let values = {
   general: { policy: 'a', toggle: false, name: '初始', count: 5, empty: '' },
   models: {},
-  tui: { reasoningDefaultOpen: false },
+  browser: { headless: false, profileDir: '', dialogPolicy: 'a' },
+  tui: { reasoningDefaultOpen: false, 'statusBar.model': true, 'statusBar.cost': true },
 }
 
 const saveCalls = []
@@ -189,7 +213,7 @@ console.log('TUI 设置页测试')
 // 1. 打开：走真命令链 /settings → openSettings
 let frame = await press('/settings')
 frame = await press(KEY.enter)
-check('整屏浮层出现', frame.includes('设置（3 个分区）'), JSON.stringify(frame.slice(-400)))
+check('整屏浮层出现', frame.includes('设置（4 个分区）'), JSON.stringify(frame.slice(-400)))
 check('卡片顶边带标题与副标题', frame.includes('╭─ 通用 · 测试分区') && frame.includes('╭─ 模型 · 端点与 key'))
 check('首个聚焦行是 select 且值右对齐', lineOf(frame, '权限模式', true)?.includes('‹ 甲 ›') === true, JSON.stringify(lineOf(frame, '权限模式', true)))
 check('switch 未开显示 [  ]', lineOf(frame, '开关项')?.includes('[  ]') === true)
@@ -269,15 +293,15 @@ check('动作回执进 notice 行', frame.includes('✓ 已是最新版'))
 frame = await press(KEY.down)
 check('custom 指引行可聚焦', lineOf(frame, '打开模型选择器', true) !== undefined)
 frame = await press(KEY.enter)
-check('指引行 Enter 关设置页开模型浮层', frame.includes('模型选择（') && !frame.includes('设置（3 个分区）'), JSON.stringify(frame.slice(-300)))
+check('指引行 Enter 关设置页开模型浮层', frame.includes('模型选择（') && !frame.includes('设置（4 个分区）'), JSON.stringify(frame.slice(-300)))
 
 // 11. Esc 关模型浮层，重开设置页后 Esc 关页
 await press(KEY.esc)
 await press('/settings')
 frame = await press(KEY.enter)
-check('重开设置页（值已就地保存）', frame.includes('设置（3 个分区）') && lineOf(frame, '权限模式')?.includes('‹ 甲 ›') === true, JSON.stringify(frame.slice(-600)))
+check('重开设置页（值已就地保存）', frame.includes('设置（4 个分区）') && lineOf(frame, '权限模式')?.includes('‹ 甲 ›') === true, JSON.stringify(frame.slice(-600)))
 frame = await press(KEY.esc)
-check('Esc 关闭设置页', !frame.includes('设置（3 个分区）'))
+check('Esc 关闭设置页', !frame.includes('设置（4 个分区）'))
 
 // 12. 鼠标：点 switch 行（slice 2 → 屏幕行 5）翻转；滚轮移动焦点
 await press('/settings')
@@ -286,21 +310,51 @@ frame = await press('\x1b[<0;10;5M')
 check('鼠标点 switch 行翻转', saveCalls.at(-1)?.join('|') === 'general|toggle|true', JSON.stringify(saveCalls.at(-1)))
 // 点击只激活不动焦点（焦点仍在 0）：滚轮先下移一档再上移回退，才能看到序号变化
 frame = await press('\x1b[<65;10;8M')
-check('滚轮下移焦点（2/9）', frame.includes('2/9'), JSON.stringify(lines(frame).find((line) => line.includes('设置（'))))
+check('滚轮下移焦点（2/12）', frame.includes('2/12'), JSON.stringify(lines(frame).find((line) => line.includes('设置（'))))
 frame = await press('\x1b[<64;10;8M')
-check('滚轮上移焦点（标题序号回退 1/9）', frame.includes('1/9'), JSON.stringify(lines(frame).find((line) => line.includes('设置（'))))
+check('滚轮上移焦点（标题序号回退 1/12）', frame.includes('1/12'), JSON.stringify(lines(frame).find((line) => line.includes('设置（'))))
 frame = await press('\x1b[<65;10;8M')
 frame = await press('\x1b[<65;10;8M')
-check('滚轮再下移两步（3/9）', frame.includes('3/9'), JSON.stringify(lines(frame).find((line) => line.includes('设置（'))))
+check('滚轮再下移两步（3/12）', frame.includes('3/12'), JSON.stringify(lines(frame).find((line) => line.includes('设置（'))))
 
-// 13. tui 分区：思考块默认展开开关（焦点从 3/9 一路 ↓ 到第 9 个可聚焦行）
-for (let i = 0; i < 6; i += 1) await press(KEY.down)
+// 13. tui 分区：思考块默认展开开关（焦点从 3/12 一路 ↓ 到第 11 个可聚焦行）
+for (let i = 0; i < 8; i += 1) await press(KEY.down)
 frame = await press(KEY.enter)
 check('tui 分区开关写入 reasoningDefaultOpen', saveCalls.at(-1)?.join('|') === 'tui|reasoningDefaultOpen|true', JSON.stringify(saveCalls.at(-1)))
 
+// 14. tui 状态栏子页：↓ 到组行（12/12），Enter 进子页，翻转 statusBar.cost
+frame = await press(KEY.down)
+check('tui 组行可聚焦（12/12）', frame.includes('12/12'), JSON.stringify(lines(frame).find((line) => line.includes('设置（'))))
+frame = await press(KEY.enter)
+check('状态栏子页面包屑', frame.includes('设置 › 终端界面 › 状态栏'), JSON.stringify(frame.slice(-500)))
+check('子页卡片标题换组名', frame.includes('╭─ 状态栏 · 终端界面') === true)
+check('子页只渲染组内字段（无思考块行）', !frame.includes('思考块默认展开'))
+check('Esc 提示换「返回」', frame.includes('Enter 切换/编辑 · Esc 返回'))
+frame = await press(KEY.down)
+frame = await press(KEY.enter)
+check('状态栏开关写入 statusBar.cost=false', saveCalls.at(-1)?.join('|') === 'tui|statusBar.cost|false', JSON.stringify(saveCalls.at(-1)))
+frame = await press(KEY.esc)
+check('子页 Esc 回根页', frame.includes('设置（4 个分区）') && lineOf(frame, '启动与实例')?.includes('›') === true, JSON.stringify(frame.slice(-400)))
+
+// 15. browser 子页导航：↓ 到 browser 启动组（从 1/12 ↓ 8 步到 9/12）
+for (let i = 0; i < 8; i += 1) await press(KEY.down)
+frame = await press(KEY.enter)
+check('browser 子页：组字段齐全', frame.includes('设置 › 浏览器自动化 › 启动与实例') && lineOf(frame, '无窗口运行') !== undefined && lineOf(frame, 'profile 目录') !== undefined, JSON.stringify(frame.slice(-600)))
+check('browser 组内字段照常渲染', lineOf(frame, '无窗口运行')?.includes('[  ]') === true)
+frame = await press(KEY.esc)
+
+// 16. 鼠标点组行进子页，再点子页里的 switch 行翻转
+// （组行在模型行 17：models 是 custom 分区占两行指引，屏幕行 = 17 + 3 = 20）
+frame = await press('\x1b[<0;10;20M')
+check('鼠标点组行进子页', frame.includes('设置 › 浏览器自动化 › 启动与实例'), JSON.stringify(frame.slice(-300)))
+frame = await press('\x1b[<0;10;4M')
+check('鼠标点子页 switch 行翻转', saveCalls.at(-1)?.join('|') === 'browser|headless|true', JSON.stringify(saveCalls.at(-1)))
+frame = await press(KEY.esc)
+check('鼠标进子页后 Esc 回根页', frame.includes('设置（4 个分区）'))
+
 await press(KEY.esc)
 frame = await press(KEY.down)
-check('关页后按键不再进设置路由', !frame.includes('设置（3 个分区）'))
+check('关页后按键不再进设置路由', !frame.includes('设置（4 个分区）'))
 
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 项失败`)
 process.exit(failures === 0 ? 0 : 1)

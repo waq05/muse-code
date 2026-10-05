@@ -1726,3 +1726,18 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **验证**：新 `scripts/settings-test.mjs` 29 项（真命令链 /settings → 整屏渲染/值区右对齐/（未设置）占位 → ←→ 循环即存 → switch 翻转 → text 编辑提交/Esc 取消 → number 非法弹红留编辑态 → 空串提交 → copyable 复制 → button 动作回执 → 指引行跳转模型浮层 → Esc 关页 → 鼠标点行翻转 → 滚轮焦点序号 → tui 分区写入）；`settings-sections-check.mjs` 补 tui 分区三断言（注册/声明式/notice 回执 + prefs.ui 深合并）；全量电池 15 个脚本退出码全绿（含 remote-host 140/140）；双包 typecheck 绿。**顺手修了批三的桌面 typecheck 遗留**：0.6.60 给 TranscriptEntry 加的 `subagent` 条目和 `durationMs` 没同步 desktop trace（trace-format 的 TraceStepKind/stepName + TraceInspector 的 KIND_LABEL/详情区补齐）——0.6.60 的 desktop typecheck 实际是红的，这版补绿。**测试物理约束**：同一 press 里发多个键共享旧闭包状态（ink 单 chunk 多事件、React 未重渲染），状态依赖的按键必须逐拍发——箭头+Enter 连发、'/settings\r' 连打都会拿到旧值。
 
 **实机走查**（假端点 + 隔离 HOME + wt）：设置页整屏 22 分区 129 行一帧成形（卡片描边、`‹ 自动编辑，命令仍要批准 ›` 强调芯片、`[✓]` 开关、配置文件路径右对齐、底部 help+按键条），Enter 循环权限模式当场切档（状态栏同步「完全访问」）——正是这一帧暴露了 save 契约的红 ✕ 老坑（修复后 battery 层面验证绿）。CUA 注入继续走 Set-Clipboard + Ctrl+Shift+V 配方；前台被游戏占用时 pressKey 会被 frontmost_pid_mismatch 安全拒绝，a11y 点标签唤不回前台，不强抢、以电池证据收尾。
+
+## 阶段 85：设置分层级子页 + 状态栏段可配置——对齐 dsh 的 groups/底栏设置（0.6.62）
+
+用户三条报障：① 设置项要分层级（如浏览器自动化点进去才见具体项）；② 底部状态栏挤成一团段段变 `xxx...`；③ 参考 dsh 让用户自选展示哪些信息。对照 dsh-TUI（channel-settings.ts 的 groups 机制 + StatusLine 的 18 开关底栏设置）逐条落法：
+
+**① 分层级子页（契约层，dsh 同款恰好一层）**：`SettingsField` 六个 variant 各加可选 `group?: string`，`SettingsSectionSpec/View` 加 `groups?: {id,title,description?}[]`——字段 key 与 values/save 链路**零改动**，组只是展示层收拢。TUI 行模型（settings-model.ts）加 `kind:'group'` 行：根页在「该组第一个字段原本的位置」就地画一行 `❯ 组标题 … ›`（组内字段收走，组行只出现一次）；`buildSettingsRows(sections, group?)` 传组参时整份行数组换成该组子页（卡片标题=组名、副标题=分区名），focusables/鼠标映射/滚动窗口全靠行驱动自动继承，几何零特判。App 加 `settingsGroup` 状态：Enter/点组行进子页（焦点草稿归零），**Esc 先退子页再关页**；面包屑 `设置 › 分区 › 组`、提示条 Esc 换「返回」。browser 分区 15 字段收成 4 组（启动与实例/安全策略/运行与缓冲/运行状态），根页从 15 行变 4 行。桌面端最小适配：GenericFields 相邻字段换组时插 `.settings-group-title` 组头（样式沿用 AppearanceRows 先例），不做子页导航——弹窗是滚动态，组头够用。
+
+**②③ 状态栏重做（段可配置 + 优先级丢段）**：病灶是 12 个段全靠 ink 默认 flexShrink=1，总宽一超就等比压缩、段段截断；且无分隔符无优先级无开关。修法三层：
+- **偏好**：`StatusBarPrefsView`（model/effort/cache/tokens/cost/mode/policy/ctx/cwd/session 十个必填 boolean）进 `UiPrefsView.statusBar`，contract 带 `DEFAULT_STATUS_BAR_PREFS` + `normalizeStatusBarPrefs`（prefs.ts 读档白名单 / 桌面 normalizeUiPrefs / TUI 首帧三处共用一份——prefs.ts 带 node 内置，渲染层 import 不得，所以落 contract）。出厂口径对齐 dsh 底栏设置：model/cache/cost/policy/ctx/cwd 开，effort/tokens/mode/session 关。
+- **设置入口**：tui 分区加「状态栏」子页（吃自己刚做的组机制，10 个 switch，key `statusBar.<段>` 点号键），values/save 走 prefs.ui 深合并，保存**返回 void 静默成功**（开关当场翻面、状态栏关页即见，一条条弹回执反而吵）；App 对 `tui/statusBar.*` 成功后就地 setState（同 reasoningDefaultOpen 特判模式），runtime setUiPrefs 的 notice 链补 statusBar 分支（原先会落进「已保存工作区名字」的兜底错文案）。
+- **渲染**：段装配成数据表（开关与数据双条件、缺一整段缺席），总宽超预算（columns−页边距）按 priority **整段丢弃**（tokens→session→cost→cache→mode→effort→ctx→chips→cwd），状态点与模型永不丢；全丢光仍放不下才让 cwd/model 收缩截断；段间 ` · ` 暗淡分隔（theme 的 SEP.dot 现在用上了）。对齐 dsh 的「段缺席优于段截断」——旧版一挤就段段 `xxx...` 的根源就是只有等比压缩这一层。
+
+**测试与验证**：新 `scripts/statusbar-test.mjs` 33 项（纯组件直渲染：出厂默认七段在四段缺席 · ` · ` 分隔 · 开关关掉整段缺席 · usage/cost/cwd 数据缺整段缺席 · 后台芯片 ◐ 短 id · 46 列窄终端按优先级丢 tok/session/cost 留状态点模型 · 30 列极窄只剩 ●+模型）；`settings-test.mjs` 扩到 47 项（mock 加 browser 四组 + tui 状态栏组：组行 `›` 渲染、Enter 进子页、面包屑、子页只渲染组内字段、Esc 回根页、鼠标点组行（屏幕行 = 模型行+3，**models 是 custom 占两行指引，行号数漏一行会让点击打在卡片顶边上**——探针逐行点击定位的）、子页内点 switch 翻转、statusBar.cost 写值）；`settings-sections-check.mjs` 补 browser 四组断言（挂真 browser 插件）+ 状态栏组 10 开关 + 静默保存 + prefs 深合并，「七字段」契约钉子跟到八字段（groups 入投影）。全量 18 电池：17 全绿；remote-e2e 72/74 的 2 项失败经 **stash 基线对照**证实预存在（与改动面无关）。双包 typecheck 绿，`msc --version` → 0.6.62。
+
+**教训**：① 长内容工具调用在高压下会产出幻觉内容（本期两次：一次 Edit 把真实断言行换成幻觉代码、一次 Write 全是编造的 API）——立即 git checkout 恢复 + 改用「小锚点编辑 + 立即 git diff 验证」节奏；工具结果与自己的记忆都不可信时，用最朴素的 bash 命令重建地面真相。② 测试断言「屏幕行 = 模型行 + 3」的换算必须从行模型推导，不能心算——custom 分区的指引行数、组行替换字段行的位置都会让心算错一位。

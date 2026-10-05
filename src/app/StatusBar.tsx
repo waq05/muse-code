@@ -6,10 +6,13 @@
  * `10k/1.0M 1.0%`。读数的分子是**最近一次请求的 prompt_tokens**（权威占用；usage
  * 累计是多轮计费和，会把滚出窗口的内容也算进去），≥80% 琥珀、≥95% 红。
  *
- * 第二行是状态字段行：左组 `● 状态 · 模型 · effort · 缓存% · tok↑↓ · ≈¥ · 模式 · 权限`，
- * 右组 `ctx% · cwd · 会话id · 后台芯片`（space-between；后台芯片可点，直达转录）。
- * ≈¥ 只在 DeepSeek 官方端点且模型有价目时出现（峰谷按北京时段分桶估算）。
- * 行内文本一律 `truncate-end`：行数恒定是选择器几何的组成部分。
+ * 第二行是状态字段行：段间 ` · ` 暗淡分隔（theme 的 SEP.dot），左右两组
+ * space-between；后台芯片可点，直达转录。段显隐走 prefs.ui.statusBar（设置 →
+ * 终端界面 → 状态栏，0.6.62），开关与数据双条件、缺一整段缺席；总宽超出预算时
+ * 按 priority **整段丢弃**（对齐 dsh 的「段缺席优于段截断」——旧版全靠 ink 的
+ * flex 等比压缩，宽终端一挤就段段变 `xxx...`），可丢的全丢光仍放不下才让
+ * cwd/model 收缩截断。≈¥ 只在 DeepSeek 官方端点且模型有价目时出现（峰谷按
+ * 北京时段分桶估算）。行数恒定是选择器几何的组成部分。
  *
  * @module dsc-tui/app/StatusBar
  */
@@ -17,10 +20,10 @@ import { useRef } from 'react'
 import { Box, Text, useStdout } from 'ink'
 import type { DOMElement } from 'ink'
 import type { JSX } from 'react'
-import type { RuntimeSnapshot, RuntimeSurfaces, StatusView } from '../contract.js'
+import type { RuntimeSnapshot, RuntimeSurfaces, StatusBarPrefsView, StatusView } from '../contract.js'
 import { useClickRegion, type RegisterClick } from './click.js'
 import { displayWidth } from './markdown.js'
-import { CONTEXT_SEGMENTS, GAP, PAD, PALETTE, STATUS_COLOR, TEXT } from './theme.js'
+import { CONTEXT_SEGMENTS, GAP, PAD, PALETTE, SEP, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 回合状态词：中文硬编码，本项目不做 i18n。 */
 const TURN_LABEL: Record<StatusView['turnState'], string> = {
@@ -55,6 +58,50 @@ const shortCwd = (cwd: string): string => {
   return parts.length <= 2 ? cwd : `…${parts.slice(-2).join('/')}`
 }
 
+/**
+ * 字段行的一个段（0.6.62 起可配置）：text 是静态短文本，chip 是可点的后台会话。
+ * priority 小者先丢，-1 = 永不丢（状态点与模型名是身份信息）。
+ */
+type FieldSegment =
+  | { kind: 'text'; id: string; text: string; tone: 'label' | 'secondary'; color?: string; priority: number }
+  | { kind: 'chip'; id: string; sessionPath: string; state: RuntimeSnapshot['sessionStates'][string]; priority: number }
+
+/** 段的显示宽度（chip 按渲染文本 `mark id` 算）。 */
+const segmentWidth = (segment: FieldSegment): number => {
+  if (segment.kind === 'chip') {
+    return displayWidth(`${BACKGROUND_DOT[segment.state].mark} ${shortId(segment.sessionPath)}`)
+  }
+  return displayWidth(segment.text)
+}
+
+/** 一组段的总宽：段宽之和 + 段间 ` · ` 分隔（组内只有一段时没有分隔）。 */
+const groupWidth = (segments: readonly FieldSegment[]): number =>
+  segments.reduce((sum, segment) => sum + segmentWidth(segment), 0) +
+  Math.max(0, segments.length - 1) * displayWidth(SEP.dot)
+
+/**
+ * 优先级丢段：左右组总宽（+ 最小 2 列组间缝）超出预算时，按 priority 从小到大
+ * **整段**丢弃重算，直到放得下或没有可丢段。返回筛选后的两份列表（原数组不动）。
+ */
+function fitSegments(
+  left: readonly FieldSegment[],
+  right: readonly FieldSegment[],
+  budget: number,
+): { left: FieldSegment[]; right: FieldSegment[] } {
+  let leftFitted = [...left]
+  let rightFitted = [...right]
+  const overflow = (): boolean => groupWidth(leftFitted) + groupWidth(rightFitted) + 2 > budget
+  while (overflow()) {
+    const droppable = [...leftFitted, ...rightFitted]
+      .filter((segment) => segment.priority >= 0)
+      .sort((a, b) => a.priority - b.priority)[0]
+    if (droppable === undefined) break
+    leftFitted = leftFitted.filter((segment) => segment !== droppable)
+    rightFitted = rightFitted.filter((segment) => segment !== droppable)
+  }
+  return { left: leftFitted, right: rightFitted }
+}
+
 /** token 数的人话格式（dsh StatusMetrics 同口径）：988 / 3.4k / 12k / 1.0M。 */
 const fmtTokens = (value: number): string => {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
@@ -82,7 +129,7 @@ function BackgroundChip({
     return true
   })
   return (
-    <Box ref={ref}>
+    <Box ref={ref} flexShrink={0}>
       <Text {...TEXT.label} color={dot.color} wrap="truncate-end">
         {dot.mark} {shortId(sessionPath)}
       </Text>
@@ -181,16 +228,20 @@ export function StatusBar({
   status,
   surfaces,
   sessionStates,
+  config,
   onOpenAgent,
   registerClick,
 }: {
   status: StatusView
   surfaces: RuntimeSurfaces
   sessionStates: RuntimeSnapshot['sessionStates']
+  /** 段显隐（prefs.ui.statusBar；设置 → 终端界面 → 状态栏 子页可改）。 */
+  config: StatusBarPrefsView
   /** 点后台芯片：打开那个会话的转录浮层（子代理查看入口之一）。 */
   onOpenAgent?: (sessionPath: string) => void
   registerClick?: RegisterClick
 }): JSX.Element {
+  const { stdout } = useStdout()
   const modeLabel =
     surfaces.mode.options.find((option) => option.id === surfaces.mode.current)?.label ??
     surfaces.mode.current
@@ -201,56 +252,103 @@ export function StatusBar({
   const cacheHit = usage?.cacheHitTokens ?? 0
   const cacheMiss = usage?.cacheMissTokens ?? 0
   const cacheTotal = cacheHit + cacheMiss
-  const background = Object.entries(sessionStates)
   const ctxPct =
     status.contextWindow > 0 ? `${((status.contextUsed / status.contextWindow) * 100).toFixed(1)}%` : '--%'
+
+  // 段装配：开关（config）与数据（usage/cost/cwd）双条件，缺一整段缺席。
+  // priority 只排「谁先被丢」，与左右组内的显示顺序无关。
+  const left: FieldSegment[] = [
+    {
+      kind: 'text',
+      id: 'turn',
+      text: `${status.turnState === 'idle' ? '●' : '◐'} ${TURN_LABEL[status.turnState]}`,
+      tone: 'label',
+      color: TURN_COLOR[status.turnState],
+      priority: -1,
+    },
+  ]
+  if (config.model) left.push({ kind: 'text', id: 'model', text: status.model, tone: 'secondary', priority: -1 })
+  if (config.effort)
+    left.push({ kind: 'text', id: 'effort', text: `effort ${status.effort ?? '-'}`, tone: 'secondary', priority: 5 })
+  if (config.cache && usage !== null && cacheTotal > 0)
+    left.push({ kind: 'text', id: 'cache', text: `缓存${Math.round((cacheHit / cacheTotal) * 100)}%`, tone: 'secondary', priority: 3 })
+  if (config.tokens && usage !== null)
+    left.push({
+      kind: 'text',
+      id: 'tokens',
+      text: `tok ${fmtTokens(usage.inputTokens)}↑ ${fmtTokens(usage.outputTokens)}↓`,
+      tone: 'secondary',
+      priority: 0,
+    })
+  // 费用估算：峰谷按北京时段分桶（core/pricing），估不出来就不显示这个字段
+  if (config.cost && status.cost !== undefined)
+    left.push({
+      kind: 'text',
+      id: 'cost',
+      text: `≈¥${status.cost.total.toFixed(2)} ${status.cost.peakNow ? '峰' : '谷'}`,
+      tone: 'secondary',
+      priority: 2,
+    })
+  if (config.mode) left.push({ kind: 'text', id: 'mode', text: `模式 ${modeLabel}`, tone: 'secondary', priority: 4 })
+  if (config.policy) left.push({ kind: 'text', id: 'policy', text: `权限 ${policyLabel}`, tone: 'secondary', priority: 7 })
+
+  const right: FieldSegment[] = []
+  if (config.ctx) right.push({ kind: 'text', id: 'ctx', text: `ctx ${ctxPct}`, tone: 'secondary', priority: 6 })
+  if (config.cwd && status.cwd !== undefined && status.cwd !== '')
+    right.push({ kind: 'text', id: 'cwd', text: shortCwd(status.cwd), tone: 'secondary', priority: 9 })
+  if (config.session)
+    right.push({
+      kind: 'text',
+      id: 'session',
+      text: status.sessionId === null ? '未打开会话' : `会话 ${shortId(status.sessionId)}`,
+      tone: 'secondary',
+      priority: 1,
+    })
+  for (const [sessionPath, state] of Object.entries(sessionStates)) {
+    right.push({ kind: 'chip', id: `chip:${sessionPath}`, sessionPath, state, priority: 8 })
+  }
+
+  // 宽度预算 = 终端列 − root 的页边距；丢段后仍溢出才让 cwd/model 收缩截断。
+  const budget = Math.max(10, (stdout?.columns ?? 100) - PAD.page * 2)
+  const fitted = fitSegments(left, right, budget)
+  const shrink = groupWidth(fitted.left) + groupWidth(fitted.right) + 2 > budget
+  const flexible = (segment: FieldSegment): boolean =>
+    shrink && segment.kind === 'text' && (segment.id === 'cwd' || segment.id === 'model')
+
+  /** 一组段 → 带 ` · ` 分隔的节点序列；分隔钉死不缩，可缩的只有 cwd/model。 */
+  const renderGroup = (segments: readonly FieldSegment[]): JSX.Element[] =>
+    segments.map((segment, index) => (
+      <Box key={segment.id} flexShrink={flexible(segment) ? 1 : 0}>
+        {index > 0 ? (
+          <Box flexShrink={0}>
+            <Text {...TEXT.secondary}>{SEP.dot}</Text>
+          </Box>
+        ) : null}
+        {segment.kind === 'chip' ? (
+          <BackgroundChip
+            sessionPath={segment.sessionPath}
+            state={segment.state}
+            onOpen={onOpenAgent === undefined ? () => {} : onOpenAgent}
+            registerClick={onOpenAgent === undefined ? undefined : registerClick}
+          />
+        ) : (
+          <Text
+            {...(segment.tone === 'label' ? TEXT.label : TEXT.secondary)}
+            color={segment.color}
+            wrap="truncate-end"
+          >
+            {segment.text}
+          </Text>
+        )}
+      </Box>
+    ))
+
   return (
     <Box flexDirection="column" gap={GAP.none}>
       <ContextBar status={status} />
       <Box justifyContent="space-between">
-        <Box gap={PAD.field}>
-          <Text {...TEXT.label} color={TURN_COLOR[status.turnState]} wrap="truncate-end">
-            {status.turnState === 'idle' ? '●' : '◐'} {TURN_LABEL[status.turnState]}
-          </Text>
-          <Text {...TEXT.secondary} wrap="truncate-end">{status.model}</Text>
-          <Text {...TEXT.secondary} wrap="truncate-end">effort {status.effort ?? '-'}</Text>
-          {usage !== null && cacheTotal > 0 ? (
-            <Text {...TEXT.secondary} wrap="truncate-end">
-              缓存{Math.round((cacheHit / cacheTotal) * 100)}%
-            </Text>
-          ) : null}
-          {usage !== null ? (
-            <Text {...TEXT.secondary} wrap="truncate-end">
-              tok {fmtTokens(usage.inputTokens)}↑ {fmtTokens(usage.outputTokens)}↓
-            </Text>
-          ) : null}
-          {/* 费用估算：峰谷按北京时段分桶（core/pricing），估不出来就不显示这个字段 */}
-          {status.cost !== undefined ? (
-            <Text {...TEXT.secondary} wrap="truncate-end">
-              ≈¥{status.cost.total.toFixed(2)} {status.cost.peakNow ? '峰' : '谷'}
-            </Text>
-          ) : null}
-          <Text {...TEXT.secondary} wrap="truncate-end">模式 {modeLabel}</Text>
-          <Text {...TEXT.secondary} wrap="truncate-end">权限 {policyLabel}</Text>
-        </Box>
-        <Box gap={PAD.field}>
-          <Text {...TEXT.secondary} wrap="truncate-end">ctx {ctxPct}</Text>
-          {status.cwd !== undefined && status.cwd !== '' ? (
-            <Text {...TEXT.secondary} wrap="truncate-end">{shortCwd(status.cwd)}</Text>
-          ) : null}
-          <Text {...TEXT.secondary} wrap="truncate-end">
-            {status.sessionId === null ? '未打开会话' : `会话 ${shortId(status.sessionId)}`}
-          </Text>
-          {background.map(([sessionPath, state]) => (
-            <BackgroundChip
-              key={sessionPath}
-              sessionPath={sessionPath}
-              state={state}
-              onOpen={onOpenAgent === undefined ? () => {} : onOpenAgent}
-              registerClick={onOpenAgent === undefined ? undefined : registerClick}
-            />
-          ))}
-        </Box>
+        <Box>{renderGroup(fitted.left)}</Box>
+        <Box>{renderGroup(fitted.right)}</Box>
       </Box>
     </Box>
   )

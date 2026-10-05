@@ -398,7 +398,9 @@ export const runtimePlugin: Plugin.Object = {
                               patch.turnCompleteSoundVariant !== undefined ||
                               patch.turnCompleteNotify !== undefined
                             ? '已保存任务完成提醒设置'
-                            : '已保存工作区名字'
+                            : patch.statusBar !== undefined
+                              ? '已保存状态栏显示设置'
+                              : '已保存工作区名字'
         return Promise.resolve({ ok: true, notice })
       },
 

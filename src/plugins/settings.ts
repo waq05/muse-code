@@ -24,6 +24,7 @@ import type {
   SettingsMutationOk,
   SettingsSectionView,
   SettingsValues,
+  StatusBarPrefsView,
 } from '../contract.js'
 import type { DscCoreConfig } from '../core/config.js'
 import { readConfig } from '../core/config.js'
@@ -303,11 +304,32 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     }
 
     // ── 内置分区：终端界面（TUI 自己的显示偏好；桌面端不消费这些键） ────────────
+    /** 状态栏段开关的声明表：key 即 prefs.ui.statusBar 的键（0.6.62）。 */
+    const STATUS_BAR_TOGGLE_META: { key: keyof StatusBarPrefsView; label: string; help?: string }[] = [
+      { key: 'model', label: '显示模型' },
+      { key: 'effort', label: '显示思考强度', help: 'default / low / high 这类思考档位' },
+      { key: 'cache', label: '显示缓存命中率' },
+      { key: 'tokens', label: '显示 Token 用量', help: '本会话累计的输入/输出 token' },
+      { key: 'cost', label: '显示会话费用', help: '仅 DeepSeek 官方端点有估算数据' },
+      { key: 'mode', label: '显示会话模式' },
+      { key: 'policy', label: '显示权限模式' },
+      { key: 'ctx', label: '显示上下文用量' },
+      { key: 'cwd', label: '显示工作目录' },
+      { key: 'session', label: '显示会话 ID' },
+    ]
+
     const tuiSection: SettingsSectionSpec = {
       id: 'tui',
       title: '终端界面',
       subtitle: '终端版（TUI）自己的显示偏好',
       order: 35,
+      groups: [
+        {
+          id: 'status-bar',
+          title: '状态栏',
+          description: '选择底部状态栏显示哪些信息，改动即时生效',
+        },
+      ],
       fields(): SettingsField[] {
         return [
           {
@@ -316,10 +338,24 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
             label: '思考块默认展开',
             help: '新会话的思考块默认摊开；会话内 Ctrl+T 随时切换',
           },
+          // 状态栏段开关用 statusBar.<段> 点号键：SettingsValues 本就是 Record，
+          // 组只是展示层收拢（TUI 子页 / 桌面组头），保存链路与顶层字段零差别。
+          ...STATUS_BAR_TOGGLE_META.map((meta) => ({
+            type: 'switch' as const,
+            key: `statusBar.${meta.key}`,
+            label: meta.label,
+            ...(meta.help === undefined ? {} : { help: meta.help }),
+            group: 'status-bar',
+          })),
         ]
       },
       values(): Values {
-        return { reasoningDefaultOpen: prefs.ui.reasoningDefaultOpen }
+        return {
+          reasoningDefaultOpen: prefs.ui.reasoningDefaultOpen,
+          ...Object.fromEntries(
+            STATUS_BAR_TOGGLE_META.map((meta) => [`statusBar.${meta.key}`, prefs.ui.statusBar[meta.key]]),
+          ),
+        }
       },
       async save(key, value) {
         if (key === 'reasoningDefaultOpen') {
@@ -329,6 +365,17 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           savePrefs({ ui: { ...prefs.ui, reasoningDefaultOpen: value === true } })
           return {
             notice: value === true ? '思考块已设为默认展开，新会话生效' : '思考块已设为默认折叠，新会话生效',
+          }
+        }
+        if (key.startsWith('statusBar.')) {
+          const segment = key.slice('statusBar.'.length)
+          if (STATUS_BAR_TOGGLE_META.some((meta) => meta.key === segment)) {
+            // 返回 void = 静默成功：开关在页面上当场翻面，状态栏在页后即时生效
+            // （App 就地改 state），一条条弹回执反而吵。
+            savePrefs({
+              ui: { ...prefs.ui, statusBar: { ...prefs.ui.statusBar, [segment]: value === true } },
+            })
+            return
           }
         }
         throw new Error(`未知的设置项 ${key}`)
@@ -410,6 +457,7 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
             title: section.title,
             subtitle: section.subtitle,
             order: section.order ?? 100,
+            groups: section.groups,
             builtin: section.inSettings === true || builtinIds.has(section.id),
             custom: section.custom === true,
             fields: section.fields(),

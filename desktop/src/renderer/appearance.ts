@@ -6,6 +6,7 @@
  * 设置画出颜色，等 prefs 到了再用真值覆盖一次。
  * 主题色还要额外报给主进程一次：原生窗口控件区不归样式表管，见 pushWindowChrome。
  */
+import { normalizeStatusBarPrefs } from '@dsc/runtime/contract.js'
 import type { ThemeMode, UiDensity, UiFontSize, UiPrefsView, UiProcessFold } from '@dsc/runtime/contract.js'
 import { dsc } from './bridge.js'
 import { normalizeSoundVariant } from './turn-notify.js'
@@ -146,6 +147,9 @@ export function normalizeUiPrefs(prefs: UiPrefsView): UiPrefsView {
     turnCompleteSound: prefs.turnCompleteSound !== false,
     turnCompleteSoundVariant: normalizeSoundVariant(prefs.turnCompleteSoundVariant),
     turnCompleteNotify: prefs.turnCompleteNotify !== false,
+    // TUI 状态栏段显隐（0.6.62）：桌面端自己不画状态栏，归一只为透传不丢键；
+    // 老宿主回读缺项时回落出厂默认（contract 同一份 normalize）。
+    statusBar: normalizeStatusBarPrefs(prefs.statusBar),
     // 分组展开态与会话手动顺序：老宿主回读里没有就给空表，别让侧栏读 undefined。
     sessionExpansion: prefs.sessionExpansion ?? {},
     sessionOrder: prefs.sessionOrder ?? {}

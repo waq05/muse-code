@@ -5,6 +5,7 @@
  * @module desktop/renderer/App
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { DEFAULT_STATUS_BAR_PREFS } from '@dsc/runtime/contract.js'
 import type { ApprovalRequestView, ModelChoiceView, PluginInfoView, RuntimeSnapshot, SessionSummary, TeammateView, TranscriptEntry, UiPrefsView } from '@dsc/runtime/contract.js'
 import { applyAppearance, loadCachedAppearance, normalizeUiPrefs, saveCachedAppearance } from './appearance.js'
 import { toastErr, toastOk } from './components/toast.js'
@@ -152,6 +153,8 @@ export function App(): JSX.Element {
     // 分组展开态与会话手动顺序：首帧空表，宿主回读到了再换成真值。
     sessionExpansion: {},
     sessionOrder: {},
+    // TUI 状态栏段显隐（0.6.62）：桌面端不消费，首帧给出厂默认，宿主回读到了再换。
+    statusBar: DEFAULT_STATUS_BAR_PREFS,
     // 任务完成提醒三项：出厂都开、1 号音色，宿主回读到了再换成真值。
     turnCompleteSound: true,
     turnCompleteSoundVariant: 1,

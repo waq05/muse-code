@@ -5,16 +5,28 @@
  * 行高恒为 1：卡片顶边/底边各占一行、字段占一行、分区之间空一行，help 文案
  * 不进卡片行（聚焦行的 help 走底部提示条，对齐 dsh 的布局）。
  *
+ * 子页（0.6.62，dsh 同款机制）：分区声明 groups、字段带 group id；根页在「该组
+ * 第一个字段原本的位置」就地画一行组导航（`标题 … ›`），组内其余字段收走；传
+ * group 参时整份行数组换成该组子页——只渲染组内字段，卡片标题换组名、副标题
+ * 换分区名。恰好一层，Esc 由 App 先退子页再关页。
+ *
  * @module dsc-tui/app/settings-model
  */
 import type { SettingsSectionView } from '../contract.js'
 
-/** 设置页的一行；field/hint 可聚焦，其余是结构行。 */
+/** 当前展开的子页（null/缺省 = 根页）。 */
+export interface SettingsGroupRef {
+  sectionId: string
+  groupId: string
+}
+
+/** 设置页的一行；field/hint/group 可聚焦，其余是结构行。 */
 export type SettingsRow =
   | { kind: 'card-top'; sectionId: string; title: string; subtitle?: string }
   | { kind: 'card-bottom' }
   | { kind: 'spacer' }
   | { kind: 'field'; sectionId: string; fieldIndex: number }
+  | { kind: 'group'; sectionId: string; groupId: string; title: string; description?: string }
   | { kind: 'hint'; sectionId: string; text: string; jump?: 'model-picker' | 'usage' }
 
 /**
@@ -33,7 +45,20 @@ const CUSTOM_HINTS: Record<string, { text: string; jump?: 'model-picker' | 'usag
 }
 
 /** 分区列表 → flat 行数组（分区之间空一行；字段行带 fieldIndex 供取值与保存）。 */
-export function buildSettingsRows(sections: SettingsSectionView[]): SettingsRow[] {
+export function buildSettingsRows(sections: SettingsSectionView[], group?: SettingsGroupRef | null): SettingsRow[] {
+  // 子页模式：只渲染该组字段，卡片标题 = 组名、副标题 = 分区名（dsh 同款）。
+  // 组没声明或分区没了就给空表（App 侧 Esc 兜底回根页，不会停在白屏）。
+  if (group != null) {
+    const section = sections.find((entry) => entry.id === group.sectionId)
+    const spec = section?.groups?.find((entry) => entry.id === group.groupId)
+    if (section === undefined || spec === undefined) return []
+    const rows: SettingsRow[] = [{ kind: 'card-top', sectionId: section.id, title: spec.title, subtitle: section.title }]
+    section.fields.forEach((field, fieldIndex) => {
+      if (field.group === group.groupId) rows.push({ kind: 'field', sectionId: section.id, fieldIndex })
+    })
+    rows.push({ kind: 'card-bottom' })
+    return rows
+  }
   const rows: SettingsRow[] = []
   sections.forEach((section, index) => {
     if (index > 0) rows.push({ kind: 'spacer' })
@@ -42,8 +67,18 @@ export function buildSettingsRows(sections: SettingsSectionView[]): SettingsRow[
     if (section.custom) {
       for (const hint of hints ?? []) rows.push({ kind: 'hint', sectionId: section.id, ...hint })
     } else {
+      // 带组的字段收进子页，组行在其第一个字段的位置就地出现（只出现一次）；
+      // 组没声明或组内没字段就不画导航行。
+      const emitted = new Set<string>()
       section.fields.forEach((field, fieldIndex) => {
-        rows.push({ kind: 'field', sectionId: section.id, fieldIndex })
+        const spec = field.group === undefined ? undefined : section.groups?.find((entry) => entry.id === field.group)
+        if (spec === undefined) {
+          rows.push({ kind: 'field', sectionId: section.id, fieldIndex })
+          return
+        }
+        if (emitted.has(spec.id)) return
+        emitted.add(spec.id)
+        rows.push({ kind: 'group', sectionId: section.id, groupId: spec.id, title: spec.title, description: spec.description })
       })
     }
     rows.push({ kind: 'card-bottom' })
@@ -51,8 +86,9 @@ export function buildSettingsRows(sections: SettingsSectionView[]): SettingsRow[
   return rows
 }
 
-/** 该行能不能拿到焦点（有 Enter/←→ 动作才给焦点：info 仅 copyable 可聚焦）。 */
+/** 该行能不能拿到焦点（有 Enter/←→ 动作才给焦点：info 仅 copyable 可聚焦，组行恒可聚焦）。 */
 export function isFocusableRow(row: SettingsRow, fields: SettingsSectionView['fields']): boolean {
+  if (row.kind === 'group') return true
   if (row.kind === 'field') {
     const field = fields[row.fieldIndex]
     return field !== undefined && (field.type !== 'info' || field.copyable === true)
@@ -65,6 +101,10 @@ export function focusableRows(rows: SettingsRow[], sections: SettingsSectionView
   const byId = new Map(sections.map((section) => [section.id, section]))
   const result: number[] = []
   rows.forEach((row, index) => {
+    if (row.kind === 'group') {
+      result.push(index)
+      return
+    }
     if (row.kind !== 'field' && row.kind !== 'hint') return
     const fields = byId.get(row.sectionId)?.fields ?? []
     if (isFocusableRow(row, fields)) result.push(index)

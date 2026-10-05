@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { DEFAULT_STATUS_BAR_PREFS, normalizeStatusBarPrefs } from '../contract.js'
 import type { ApprovalPolicy, ArchivedFilter, EffortLevel, MarketSource, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiPrefsView, UiProcessFold } from '../contract.js'
 import { isHttpUrl } from './remote/notify.js'
 import { dscPath } from './path-policy.js'
@@ -231,6 +232,8 @@ export function readPrefs(): DscPrefs {
       turnCompleteSound: true,
       turnCompleteSoundVariant: 1,
       turnCompleteNotify: true,
+      // TUI 状态栏段显隐：出厂口径在 contract 的 DEFAULT_STATUS_BAR_PREFS（0.6.62）。
+      statusBar: { ...DEFAULT_STATUS_BAR_PREFS },
     },
     remote: { enabled: false, port: REMOTE_PORT_DEFAULT, lan: false, push: false, notifyWebhook: '' },
   }
@@ -318,6 +321,8 @@ export function readPrefs(): DscPrefs {
       if (typeof ui.turnCompleteNotify === 'boolean') {
         prefs.ui.turnCompleteNotify = ui.turnCompleteNotify
       }
+      // 状态栏段显隐（0.6.62）：逐键白名单归一，缺键/坏键回落出厂默认。
+      prefs.ui.statusBar = normalizeStatusBarPrefs(ui.statusBar)
     }
     if (typeof doc.defaultPolicy === 'string' && POLICIES.includes(doc.defaultPolicy as ApprovalPolicy)) {
       prefs.defaultPolicy = doc.defaultPolicy as ApprovalPolicy

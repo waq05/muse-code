@@ -41,7 +41,7 @@ function check(label, condition, extra = '') {
 }
 
 /** 分区投影的字段是 IPC 契约，多一个字段就等于改了协议——这里按名单核对。 */
-const VIEW_KEYS = 'builtin,custom,fields,id,order,subtitle,title'
+const VIEW_KEYS = 'builtin,custom,fields,groups,id,order,subtitle,title'
 
 const kernel = await createKernel({ config: {}, resumeSessionPath: undefined })
 const pluginsBefore = kernel.ui.listPlugins()
@@ -91,6 +91,35 @@ check('写入思考块默认展开成功', tuiSaved.ok === true, JSON.stringify(
 check('成功回执走 notice（不进 error 字段）', tuiSaved.ok === true && tuiSaved.notice !== undefined, JSON.stringify(tuiSaved))
 check('值落到了 prefs.ui（ui 层深合并不动其它键）', kernel.settings.prefs().ui.reasoningDefaultOpen === true, String(kernel.settings.prefs().ui.reasoningDefaultOpen))
 
+console.log('\n── 浏览器自动化：字段收成分组（0.6.62 的子页导航数据面） ──')
+const { browserPlugin } = await import('../lib/plugins/browser.js')
+await kernel.plugin(browserPlugin, {})
+const browserSectionView = kernel.settings.sections().find((section) => section.id === 'browser')
+const browserGroups = browserSectionView?.groups ?? []
+check(
+  '浏览器分区声明了四组',
+  JSON.stringify(browserGroups.map((group) => group.id)) === JSON.stringify(['startup', 'safety', 'runtime', 'status']),
+  JSON.stringify(browserGroups),
+)
+check(
+  '每个带组字段的 group 都指向声明过的组',
+  (browserSectionView?.fields ?? []).every((field) => field.group === undefined || browserGroups.some((group) => group.id === field.group)),
+  JSON.stringify((browserSectionView?.fields ?? []).map((field) => field.group)),
+)
+check(
+  '分区里没有无组字段（15 个全收进了组）',
+  (browserSectionView?.fields ?? []).some((field) => field.group === undefined) === false,
+  JSON.stringify((browserSectionView?.fields ?? []).filter((field) => field.group === undefined).map((field) => field.label)),
+)
+
+console.log('\n── 终端界面：状态栏段开关（prefs.ui.statusBar） ──')
+const statusBarFields = (tuiSectionView?.fields ?? []).filter((field) => String(field.key).startsWith('statusBar.'))
+check('状态栏组声明在 tui 分区上', (tuiSectionView?.groups ?? []).some((group) => group.id === 'status-bar'), JSON.stringify(tuiSectionView?.groups))
+check('状态栏组有 10 个开关', statusBarFields.length === 10, JSON.stringify(statusBarFields.map((field) => field.key)))
+const barSaved = await kernel.settings.save('tui', 'statusBar.model', false)
+check('状态栏开关保存成功且静默（无 notice）', barSaved.ok === true && barSaved.notice === undefined, JSON.stringify(barSaved))
+check('prefs.ui.statusBar 深合并不动其它段', kernel.settings.prefs().ui.statusBar.model === false && kernel.settings.prefs().ui.reasoningDefaultOpen === true, JSON.stringify(kernel.settings.prefs().ui.statusBar))
+
 console.log('\n── 插件贡献的分区：不传第二参照旧不进设置页 ──')
 const offPlain = kernel.settings.registerSection({
   id: 'probe-plain',
@@ -114,7 +143,7 @@ check(
   `${pluginsBefore.length} → ${kernel.ui.listPlugins().length}`,
 )
 check(
-  '新注册的分区投影同样只有那七个字段',
+  '新注册的分区投影同样只有那八个字段',
   withProbes.every((section) => Object.keys(section).sort().join(',') === VIEW_KEYS),
   JSON.stringify(Object.keys(declared ?? {}).sort().join(',')),
 )

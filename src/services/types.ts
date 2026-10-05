@@ -62,6 +62,7 @@ import type {
   SessionForkResult,
   SessionSummary,
   SettingsField,
+  SettingsGroupView,
   SettingsMutation,
   SettingsMutationOk,
   SettingsSectionView,
@@ -752,6 +753,12 @@ export interface SettingsSectionSpec {
   id: string
   title: string
   subtitle?: string
+  /**
+   * 分区内的子页分组（dsh 同款）：字段声明 `group: <组id>` 归进组里，TUI 根页
+   * 只画一行「组标题 … ›」、Enter 进子页才见组内字段，桌面端渲染成组头。
+   * 字段 key 与 values/save 链路不因分组改变——组只是展示层的收拢。
+   */
+  groups?: SettingsGroupView[]
   /** 导航顺序，小者在前；内置：通用 0、模型 10、技能 20、关于 900。 */
   order?: number
   /**
