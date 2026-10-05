@@ -227,14 +227,14 @@ function allocateBarColumns(values: readonly number[], width: number): number[] 
 export function StatusBar({
   status,
   surfaces,
-  sessionStates,
+  subagents,
   config,
   onOpenAgent,
   registerClick,
 }: {
   status: StatusView
   surfaces: RuntimeSurfaces
-  sessionStates: RuntimeSnapshot['sessionStates']
+  subagents: RuntimeSnapshot['subagents']
   /** 段显隐（prefs.ui.statusBar；设置 → 终端界面 → 状态栏 子页可改）。 */
   config: StatusBarPrefsView
   /** 点后台芯片：打开那个会话的转录浮层（子代理查看入口之一）。 */
@@ -304,8 +304,16 @@ export function StatusBar({
       tone: 'secondary',
       priority: 1,
     })
-  for (const [sessionPath, state] of Object.entries(sessionStates)) {
-    right.push({ kind: 'chip', id: `chip:${sessionPath}`, sessionPath, state, priority: 8 })
+  // 子代理 chip 只收当前会话派出去、还在干活的队友（0.6.65 收紧作用域）：
+  // 收工即消失、切走会话即消失；跨会话动态只活在 /resume 行内状态点与 /agents。
+  for (const chip of subagents) {
+    right.push({
+      kind: 'chip',
+      id: `chip:${chip.sessionPath}`,
+      sessionPath: chip.sessionPath,
+      state: chip.state,
+      priority: 8,
+    })
   }
 
   // 宽度预算 = 终端列 − root 的页边距；丢段后仍溢出才让 cwd/model 收缩截断。

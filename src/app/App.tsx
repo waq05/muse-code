@@ -1661,7 +1661,7 @@ export function App({
         <StatusBar
           status={snapshot.status}
           surfaces={snapshot.surfaces}
-          sessionStates={snapshot.sessionStates}
+          subagents={snapshot.subagents ?? []}
           config={statusBarPrefs}
           onOpenAgent={(sessionPath) => openAgentTranscript(sessionPath, shortId(sessionPath))}
           registerClick={registerClick}

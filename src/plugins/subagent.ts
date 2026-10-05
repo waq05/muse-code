@@ -564,7 +564,10 @@ ${body}
           views.push({
             name: record.name,
             role: record.role,
-            state: live === undefined ? record.state : live.state,
+            // 本进程里它并不活着，却按名册残留报「working」就是撒谎（上次进程没
+            // settle 就退了）——僵尸读作 stopped；远程待命的双进程共享名册，
+            // 所以只修读路径、不做启动清写，避免误标宿主进程的活队友。
+            state: live !== undefined ? live.state : record.state === 'working' ? 'stopped' : record.state,
             task: record.task,
             file: live === undefined ? record.file : live.session.filePath,
             parent: record.parent,

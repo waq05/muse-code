@@ -1,6 +1,6 @@
 {
   "name": "muse-code-desktop",
-  "version": "0.6.64",
+  "version": "0.6.65",
   "private": true,
   "description": "Muse Code 桌面端：Electron 壳 + headless 宿主子进程（stdio JSONL 协议）",
   "main": "out/main/index.js",

@@ -1785,3 +1785,15 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **测试**：`settings-test.mjs` 导航全链路重排 18 段 60+ 断言（根页只列分区/进分区/字段操作原样保留/custom 指引跳转/鼠标三级链路/逐级退栈）；`composer-test.mjs` 加窗口段（首屏含 /fork /thinking、footer 计数 1–10/N、↓×11 后 /new 滚出 /plugins 入窗）；新 `boot-notices-test.mjs` 9 项（helper 直测 5 + 双内核启动 4，**取数走 kernel.transcript.getSnapshot()**——它就是 TUI 订阅的那份运行时快照，kernel.runtime 的 getSnapshot 形状不同）。全量 19 电池全绿，双包 typecheck 绿，`msc --version` → 0.6.64。
 
 **教训**：① 好几轮「用户说没实现」其实是「实现了但入口看不见」——补全面板截断把新命令藏住了，回复用户前先对着他的截图找证据（/permission 在 = 新版在跑）；② 写「宽度敏感」的行渲染，mark/空格/separator 的每一列都要进账本，MARK 是两列字符串这种事眼睛看不出来；③ 电池断言「不存在」前先想清楚什么合法内容会撞上（外框圆角就是 ╭─ 开头）。
+
+## 阶段 88：/resume 清污（层级本是现状）+ 状态栏子代理 chip 按会话作用域（0.6.65）
+
+用户两条反馈（带截图）：① 会话管理界面「也」改成层级式、只展示工作区；② 底部右下角的子代理只在对应会话展示、任务结束或切会话就不展示。运行逻辑对照 dsh-tui 与 codex。
+
+**① 真相反转：层级早已实现，看到的是测试污染**。用户截图本身就是两级导航的工作区层（「恢复会话 · 选工作区」），归档页也复用同套结构——「只展示工作区、选中才见会话」0.6.63 就落地了。病根：`~/.dsc/sessions/` 44 个工作区里 39 个是 `Temp\dsc-turn-changes-*`——turn-changes 电池直连 `Session.create` 却漏设隔离，每次跑都往真实 HOME 写会话；临时目录名像会话 ID、每行「3 条」像消息数，看起来就是「会话混进工作区列表」。清污走应用自己的 `purgeSession`（进 `.trash` 保留 30 天，不直接 rm）清掉 69 个会话、38 个空 slug 目录，剩 5 个真实工作区；断根 = 电池补 `HOME+USERPROFILE+DSC_HOME` 三件套（import lib 之前设，19 个电池里唯独它漏）。
+
+**② chip 作用域收紧**。病根三处（全有实锤）：transcript getSnapshot 组装的是**全局跨会话**状态面而 StatusBar 对每条无条件出 chip（T21 设计如此，现在按用户口径改）；`just-finished` 徽标要点开会话才熄；名册残留 `working` 的死队友永远报告干活。修法：contract 加 `snapshot.subagents`（只收**当前查看会话**、`state==='working'` 的队友），StatusBar 换吃这个字段——收工（settle）即消失、切会话即消失；当前会话自己那条不再进状态栏（与左侧「◐ 执行中」完全重复）。`sessionStates` 全局面**原样保留**：/resume 行内状态点（含 ✓ 已完成未读，对齐 dsh-tui 停驻行活字形）、/agents 浮层、桌面端都还吃它——跨会话动态的出口从状态栏挪到这两处，正是 dsh-tui 的分工（footer 任务 chip 按会话作用域、切会话即清，列表行常驻活字形）。名册僵尸只修**读路径**（live 没有且记录 working → 报 stopped），不做启动清写：远程待命时两进程共享名册，清写会误标宿主进程的活队友；连带修好 /agents 不再显示假干活、seedSubagents 不再给死队友种卡。
+
+**测试**：statusbar-test 换新字段（干活队友 ◐ / 待审批 ⚠ / 空列表无 chip / 窄终端 chip 先于 cwd 被丢）；resident-agents-test 加第 11、12 段——用真队友驱动 subagents 断言（派出开工 → chip 恰一枚；切走会话 → chip 空而全局面仍亮；收工 → chip 空名册落 idle；手写名册僵尸 → 读作 stopped 且不进 chip），40 PASS / 0 FAIL。全量 19 电池绿，双包 typecheck 绿。
+
+**教训**：① 「用户说没实现」先拿他的截图对质现状，再看是什么污染了观感——这轮层级没改一行，改的是数据源；② 直连 Session 类的电池必须三件套隔离，漏一个就往真实 HOME 写（且污染会静默累积到用户看得见的程度）；③ 测试里驱动真队友三道坎：subagent 插件 `defaultDisabled` 要预写 `~/.dsc/plugins.json` 条目树、SSE `tool_calls.arguments` 必须是 JSON **字符串**（传对象 → 工具卡 `argsText.replace` 炸、回合 reason=error）、假端点分派顺序先认标题请求再认任务标记。

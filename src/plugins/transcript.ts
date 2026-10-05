@@ -203,9 +203,17 @@ export const transcriptPlugin: Plugin.Object = {
           if (path !== currentPath) sessionStates[path] = state
         }
         const team = ctx.get('team')
+        const currentSessionId = ctx.session.current().meta.id
+        const subagents: RuntimeSnapshot['subagents'] = []
         if (team !== undefined) {
           for (const mate of team.list()) {
-            if (mate.state === 'working' && mate.file !== '') sessionStates[mate.file] = 'working'
+            if (mate.state !== 'working' || mate.file === '') continue
+            sessionStates[mate.file] = 'working'
+            // 状态栏 chip 只认当前查看会话派出去的队友（0.6.65）：收工即消失，
+            // 切到别的会话也不再亮别人的——别人的活看 /resume 行内状态点或 /agents。
+            if (mate.sessionId === currentSessionId) {
+              subagents.push({ sessionPath: mate.file, state: 'working' })
+            }
           }
         }
         // 费用估算：只有 DeepSeek 官方端点才计价（其它 provider / 未收录模型不显示
@@ -237,6 +245,7 @@ export const transcriptPlugin: Plugin.Object = {
           sessions: ctx.session.sessions,
           sessionsLoading: ctx.session.loading,
           sessionStates,
+          subagents,
         }
         snapshot = built
         return built

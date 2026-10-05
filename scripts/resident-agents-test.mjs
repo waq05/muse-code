@@ -17,6 +17,9 @@
  *   8. 后台收工的首回合也拿到自动标题（0.6.49：标题按回合归属生成）；
  *   9. 后台在跑的会话按路径 interrupt 可停（回合 aborted 收尾）；
  *  10. 归档后台在跑的会话：先收摊常驻 agent（回合取消、排队丢弃）再挪文件（0.6.49）。
+ *  11. 子代理 chip 作用域（0.6.65）：subagents 只收当前会话、干活中的队友，切会话/收工即空；
+ *      全局 sessionStates 原样保留（/resume 行内状态点继续亮）。
+ *  12. 名册僵尸（0.6.65）：上次进程没 settle 就退了的 working 记录，读路径改报 stopped。
  *
  * 全部跑在临时 HOME 上，真实 ~/.dsc 一个字节都不动。
  * 用法：pnpm run build && node scripts/resident-agents-test.mjs
@@ -32,6 +35,12 @@ process.env.HOME = home
 process.env.USERPROFILE = home
 mkdirSync(join(home, '.dsc'), { recursive: true })
 writeFileSync(join(home, '.dsc', 'config.yaml'), 'model:\n  name: test\n', 'utf8')
+// 第 11 节要派真队友：subagent 插件 defaultDisabled，预写条目树打开它
+writeFileSync(
+  join(home, '.dsc', 'plugins.json'),
+  `${JSON.stringify({ version: 1, entries: [{ file: 'subagent', disabled: false, config: {} }] }, null, 2)}\n`,
+  'utf8',
+)
 
 const { createKernel } = await import('../lib/host/kernel.js')
 const { Session, archivedRoot } = await import('../lib/core/session.js')
@@ -77,7 +86,7 @@ async function serve() {
     req.on('data', (chunk) => {
       body += chunk
     })
-    req.on('end', () => {
+    req.on('end', async () => {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       let payload = {}
       try {
@@ -102,7 +111,18 @@ async function serve() {
       )
       let reply
       if (isTitleRequest) reply = sseText('常驻探针的后台会话标题')
-      else if (hasToolResult) reply = sseText('A 的结论：工具返回了 slow ok')
+      else if (lastText.includes('慢队友任务')) {
+        await sleep(700) // 队友的回合：拖出「正在干活」的观察窗，让 chip 断言有东西可看
+        reply = sseText('慢队友干完了')
+      } else if (lastText.includes('派队友')) {
+        // arguments 必须是 JSON 字符串（真实 SSE 形状），对象会让工具卡的 argsText 炸
+        reply = sseToolCall('ts1', 'subagent', JSON.stringify({
+          action: 'spawn',
+          role: 'explorer',
+          task: '慢队友任务：慢慢查一下 package.json 里的名字叫什么，一句话交差',
+          background: true,
+        }))
+      } else if (hasToolResult) reply = sseText('A 的结论：工具返回了 slow ok')
       else if (lastText.includes('开跑')) {
         reply = sseToolCall('t1', 'slow_thing', '{}')
       } else if (lastText.includes('B 的问题')) reply = sseText('B 的回答')
@@ -302,6 +322,77 @@ console.log('1. A 回合跑动中切到 B')
   // 重试：已归档的跳过不算失败（半途而废的批量归档重试不再卡死）
   const retryResult = await ctx.session.archive([sessionA.filePath])
   check('重试归档已归档会话：跳过且 ok', retryResult.ok === true, JSON.stringify(retryResult))
+
+  // 11. 状态栏子代理 chip 只认当前会话、还在干活的队友（0.6.65 收紧作用域）
+  console.log('11. 子代理 chip 作用域：当前会话 + 干活中')
+  {
+    const { ensureBuiltinRoles } = await import('../lib/core/agent-roles.js')
+    ensureBuiltinRoles()
+    const parent = ctx.session.current() // 第 10 节切走后的新会话 C
+    ctx.agent.followup('派队友')
+    let mate
+    check(
+      '队友派出并开工',
+      await until(() => {
+        mate = ctx.get('team')?.list().find((m) => m.state === 'working' && m.sessionId === parent.meta.id)
+        return mate !== undefined
+      }),
+      JSON.stringify(ctx.get('team')?.list()),
+    )
+    const midSnapshot = ctx.transcript.getSnapshot()
+    check(
+      '干活中的队友进 subagents（状态栏 chip 的数据源）',
+      midSnapshot.subagents.length === 1
+        && midSnapshot.subagents[0]?.sessionPath === mate.file
+        && midSnapshot.subagents[0]?.state === 'working',
+      JSON.stringify(midSnapshot.subagents),
+    )
+    check('全局 sessionStates 仍亮队友的点（/resume 行内状态点用）', midSnapshot.sessionStates[mate.file] === 'working')
+    // 切到别的会话：chip 立刻消失（所有权过滤），全局面不跟着清（列表状态点还亮）
+    await ctx.session.open(undefined)
+    check('切走会话后 subagents 清空', ctx.transcript.getSnapshot().subagents.length === 0, JSON.stringify(ctx.transcript.getSnapshot().subagents))
+    check('切走后全局 sessionStates 仍保留队友状态', ctx.transcript.getSnapshot().sessionStates[mate.file] === 'working')
+    await ctx.session.open(parent.filePath)
+    check(
+      '队友收工后 subagents 清空、名册落 idle',
+      await until(
+        () =>
+          ctx.transcript.getSnapshot().subagents.length === 0
+          && ctx.get('team').list().find((m) => m.sessionId === parent.meta.id)?.state === 'idle',
+      ),
+      JSON.stringify({ sub: ctx.transcript.getSnapshot().subagents, team: ctx.get('team').list() }),
+    )
+  }
+
+  // 12. 名册僵尸：上次进程没 settle 就退了的 working 记录，读路径改报 stopped（0.6.65）
+  console.log('12. 名册僵尸读作 stopped')
+  {
+    const rosterDir = join(home, '.dsc', 'team')
+    mkdirSync(rosterDir, { recursive: true })
+    writeFileSync(
+      join(rosterDir, 'roster.json'),
+      `${JSON.stringify({
+        teammates: [
+          {
+            name: 'zombie',
+            role: 'explorer',
+            state: 'working',
+            task: '旧进程没 settle 就退了留下的记录',
+            file: join(home, '.dsc', 'teammates', 'ghost.jsonl'),
+            cwd: '/w',
+            parent: 'lead',
+            depth: 1,
+            rounds: 1,
+            startedAt: Date.now(),
+          },
+        ],
+      }, null, 2)}\n`,
+      'utf8',
+    )
+    const zombie = ctx.get('team').list().find((m) => m.name === 'zombie')
+    check('僵尸记录读作 stopped（不再永远「干活」）', zombie !== undefined && zombie.state === 'stopped', JSON.stringify(zombie))
+    check('僵尸不进状态栏 chip 列表', ctx.transcript.getSnapshot().subagents.every((chip) => chip.sessionPath !== zombie?.file))
+  }
 
   // 收尾：B 的 agent 是当前查看的，跟着会话留到退出；显式退出收摊
   offTool()

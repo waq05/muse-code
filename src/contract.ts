@@ -1148,6 +1148,12 @@ export interface RuntimeSnapshot {
    * 含「已完成未读」徽标）与正干着活的队友会话；不在场/收工已看的会话不出现。
    */
   sessionStates: Record<string, SessionRunState>
+  /**
+   * 状态栏右下角的子代理 chip（0.6.65）：只收当前查看会话、还在干活的队友。
+   * 别的会话的动态不进状态栏——出口是 /resume 行内状态点（sessionStates）与
+   * /agents 浮层；任务收工（settle）或切走会话即从这里消失。
+   */
+  subagents: Array<{ sessionPath: string; state: SessionRunState }>
 }
 
 /**

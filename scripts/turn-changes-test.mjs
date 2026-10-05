@@ -8,11 +8,21 @@
  *
  * @module dsc/scripts/turn-changes-test
  */
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Session } from '../lib/core/session.js'
-import { readTool, writeTool, editTool } from '../lib/core/tools/fs-tools.js'
+
+// 隔离三件套（必须在 import lib 之前）：Session 落盘走 HOME 推导的 sessionsRoot，
+// 不隔离会把电池会话写进真实 ~/.dsc——0.6.64 之前一直如此，/resume 的工作区列表
+// 被一堆 dsc-turn-changes-* 临时目录工作区刷屏。
+const home = mkdtempSync(join(tmpdir(), 'dsc-home-'))
+process.env.HOME = home
+process.env.USERPROFILE = home
+process.env.DSC_HOME = join(home, '.dsc')
+mkdirSync(process.env.DSC_HOME, { recursive: true })
+
+const { Session } = await import('../lib/core/session.js')
+const { readTool, writeTool, editTool } = await import('../lib/core/tools/fs-tools.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {

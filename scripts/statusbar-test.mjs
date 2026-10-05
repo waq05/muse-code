@@ -4,8 +4,9 @@
  *
  * 覆盖：默认配置只画出厂开的段（model/cache/cost/policy/ctx/cwd）· 关掉的段
  * 整段缺席 · ` · ` 分隔 · 数据缺席整段缺席（usage=null / cost/cwd undefined）·
- * 后台芯片渲染 · 窄终端按优先级整段丢弃（tokens→session→cost→cache→mode→
- * effort→ctx→chips→cwd）且状态点与模型永不丢。
+ * 子代理芯片渲染（0.6.65 起只吃 subagents——当前会话、还在干活的队友）·
+ * 窄终端按优先级整段丢弃（tokens→session→cost→cache→mode→effort→ctx→
+ * chips→cwd）且状态点与模型永不丢。
  *
  * 运行：node scripts/statusbar-test.mjs（先 pnpm build）
  *
@@ -61,12 +62,12 @@ const clean = (frame) => frame.replace(/\x1b\[[0-9;?<]*[A-Za-z]/g, '')
 
 let instance = null
 /** 渲一帧 StatusBar：columns 决定丢段预算，config 决定段显隐。 */
-const renderBar = async ({ columns = 110, config = DEFAULT_STATUS_BAR_PREFS, status = STATUS, sessionStates = {} }) => {
+const renderBar = async ({ columns = 110, config = DEFAULT_STATUS_BAR_PREFS, status = STATUS, subagents = [] }) => {
   if (instance !== null) instance.unmount()
   output = ''
   stdout.columns = columns
   instance = render(
-    React.createElement(StatusBar, { status, surfaces: SURFACES, sessionStates, config }),
+    React.createElement(StatusBar, { status, surfaces: SURFACES, subagents, config }),
     // useStdout 读的就是这份 stdout 的 columns——必须传外面这份（列宽在这儿改）
     { stdout, exitOnCtrlC: false, patchConsole: false },
   )
@@ -130,15 +131,25 @@ check('cost 缺时费用段缺席', !frame.includes('≈¥'))
 check('cwd 缺时目录段缺席', !frame.includes('dsc'))
 check('模型与状态点仍在', frame.includes('● 空闲') && frame.includes('deepseek-v3.2'))
 
-// 5. 后台芯片渲染（可点段不受 config 管）
-frame = await renderBar({ columns: 110, sessionStates: { '/w/7b5cc3a9-1111.jsonl': 'working' } })
-check('后台芯片渲染（◐ + 短 id）', frame.includes('◐ 7b5cc3a9'))
+// 5. 子代理芯片（0.6.65 起 subagents 只收当前会话还在干活的队友）：
+// 收工/切会话的语义由快照组装保证（transcript.ts），组件层面只认这份列表
+frame = await renderBar({ columns: 110, subagents: [{ sessionPath: '/w/7b5cc3a9-1111.jsonl', state: 'working' }] })
+check('干活队友芯片渲染（◐ + 短 id）', frame.includes('◐ 7b5cc3a9'))
+frame = await renderBar({ columns: 110, subagents: [{ sessionPath: '/w/7b5cc3a9-1111.jsonl', state: 'awaiting-approval' }] })
+check('待审批队友芯片渲染（⚠）', frame.includes('⚠ 7b5cc3a9'))
+frame = await renderBar({ columns: 110, subagents: [] })
+check('没有干活队友就没有芯片（收工/切会话即消失）', !frame.includes('◐') && !frame.includes('7b5cc3a9'), JSON.stringify(frame.slice(0, 200)))
 
 // 6. 窄终端丢段：tokens（优先级 0）先丢，session 次之；状态点与模型永不丢
-frame = await renderBar({ columns: 46, config: { ...DEFAULT_STATUS_BAR_PREFS, effort: true, tokens: true, mode: true, session: true } })
+frame = await renderBar({
+  columns: 46,
+  config: { ...DEFAULT_STATUS_BAR_PREFS, effort: true, tokens: true, mode: true, session: true },
+  subagents: [{ sessionPath: '/w/7b5cc3a9-1111.jsonl', state: 'working' }],
+})
 check('窄终端 tokens 整段先丢', !frame.includes('tok 9.5k'), JSON.stringify(frame.slice(0, 300)))
 check('窄终端 session 段被丢', !frame.includes('会话 ab12cd34'))
 check('窄终端费用被丢', !frame.includes('≈¥0.04'))
+check('窄终端队友芯片被丢（priority 8，先于 cwd）', !frame.includes('7b5cc3a9'))
 check('窄终端状态点永不丢', frame.includes('● 空闲'))
 check('窄终端模型永不丢', frame.includes('deepseek-v3.2'))
 check('窄终端没有逐段省略号垃圾', !frame.includes('……'))
