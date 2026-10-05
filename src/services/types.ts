@@ -451,6 +451,21 @@ export interface CommandContext {
    * 忽略该回调（命令本身仍注册，/help 里可见）。
    */
   openSettings?(): void
+  /**
+   * 打开模式选择浮层（/preset 无参数时）。可选：暂未接的端忽略——裸命令保持
+   * 「notice 当前模式 + 可选清单」的旧行为（桌面端有自己的设置 → 模式页）。
+   */
+  openPresets?(): void
+  /**
+   * 打开技能选择浮层（/skills 无参数时）。可选：暂未接的端忽略——裸命令保持
+   * notice 清单的旧行为（桌面端有自己的技能中心页）。
+   */
+  openSkills?(): void
+  /**
+   * 切换思考块的展开显示（/thinking；缺省参数 = 翻转，传值为显式设置）。
+   * 可选：会话内没有思考块可折的端忽略（此时命令报「当前界面不支持」）。
+   */
+  toggleThinking?(visible?: boolean): void
   notice(text: string): void
 }
 

@@ -16,7 +16,7 @@ export const BUILT_IN_COMMANDS: CommandSpec[] = [
   // T44：duringTask = 回合跑着的时候还能不能用。new/resume 会打断挂着审批的回合、
   // compact 会和进行中的落库交错，运行中一律挡下；其余随时可用。
   { name: 'new', args: '', description: '新建会话', duringTask: 'deny' },
-  { name: 'resume', args: '', description: '恢复历史会话', duringTask: 'deny' },
+  { name: 'resume', args: '', description: '恢复历史会话（先选工作区再选会话）', duringTask: 'deny' },
   { name: 'agents', args: '', description: '查看子代理与后台会话（转录只读）' },
   { name: 'compact', args: '', description: '压缩上下文', duringTask: 'deny' },
   {
@@ -25,7 +25,12 @@ export const BUILT_IN_COMMANDS: CommandSpec[] = [
     description: '切换模型，下一次请求生效（无参数打开选择器）',
   },
   { name: 'policy', args: '[readonly|auto-edit|full-access|ai-review]', description: '查看或切换权限模式' },
+  { name: 'permission', args: '[readonly|auto-edit|full-access|ai-review]', description: '查看或切换权限模式（/policy 别名）' },
   { name: 'effort', args: '[default|off|low|high|max]', description: '查看或切换思考强度' },
+  { name: 'thinking', args: '[on|off]', description: '切换思考块展开显示（无参数 = 翻转，会话内生效）' },
+  { name: 'fork', args: '', description: '分叉当前会话为可恢复的副本（当前会话不变）', duringTask: 'deny' },
+  { name: 'plugins', args: '', description: '查看已挂载插件清单（启停与详情在桌面端插件中心）' },
+  { name: 'update', args: '', description: '检查有没有新版（只查不装）', duringTask: 'deny' },
   { name: 'status', args: '', description: '查看上下文占用与压缩余量' },
   { name: 'usage', args: '', description: '查看累计用量统计（含缓存命中率）' },
   { name: 'diff', args: '[文件]', description: '查看工作区未提交改动的 diff' },

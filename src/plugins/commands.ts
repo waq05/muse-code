@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type {
   CommandHandler,
+  CommandInvocation,
   CommandService,
   CommandSpec,
 } from '../services/types.js'
@@ -21,6 +22,7 @@ import type { DscRuntime, UsageStatsView } from '../contract.js'
 import { collectWorkingTree, reviewMessage } from '../core/git-info.js'
 import { estimateTokens } from '../core/compact.js'
 import { exportSessionMarkdown } from '../core/session-export.js'
+import { checkForUpdate } from '../core/update-check.js'
 import { errText } from '../core/err-text.js'
 import {
   addExtraSpec,
@@ -41,7 +43,10 @@ export const commandsPlugin: Plugin.Object = {
 
     const service: CommandService = {
       register(spec, handler) {
-        registry.set(spec.name, { spec, handler })
+        // duringTask 以 BUILT_IN 表为准（spec 单一真源）：内置名注册时把声明合并进来，
+        // 否则派发闸读到的注册 spec 缺 duringTask，回合中的 deny 全部落空。
+        const builtin = BUILT_IN_COMMANDS.find((entry) => entry.name === spec.name)
+        registry.set(spec.name, { spec: builtin ?? spec, handler })
         if (!BUILT_IN_COMMANDS.some((entry) => entry.name === spec.name)) addExtraSpec(spec)
         return () => {
           if (registry.get(spec.name)?.handler === handler) {
@@ -258,36 +263,47 @@ export const commandsPlugin: Plugin.Object = {
         }
       },
     )
+    // 权限模式的查看/切换：/policy 是本体，/permission 是 dsh 同名命令的别名
+    // （同一份 handler，前缀匹配与回执完全一致）。
+    const switchPolicy: CommandHandler = ({ args, runtime, ui }) => {
+      const surface = runtime.getSnapshot().surfaces.policy
+      const query = args[0]?.toLowerCase() ?? ''
+      if (query === '') {
+        ui.notice(
+          [
+            `当前权限模式：${surface.current}`,
+            ...surface.options.map((option) => `· ${option.id} — ${option.label}：${option.hint}`),
+            '用法：/policy <档位>（支持前缀匹配，如 /policy full）',
+          ].join('\n'),
+        )
+        return
+      }
+      const matches = surface.options.filter((option) => option.id.startsWith(query))
+      if (matches.length !== 1) {
+        ui.notice(
+          matches.length === 0
+            ? `未知权限档位：${args[0]}（可选：${surface.options.map((option) => option.id).join(' / ')}）`
+            : `「${args[0]}」匹配到 ${matches.length} 个档位，请写全`,
+        )
+        return
+      }
+      runtime.setPolicy(matches[0].id)
+    }
     service.register(
       {
         name: 'policy',
         args: '[readonly|auto-edit|full-access|ai-review]',
         description: '查看或切换权限模式',
       },
-      ({ args, runtime, ui }) => {
-        const surface = runtime.getSnapshot().surfaces.policy
-        const query = args[0]?.toLowerCase() ?? ''
-        if (query === '') {
-          ui.notice(
-            [
-              `当前权限模式：${surface.current}`,
-              ...surface.options.map((option) => `· ${option.id} — ${option.label}：${option.hint}`),
-              '用法：/policy <档位>（支持前缀匹配，如 /policy full）',
-            ].join('\n'),
-          )
-          return
-        }
-        const matches = surface.options.filter((option) => option.id.startsWith(query))
-        if (matches.length !== 1) {
-          ui.notice(
-            matches.length === 0
-              ? `未知权限档位：${args[0]}（可选：${surface.options.map((option) => option.id).join(' / ')}）`
-              : `「${args[0]}」匹配到 ${matches.length} 个档位，请写全`,
-          )
-          return
-        }
-        runtime.setPolicy(matches[0].id)
+      switchPolicy,
+    )
+    service.register(
+      {
+        name: 'permission',
+        args: '[readonly|auto-edit|full-access|ai-review]',
+        description: '查看或切换权限模式（/policy 别名）',
       },
+      switchPolicy,
     )
     service.register(
       { name: 'effort', args: '[default|off|low|high|max]', description: '查看或切换思考强度' },
@@ -320,6 +336,93 @@ export const commandsPlugin: Plugin.Object = {
           return
         }
         void runtime.setEffort(matches[0].id)
+      },
+    )
+    service.register(
+      // dsh 语义：整本分叉成「可恢复的副本」，现场会话与跑动回合不动（kimi-code
+      // 的 fork）。按分叉点选副本走 /resume 里的 Ctrl+F，这里只做整本。
+      { name: 'fork', args: '', description: '分叉当前会话为可恢复的副本（当前会话不变）' },
+      ({ runtime, ui }) => {
+        const path = runtime.getSnapshot().status.sessionId
+        if (path === null) {
+          ui.notice('当前还没有可分叉的会话（先聊一句再分叉）。')
+          return
+        }
+        void runtime
+          .listUserMessages(path)
+          .then((messages) => runtime.forkSession(path, messages.length))
+          .then((result) => {
+            if (!result.ok) {
+              ui.notice(`/fork 失败：${result.error}`)
+              return
+            }
+            const shortId = (result.path.split(/[\\/]/).pop() ?? result.path)
+              .replace(/\.jsonl$/, '')
+              .slice(0, 8)
+            ui.notice(`已分叉出副本 ${shortId}，当前会话不变；/resume 里可以打开它`)
+          })
+          .catch((cause: unknown) => ui.notice(`/fork 失败：${errText(cause)}`))
+      },
+    )
+    service.register(
+      // 思考块显示切换：与 Ctrl+T 同一状态（会话内生效，不持久化——持久化的
+      // 默认值在设置「新会话的思考块默认摊开」）。没有思考块的端忽略回调。
+      { name: 'thinking', args: '[on|off]', description: '切换思考块展开显示（无参数 = 翻转，会话内生效）' },
+      ({ args, ui }) => {
+        if (ui.toggleThinking === undefined) {
+          ui.notice('当前界面不支持会话内切换思考块（桌面端在设置里改「新会话的思考块默认摊开」）。')
+          return
+        }
+        const query = args[0]?.toLowerCase() ?? ''
+        if (query === '') {
+          ui.toggleThinking()
+          return
+        }
+        if (query !== 'on' && query !== 'off') {
+          ui.notice('用法：/thinking [on|off]（无参数 = 翻转当前显示）')
+          return
+        }
+        ui.toggleThinking(query === 'on')
+      },
+    )
+    service.register(
+      { name: 'plugins', args: '', description: '查看已挂载插件清单（启停与详情在桌面端插件中心）' },
+      ({ runtime, ui }) => {
+        const plugins = runtime.listPlugins()
+        if (plugins.length === 0) {
+          ui.notice('没有已挂载的插件（内核自带服务不在此列）。')
+          return
+        }
+        const lines = plugins.map((plugin) => {
+          const flags = [plugin.source === 'builtin' ? '内核' : '外部', plugin.enabled ? undefined : '已停用']
+            .filter((flag) => flag !== undefined)
+            .join(' · ')
+          const problem = plugin.problem !== undefined ? `（注意：${plugin.problem}）` : ''
+          return `· ${plugin.name}（${flags}）— ${plugin.description}${problem}`
+        })
+        ui.notice(
+          [
+            `已挂载插件（${plugins.length} 个）`,
+            ...lines,
+            '启停与配置在桌面端「插件」页；外部插件放进 ~/.dsc/plugins 会自动加载。',
+          ].join('\n'),
+        )
+      },
+    )
+    service.register(
+      // 只查不装（0.6.50 起的边界）：结果与设置「关于」的检查按钮同一份回执口径，
+      // 终端打不开浏览器，新版时把发布页 URL 一并给出。
+      { name: 'update', args: '', description: '检查有没有新版（只查不装）' },
+      ({ ui }) => {
+        void checkForUpdate()
+          .then((result) => {
+            if (!result.ok) {
+              ui.notice(result.error)
+              return
+            }
+            ui.notice(result.data?.url !== undefined ? `${result.notice}\n发布页：${result.data.url}` : result.notice)
+          })
+          .catch((cause: unknown) => ui.notice(`/update 失败：${errText(cause)}`))
       },
     )
     service.register(

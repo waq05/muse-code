@@ -65,11 +65,12 @@ function parseRelease(body: unknown): ReleaseInfo | null {
  *   - 已是最新 → `{ ok: true, notice }`；
  *   - 有新版 → `{ ok: true, notice, data: { kind: 'url', url } }`，桌面端据此打开发布页。
  *
- * @param sourceUrl - 覆盖 {@link UPDATE_CHECK_URL}（探针/测试缝；缺省用常量，行为不变）。
+ * @param sourceUrl - 覆盖 {@link UPDATE_CHECK_URL}（探针/测试缝；缺省先看
+ * `DSC_UPDATE_CHECK_URL` 环境变量（命令电池的假更新源走它），再回落常量）。
  */
 export async function checkForUpdate(
   current: string = DSC_VERSION,
-  sourceUrl: string = UPDATE_CHECK_URL,
+  sourceUrl: string = process.env.DSC_UPDATE_CHECK_URL ?? UPDATE_CHECK_URL,
 ): Promise<{ ok: true; notice: string; data?: { kind: 'url'; url: string } } | { ok: false; error: string }> {
   if (sourceUrl === '') {
     return { ok: false, error: '更新源还没配置：发布后把 Releases 地址填进 src/core/update-check.ts 的 UPDATE_CHECK_URL' }

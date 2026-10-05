@@ -136,7 +136,9 @@ stdin.ref = () => {}
 stdin.unref = () => {}
 
 const stdout = new PassThrough()
-stdout.columns = 110
+// 列数给 200：选择器提示行很长，110 列会被 truncate-end 截掉行尾的 Esc 提示
+// （0.6.63 起提示行区分「Esc 关闭 / Esc 返回工作区列表」，要让它可见才能断言）。
+stdout.columns = 200
 stdout.rows = 40
 stdout.isTTY = false
 
@@ -166,6 +168,8 @@ const contentLines = (frame) => frame.replace(/\n$/, '').split('\n')
 const lineOf = (frame, needle) => contentLines(frame).findIndex((line) => line.includes(needle))
 const selectedLine = (frame) =>
   contentLines(frame).find((line) => line.includes('❯') && line.includes('sess-'))
+const workspaceLine = (frame) =>
+  contentLines(frame).find((line) => line.includes('❯') && (line.includes('alpha') || line.includes('beta')))
 
 let failures = 0
 const check = (name, condition, detail = '') => {
@@ -236,6 +240,64 @@ check('改名态点击被吞（无重绘、不开门）', openedSessions.length 
 await press('\x1b')
 check('Esc 退出改名', !lastFrame().includes('改名：'))
 await press('\x1b')
+
+// 5b. 两级导航（多工作区）：工作区层 → Enter 钻入 → Esc 返回 → Esc 关
+const multiSessions = [
+  ...Array.from({ length: 8 }, (_, i) => ({
+    id: `/tmp/ta/a-${i}.jsonl`,
+    cwd: '/proj/alpha',
+    createdAt: 1_700_000_000_000 + i * 60_000,
+    updatedAt: 1_800_000_000_000 - i * 2_000,
+    title: `甲${i}`,
+  })),
+  ...Array.from({ length: 5 }, (_, i) => ({
+    id: `/tmp/tb/b-${i}.jsonl`,
+    cwd: '/proj/beta',
+    createdAt: 1_700_100_000_000 + i * 60_000,
+    updatedAt: 1_800_000_500_000 - i * 3_000,
+    title: `乙${i}`,
+  })),
+]
+runtime.setSnapshot(makeSnapshot({ sessions: multiSessions }))
+await press('/resume')
+await press('\r')
+frame = lastFrame()
+check('多工作区先落工作区层（标题带个数）', frame.includes('恢复会话 · 选工作区') && frame.includes('2 个工作区'), JSON.stringify(contentLines(frame).slice(0, 5)))
+check('工作区行带条数', frame.includes('8 条') && frame.includes('5 条'))
+check('工作区行带最近活动时间', frame.includes('最近 2027-'))
+check('beta 置顶（最近活动更晚）', lineOf(frame, 'beta') !== -1 && lineOf(frame, 'beta') < lineOf(frame, 'alpha'), JSON.stringify({ beta: lineOf(frame, 'beta'), alpha: lineOf(frame, 'alpha') }))
+check('首行选中 beta', (workspaceLine(frame) ?? '').includes('beta'), JSON.stringify(workspaceLine(frame)))
+check('工作区层帧仍 39 行', contentLines(frame).length === 39, String(contentLines(frame).length))
+await press('\r')
+frame = lastFrame()
+check('Enter 钻入 beta（面包屑 + 条数）', frame.includes('恢复会话 › beta') && frame.includes('（5 条）'), JSON.stringify(contentLines(frame).slice(0, 4)))
+check('会话层只显示乙会话', frame.includes('乙0') && !frame.includes('甲0'))
+check('会话层提示 Esc 返回工作区列表', frame.includes('Esc 返回工作区列表'))
+await press('\r')
+check('会话层 Enter 打开会话', openedSessions.length === 2 && openedSessions[1].includes('b-0'), JSON.stringify(openedSessions))
+await press('/resume')
+await press('\r')
+await press('\r')
+await press('\x1b')
+frame = lastFrame()
+check('会话层 Esc 回工作区层', frame.includes('恢复会话 · 选工作区'))
+await press('\x1b')
+check('再 Esc 关闭选择器', lastFrame().includes('条目-119'))
+
+// 5c. 工作区层鼠标与筛选：首行直接钻入、筛选词过滤工作区
+await press('/resume')
+await press('\r')
+await press('\x1b[<0;10;4M')
+check('点击首行工作区直接钻入 beta', lastFrame().includes('恢复会话 › beta'), JSON.stringify(contentLines(lastFrame()).slice(0, 4)))
+await press('\x1b')
+await press('alp')
+frame = lastFrame()
+check('筛选词过滤工作区（只剩 alpha）', frame.includes('alpha') && !frame.includes('beta'))
+await press('\r')
+check('Enter 钻入筛选出的 alpha', lastFrame().includes('恢复会话 › alpha'), JSON.stringify(contentLines(lastFrame()).slice(0, 4)))
+await press('\x1b')
+await press('\x1b')
+runtime.setSnapshot(makeSnapshot())
 
 // 6. 审批卡：页脚按钮点击 = 按键
 runtime.setSnapshot(makeSnapshot({

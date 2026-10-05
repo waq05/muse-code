@@ -185,6 +185,11 @@ export const presetsPlugin: Plugin.Object = {
       ({ args, ui }) => {
         const token = args.join(' ').trim()
         if (token === '') {
+          // 有选择器的端（TUI）开浮层；没接的端保持 notice 清单（桌面有自己的模式页）。
+          if (ui.openPresets !== undefined) {
+            ui.openPresets()
+            return
+          }
           ui.notice(`当前模式：${spec().label}。可选：${listPresets().map((item) => `${item.label}（/preset ${item.name}）`).join('、')}`)
           return
         }

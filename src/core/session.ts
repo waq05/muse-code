@@ -1058,7 +1058,15 @@ export function forkSession(filePath: string, beforeUserMessage: number): string
     }
     seen += 1
   }
-  if (!found) throw new Error(`这个会话没有第 ${beforeUserMessage + 1} 条用户消息，只有 ${seen} 条`)
+  if (!found) {
+    // 哨兵：beforeUserMessage 等于用户消息总数 = 整本分叉（/fork 命令与选择器
+    // Ctrl+F 都传 listUserMessages().length）——保留到文件末尾，含最后的回复与工具记录。
+    if (seen === beforeUserMessage) {
+      cut = lines.length
+    } else {
+      throw new Error(`这个会话没有第 ${beforeUserMessage + 1} 条用户消息，只有 ${seen} 条`)
+    }
+  }
   if (cut <= 1) throw new Error('分叉点之前没有任何消息，新会话会是空的')
   const meta: SessionMeta = { id: randomUUID(), cwd: first.cwd, createdAt: Date.now() }
   const target = join(sessionsRoot(), slugCwd(first.cwd), `${meta.id}.jsonl`)

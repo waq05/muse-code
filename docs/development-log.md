@@ -1741,3 +1741,33 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **测试与验证**：新 `scripts/statusbar-test.mjs` 33 项（纯组件直渲染：出厂默认七段在四段缺席 · ` · ` 分隔 · 开关关掉整段缺席 · usage/cost/cwd 数据缺整段缺席 · 后台芯片 ◐ 短 id · 46 列窄终端按优先级丢 tok/session/cost 留状态点模型 · 30 列极窄只剩 ●+模型）；`settings-test.mjs` 扩到 47 项（mock 加 browser 四组 + tui 状态栏组：组行 `›` 渲染、Enter 进子页、面包屑、子页只渲染组内字段、Esc 回根页、鼠标点组行（屏幕行 = 模型行+3，**models 是 custom 占两行指引，行号数漏一行会让点击打在卡片顶边上**——探针逐行点击定位的）、子页内点 switch 翻转、statusBar.cost 写值）；`settings-sections-check.mjs` 补 browser 四组断言（挂真 browser 插件）+ 状态栏组 10 开关 + 静默保存 + prefs 深合并，「七字段」契约钉子跟到八字段（groups 入投影）。全量 18 电池：17 全绿；remote-e2e 72/74 的 2 项失败经 **stash 基线对照**证实预存在（与改动面无关）。双包 typecheck 绿，`msc --version` → 0.6.62。
 
 **教训**：① 长内容工具调用在高压下会产出幻觉内容（本期两次：一次 Edit 把真实断言行换成幻觉代码、一次 Write 全是编造的 API）——立即 git checkout 恢复 + 改用「小锚点编辑 + 立即 git diff 验证」节奏；工具结果与自己的记忆都不可信时，用最朴素的 bash 命令重建地面真相。② 测试断言「屏幕行 = 模型行 + 3」的换算必须从行模型推导，不能心算——custom 分区的指引行数、组行替换字段行的位置都会让心算错一位。
+
+## 阶段 86：斜杠命令补齐 dsh 面 + /resume 按工作区分组钻取（0.6.63）
+
+用户两条：① 命令增加 fork/export/preset/thinking/skills/plugins/update/permission，实现逻辑参考 dsh-TUI；② /resume 显示的历史会话要按工作区分组，选中工作区再展示该工作区的会话。盘点发现 8 个里 **export/preset/skills 已存在**（export 已是 dsh 同款 markdown 写 cwd，零改动），缺 5 个；SessionPicker 是纯展示组件、状态全在 App 顶层，分组键就是 `session.cwd`（桌面侧栏 sidebar-groups.ts 有同款分桶先例）。
+
+**① 五个新命令**（commands.ts + commands-completion.ts 的 BUILT_IN 表）：
+- **/fork**（deny）：dsh 的 kimi-code 语义——整本分叉成「可恢复的副本」，**现场会话与跑动回合不动**，回执给短 id 与 `/resume` 指引；分叉点选择仍走 /resume 的 Ctrl+F。链路 = `status.sessionId`（当前 jsonl 路径）→ `listUserMessages` → `forkSession(path, messages.length)`。
+- **/thinking [on|off]**：翻转/显式设置思考块展开（与 Ctrl+T 同一状态；会话内生效不持久化，dsh 同款——持久化已有设置项「新会话的思考块默认摊开」）。经新可选回调 `ui.toggleThinking?`，没接的端（桌面）兜底提示。
+- **/plugins**：多行 notice（/usage 同款通道）列插件清单，带 内核/外部 · 启停 · problem 标记与桌面端指引。**存量撞名**：plugin-manager.ts:153 早就注册过一个 /plugins（registry Map 后写者胜，我的 handler 被它顶掉，电池第一轮就抓出来了）——旧版格式裸 `[启用] (file) 描述`，收敛删除、commands.ts 单一实现。
+- **/update**（deny）：checkForUpdate 只查不装（0.6.50 边界），新版时给发布页 URL；`checkForUpdate` 默认源加 `DSC_UPDATE_CHECK_URL` 环境变量测试缝（电池用本地假源）。
+- **/permission**：/policy 别名——policy handler 提成 `switchPolicy` 共用函数，BUILT_IN 两行，spec 同参。
+- 裸 **/preset**、裸 **/skills** 对齐 dsh 开交互浮层：CommandContext 加可选 `openPresets?/openSkills?`（照 openSettings? 先例；桌面没接=保持 notice 兜底，桌面有专属页）。
+
+**② 两个新浮层**（照 ModelPicker 整套先例：组件纯展示 + App 状态/键盘/鼠标/JSX 四接线 + modal 开合）：
+- **PresetPicker**：数据 `runtime.listPresets()`（PresetSurface），行带 `✓ 当前 / 默认 / 内置` 与 problem 标记，Enter → `runtime.usePreset`（同步 SettingsMutation，回执走 notice）。
+- **SkillsPicker**：数据 `runtime.listSkills()`（SkillInfoView），行 = `/名字 — 描述` + 来源/已停用/不进目录；Enter 且 userInvocable → **回填输入行**——App 的 `composerPreset {text, token}` 外部灌草稿通道现成（App.tsx:159，本来是给 @提及 用的），零新管道。
+
+**③ /resume 两级导航**（对齐 dsh 会话总管的 rail 语义）：
+- App 加 `pickerWorkspace: string | null`（null=工作区层）；**单工作区直落会话层**（派生 `activeWorkspace = pickerWorkspace ?? (工作区数===1 ? 那个cwd : null)`，Esc 直接关，省一次回车；多工作区才见工作区层）。
+- 工作区层按 `session.cwd` 分桶：行 = `❯ 名称 · N 条 · 最近 <日期>`，**当前会话 cwd（snapshot.status.cwd）置顶并标「← 当前」**，其余按最新 updatedAt 降序；筛选词过滤名称/路径。
+- Enter/再点钻入（记住 cwd、清筛选、焦点回顶）；会话层标题变面包屑 `恢复会话 › 工作区名`，**Esc 先回工作区层再关**（照设置子页惯例）；Tab 切活动/归档页回工作区层重选；Ctrl 组动作（改名/置顶/归档/删除/分叉）仅会话层生效。两级行结构相同 → listTop=3 的鼠标映射与居中窗口逻辑原样复用（pickerRowCount 按层取行数）。
+- SessionPicker 加 `level/workspaces/workspaceTitle` props（缺省值保旧调用兼容）。
+
+**④ 顺手修了两个存量 bug**（都是电池第一轮暴露的）：
+- **整本分叉哨兵**：core forkSession 的 `beforeUserMessage` 越界（= 用户消息总数）必抛「没有第 N+1 条用户消息」——而选择器 Ctrl+F 恰恰传 `messages.length`，**Ctrl+F 整本分叉一直是坏的**。修法：循环未命中且 `seen === beforeUserMessage` 时视为「保留到末尾」哨兵（cut=lines.length），分叉点语义不变。探针实证：修前 throw、修后副本含全部问答。
+- **duringTask 闸对内置命令全落空**：派发闸读 `entry.spec.duringTask`，但 registry 里存的是插件注册时传的 spec（没带 duringTask），BUILT_IN 表里声明的 deny 从未生效（/new /resume /compact 回合中其实都拦不住）。修法：`register` 时内置名以 BUILT_IN spec 为准合并（spec 单一真源，注释本就如此声称）。
+
+**测试与验证**：新 `scripts/commands-battery.mjs` 43 项（起真内核挂 serviceRef 走 runCommand 同链：spec 表八命令、/fork 真落盘验证哨兵与 forkedFrom sidecar、/thinking 三态+无回调兜底、/plugins 清单、/permission 与 /policy 逐字一致+前缀切档、/update 假源两态、裸命令回调/兜底双路、duringTask 闸、三个浮层渲染冒烟）；`session-picker-mouse-test.mjs` 加多工作区段（fixture 60 条同 cwd 不动=单工作区直落路径回归，新增 5b 键盘两级/5c 工作区层鼠标+筛选，**终端加宽到 200 列**——110 列提示行被 truncate-end 截掉行尾 Esc 提示是存量行为，得让它在测试里可见）+ 组件级双 props 冒烟并入命令电池。全量 18 电池全绿；remote-e2e 72/74 与上期 stash 基线完全一致（存量）；双包 typecheck 绿；`msc --version` → 0.6.63。
+
+**教训**：① 注册表 Map 后写者胜——往 commands 加新命令前先全仓 grep `name: '<命令>'`，plugin-manager 的旧 /plugins 就藏在另一文件里；② 「声明表」与「注册表」两份 spec 会漂移，闸读哪份就修哪份（合并优于复制）；③ ink truncate-end 会让长提示行的行尾内容在任何断言里不可见，测试终端列数要按最长提示行给足。

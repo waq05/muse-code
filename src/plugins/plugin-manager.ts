@@ -149,14 +149,11 @@ export const pluginManagerPlugin: Plugin.Object = {
     }
     const offTool = ctx.tools.register(tool)
 
-    const offCommand = ctx.commands.register(
-      { name: 'plugins', args: '', description: '查看插件清单' },
-      ({ ui }) => ui.notice(renderList()),
-    )
+    // /plugins 命令已收敛到 commands 插件（0.6.63：清单带 source/problem 与桌面端
+    // 指引），这里只保留插件管理工具，避免同名注册把新 handler 顶掉。
 
     return () => {
       offTool()
-      offCommand()
     }
   },
 }

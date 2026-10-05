@@ -1,13 +1,14 @@
 /**
- * 会话选择器（/resume）：整屏视口版。
+ * 会话选择器（/resume）：整屏视口版，两级导航（0.6.63 对齐 dsh 的会话总管）。
  *
  * 根盒在恒定帧里撑满状态栏之上的全部空间（App 根盒固定高度，溢出从底部裁掉），
  * 列表按选中项居中取窗（App 侧算切片），屏幕行与列表行一一对应——鼠标点击/滚轮的
- * 行号映射由此成立（事件拦截在 App 键盘路由顶层）。标题带全量条数与窗口范围；行内
- * 带标题、置顶标、后台状态点；Tab 切「活动 / 归档」两页；动作键全部走 Ctrl 组合
- * （普通字符留给筛选输入）：Ctrl+R 改名、Ctrl+P 置顶、Ctrl+A 归档、Ctrl+U 恢复、
- * Ctrl+X 删除（再按一次确认，进回收站）、Ctrl+F 按最后一条用户消息分叉。
- * 键盘与鼠标路由都在 App 顶层统一处理，本组件纯展示。
+ * 行号映射由此成立（事件拦截在 App 键盘路由顶层）。两级结构：工作区层（按 cwd 分桶
+ * 的「名称 · 条数 · 最近」行）→ 会话层（原有会话行，标题带工作区面包屑）；Esc 从
+ * 会话层先回工作区层（App 侧路由），单工作区时 App 直接派生为会话层、Esc 即关。
+ * Tab 切「活动 / 归档」两页；会话层动作键全部走 Ctrl 组合（普通字符留给筛选输入）：
+ * Ctrl+R 改名、Ctrl+P 置顶、Ctrl+A 归档、Ctrl+U 恢复、Ctrl+X 删除（再按一次确认，
+ * 进回收站）、Ctrl+F 按最后一条用户消息分叉。键盘与鼠标路由都在 App 顶层，纯展示。
  *
  * @module dsc-tui/app/SessionPicker
  */
@@ -29,8 +30,27 @@ const STATE_DOT: Record<SessionRunState, { mark: string; color: string | undefin
   'just-finished': { mark: '✓', color: STATUS_COLOR.done },
 }
 
+/** 工作区层的一行（App 侧按 cwd 分桶后投喂）。 */
+export interface WorkspaceListRow {
+  cwd: string
+  /** 显示名：路径最后一段（App 侧的 workspaceLabel 算好）。 */
+  name: string
+  /** 该工作区下的会话数（含置顶）。 */
+  count: number
+  /** 最近一次会话活动时间（updatedAt 最大值）。 */
+  latest: number
+  /** 是当前会话所在的工作区（行尾标「当前」，也是 App 排序置顶的依据）。 */
+  current: boolean
+}
+
 /** 键盘与鼠标路由（↑↓/Enter/Esc/Ctrl 组合、筛选输入、点击、滚轮）在 App 顶层统一处理，本组件纯展示。 */
 export interface SessionPickerProps {
+  /** 当前层：'workspaces' = 工作区选择，'sessions' = 会话列表（缺省，兼容旧调用）。 */
+  level?: 'workspaces' | 'sessions'
+  /** 工作区层的可见切片（level = 'workspaces' 时渲染）。 */
+  workspaces?: WorkspaceListRow[]
+  /** 会话层标题的工作区面包屑名（null = 不带，如单工作区直落）。 */
+  workspaceTitle?: string | null
   /** 视口内可见的切片（窗口由 App 按选中项居中计算）。 */
   sessions: SessionSummary[]
   /** 全量条数：标题展示总数，窗口指示与选中钳制都靠它。 */
@@ -53,6 +73,9 @@ export interface SessionPickerProps {
 }
 
 export function SessionPicker({
+  level = 'sessions',
+  workspaces = [],
+  workspaceTitle = null,
   sessions,
   total,
   start,
@@ -65,6 +88,12 @@ export function SessionPicker({
   sessionStates,
 }: SessionPickerProps): JSX.Element {
   const safeIndex = Math.min(index, Math.max(0, total - 1))
+  const workspaceLevel = level === 'workspaces'
+  const title = workspaceLevel
+    ? '恢复会话 · 选工作区'
+    : workspaceTitle !== null
+      ? `恢复会话 › ${workspaceTitle}`
+      : '恢复会话'
   return (
     <Box
       borderStyle="round"
@@ -77,9 +106,11 @@ export function SessionPicker({
     >
       <Box flexShrink={0} flexDirection="column" gap={GAP.none}>
       <Text {...TEXT.label} color={ACCENT} wrap="truncate-end">
-        {page === 'active' ? '恢复会话' : '归档会话'}
-        {loading ? '（读取中…）' : `（${total} 条）`}
-        {total > sessions.length ? ` · 显示 ${start + 1}–${start + sessions.length}` : ''}
+        {title}
+        {loading ? '（读取中…）' : `（${total} ${workspaceLevel ? '个工作区' : '条'}）`}
+        {total > (workspaceLevel ? workspaces.length : sessions.length)
+          ? ` · 显示 ${start + 1}–${start + (workspaceLevel ? workspaces.length : sessions.length)}`
+          : ''}
         <Text {...TEXT.secondary}>{SEP.gap}Tab 切{page === 'active' ? '归档' : '活动'}页</Text>
       </Text>
       <Text wrap="truncate-end">
@@ -87,7 +118,11 @@ export function SessionPicker({
           筛选{' '}
         </Text>
         <Text {...(query === '' ? TEXT.secondary : TEXT.body)}>
-          {query === '' ? '（直接输入按标题/目录/id 过滤）' : query}
+          {query === ''
+            ? workspaceLevel
+              ? '（直接输入按名称/目录过滤）'
+              : '（直接输入按标题/目录/id 过滤）'
+            : query}
           {buffer === null ? <Text {...TEXT.secondary}>▏</Text> : null}
         </Text>
       </Text>
@@ -96,53 +131,87 @@ export function SessionPicker({
           改名：{buffer}▏（Enter 确认 · Esc 取消）
         </Text>
       ) : null}
-      {sessions.length === 0 && !loading ? (
-        <Text {...TEXT.secondary}>（没有匹配的会话）</Text>
-      ) : null}
-      {sessions.map((session, position) => {
-        // v2 的 id 是 jsonl 文件路径；展示取文件名前 8 位
-        const shortId = (session.id.split(/[\\/]/).pop() ?? session.id)
-          .replace(/\.jsonl$/, '')
-          .slice(0, 8)
-        const selected = start + position === safeIndex
-        const state = sessionStates[session.id]
-        const dot = state !== undefined ? STATE_DOT[state] : undefined
-        return (
-          <Box key={session.id}>
-            <Text {...TEXT.label} color={selected ? ACCENT : undefined}>
-              {selected ? MARK.selected : MARK.idle}
-            </Text>
-            {session.pinnedAt !== undefined ? (
-              <Text {...TEXT.label} color={STATUS_COLOR.waiting}>
-                ★{' '}
+      {workspaceLevel ? (
+        <>
+          {workspaces.length === 0 && !loading ? (
+            <Text {...TEXT.secondary}>（没有匹配的工作区）</Text>
+          ) : null}
+          {workspaces.map((workspace, position) => {
+            const selected = start + position === safeIndex
+            return (
+              <Text key={workspace.cwd || '(无目录)'} color={selected ? ACCENT : undefined} wrap="truncate-end">
+                {selected ? MARK.selected : MARK.idle}
+                {workspace.name}
+                <Text {...TEXT.secondary}>{SEP.gap}{workspace.count} 条</Text>
+                <Text {...TEXT.secondary}>{SEP.gap}最近 {shortDate(workspace.latest)}</Text>
+                {workspace.current ? (
+                  <Text {...TEXT.label} color={STATUS_COLOR.waiting}>{SEP.gap}← 当前</Text>
+                ) : null}
               </Text>
-            ) : null}
-            <Text {...TEXT.secondary}>{shortDate(session.createdAt)}</Text>
-            <Text {...TEXT.body} color={selected ? ACCENT : undefined} wrap="truncate-end">
-              {SEP.gap}
-              {session.title ?? (session.cwd || '(无目录)')}
-            </Text>
-            {dot !== undefined ? (
-              <Text {...TEXT.label} color={dot.color}>
-                {SEP.gap}
-                {dot.mark}
-              </Text>
-            ) : null}
-            <Text {...TEXT.secondary}>
-              {SEP.gap}
-              {shortId}
-            </Text>
-          </Box>
-        )
-      })}
+            )
+          })}
+        </>
+      ) : (
+        <>
+          {sessions.length === 0 && !loading ? (
+            <Text {...TEXT.secondary}>（没有匹配的会话）</Text>
+          ) : null}
+          {sessions.map((session, position) => {
+            // v2 的 id 是 jsonl 文件路径；展示取文件名前 8 位
+            const shortId = (session.id.split(/[\\/]/).pop() ?? session.id)
+              .replace(/\.jsonl$/, '')
+              .slice(0, 8)
+            const selected = start + position === safeIndex
+            const state = sessionStates[session.id]
+            const dot = state !== undefined ? STATE_DOT[state] : undefined
+            return (
+              <Box key={session.id}>
+                <Text {...TEXT.label} color={selected ? ACCENT : undefined}>
+                  {selected ? MARK.selected : MARK.idle}
+                </Text>
+                {session.pinnedAt !== undefined ? (
+                  <Text {...TEXT.label} color={STATUS_COLOR.waiting}>
+                    ★{' '}
+                  </Text>
+                ) : null}
+                <Text {...TEXT.secondary}>{shortDate(session.createdAt)}</Text>
+                <Text {...TEXT.body} color={selected ? ACCENT : undefined} wrap="truncate-end">
+                  {SEP.gap}
+                  {session.title ?? (session.cwd || '(无目录)')}
+                </Text>
+                {dot !== undefined ? (
+                  <Text {...TEXT.label} color={dot.color}>
+                    {SEP.gap}
+                    {dot.mark}
+                  </Text>
+                ) : null}
+                <Text {...TEXT.secondary}>
+                  {SEP.gap}
+                  {shortId}
+                </Text>
+              </Box>
+            )
+          })}
+        </>
+      )}
       {buffer !== null ? null : (
         <Text {...TEXT.secondary} wrap="truncate-end">
-          ↑↓ 选择 · Enter 打开 · 鼠标点击选中、再点打开 · 滚轮移动
-          {' · '}Ctrl+R 改名 · Ctrl+P 置顶
-          {page === 'active' ? ' · Ctrl+A 归档' : ' · Ctrl+U 恢复'}
-          {' · '}Ctrl+F 分叉{armed ? '' : ' · Ctrl+X 删除（再按一次确认）'}
-          {armed ? <Text {...TEXT.label} color={STATUS_COLOR.failed}> · 再按一次 Ctrl+X 确认永久删除</Text> : null}
-          {' · '}Esc 关闭
+          {workspaceLevel ? (
+            <>
+              ↑↓ 选择 · Enter 进入工作区 · 鼠标点击选中、再点进入 · 滚轮移动
+              {' · '}Tab 切{page === 'active' ? '归档' : '活动'}页 · Esc 关闭
+            </>
+          ) : (
+            <>
+              ↑↓ 选择 · Enter 打开 · 鼠标点击选中、再点打开 · 滚轮移动
+              {' · '}Ctrl+R 改名 · Ctrl+P 置顶
+              {page === 'active' ? ' · Ctrl+A 归档' : ' · Ctrl+U 恢复'}
+              {' · '}Ctrl+F 分叉{armed ? '' : ' · Ctrl+X 删除（再按一次确认）'}
+              {armed ? <Text {...TEXT.label} color={STATUS_COLOR.failed}> · 再按一次 Ctrl+X 确认永久删除</Text> : null}
+              {' · '}
+              {workspaceTitle !== null ? 'Esc 返回工作区列表' : 'Esc 关闭'}
+            </>
+          )}
         </Text>
       )}
       </Box>

@@ -10,7 +10,7 @@
  *
  * 键盘优先级：Ctrl+C（打断/退出）→ 审批卡（四档）→ 提问卡（模态作答）→ 计划反馈
  * 输入 → 计划评审卡（批准/拒绝/带反馈）→ 图片预览浮层 → 子代理浮层 → 回看浮层
- * （Ctrl+O）→ 会话选择器 → 模型浮层 → Esc（打断 / 双击撤回上一轮）→ PgUp/PgDn
+ * （Ctrl+O）→ 会话选择器 → 模型/模式/技能浮层 → Esc（打断 / 双击撤回上一轮）→ PgUp/PgDn
  * 滚动 → Ctrl+O/Ctrl+T → 其余交给 Composer（↑↓ 在输入框里仍是历史回忆，对齐
  * dsh-TUI）。
  *
@@ -55,9 +55,11 @@ import { Composer, type ComposerAttachment, type DirLister } from './Composer.js
 import { renderImageBlock, type ImageSource } from './image-blocks.js'
 import { ModelPicker } from './ModelPicker.js'
 import { PlanReviewCard, type PlanAction } from './PlanReviewCard.js'
+import { PresetPicker } from './PresetPicker.js'
 import { PreviewOverlay } from './PreviewOverlay.js'
 import { SessionPicker } from './SessionPicker.js'
 import { SETTINGS_CHROME, SETTINGS_LIST_TOP, SettingsOverlay } from './SettingsOverlay.js'
+import { SkillsPicker } from './SkillsPicker.js'
 import {
   buildSettingsRows,
   focusableRows,
@@ -85,6 +87,13 @@ const OVERLAY_WINDOW = 200
 const WELCOME_MAX_ENTRIES = 30
 /** 选择器框的固定行数：上下边框 2 + 标题 1 + 筛选行 1 + 提示行 1（改名行与提示行 1:1 互换）。 */
 const PICKER_CHROME = 5
+
+/** 工作区显示名：最后一段路径（dsh 会话总管的 rail 同款；盘根/空目录给兜底文案）。 */
+const workspaceLabel = (cwd: string): string => {
+  if (cwd === '') return '(无目录)'
+  const base = cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? cwd
+  return base === '' ? cwd : base
+}
 
 /** 「已离开最新」提示条（0.6.59 对齐 dsh 的 pill）：蓝底深字，整枚可点回底。 */
 function TailIndicator({
@@ -178,10 +187,23 @@ export function App({
   const [pickerQuery, setPickerQuery] = useState('')
   const [pickerBuffer, setPickerBuffer] = useState<string | null>(null)
   const [pickerArmed, setPickerArmed] = useState(false)
+  /**
+   * 两级导航（0.6.63 对齐 dsh 的会话总管）：已钻取的工作区 cwd；null = 工作区层。
+   * 工作区只有一个时派生为「直落会话层」（pickerWorkspace 保持 null，Esc 直接关）。
+   */
+  const [pickerWorkspace, setPickerWorkspace] = useState<string | null>(null)
   /** 模型选择浮层（/model 无参数打开；输入即筛选）。 */
   const [modelPicker, setModelPicker] = useState(false)
   const [modelIndex, setModelIndex] = useState(0)
   const [modelQuery, setModelQuery] = useState('')
+  /** 模式选择浮层（/preset 无参数打开，对齐 dsh 裸命令开 picker）。 */
+  const [presetPicker, setPresetPicker] = useState(false)
+  const [presetIndex, setPresetIndex] = useState(0)
+  const [presetQuery, setPresetQuery] = useState('')
+  /** 技能选择浮层（/skills 无参数打开；Enter 回填 /技能名 到输入行）。 */
+  const [skillsPicker, setSkillsPicker] = useState(false)
+  const [skillsIndex, setSkillsIndex] = useState(0)
+  const [skillsQuery, setSkillsQuery] = useState('')
   /** ---- 0.6.61：设置页（/settings）---- 焦点/草稿/回执/滚动全在这组状态里。 */
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSections, setSettingsSections] = useState<SettingsSectionView[]>([])
@@ -226,6 +248,41 @@ export function App({
         choice.value.toLowerCase().includes(q) || choice.description.toLowerCase().includes(q),
     )
   }, [models, modelQuery])
+
+  /** 模式投影（浮层开着才算：listPresets 是同步读盘）。 */
+  const presetSurface = useMemo(
+    () => (presetPicker ? runtime.listPresets() : null),
+    [runtime, presetPicker],
+  )
+  /** 模式浮层的筛选结果（显示名/名字/说明子串匹配）。 */
+  const presetList = useMemo(() => {
+    if (presetSurface === null) return []
+    const q = presetQuery.trim().toLowerCase()
+    if (q === '') return presetSurface.options
+    return presetSurface.options.filter(
+      (preset) =>
+        preset.label.toLowerCase().includes(q) ||
+        preset.name.toLowerCase().includes(q) ||
+        preset.description.toLowerCase().includes(q),
+    )
+  }, [presetSurface, presetQuery])
+
+  /** 技能投影（浮层开着才算）。 */
+  const skillsSurface = useMemo(
+    () => (skillsPicker ? runtime.listSkills() : []),
+    [runtime, skillsPicker],
+  )
+  /** 技能浮层的筛选结果（名字/描述/来源子串匹配）。 */
+  const skillsList = useMemo(() => {
+    const q = skillsQuery.trim().toLowerCase()
+    if (q === '') return skillsSurface
+    return skillsSurface.filter(
+      (skill) =>
+        skill.name.toLowerCase().includes(q) ||
+        skill.description.toLowerCase().includes(q) ||
+        skill.source.toLowerCase().includes(q),
+    )
+  }, [skillsSurface, skillsQuery])
 
   /** 回合跑动 → 空闲时响一声 BEL：长任务跑完人不在终端前也能听见。 */
   const previousTurn = useRef(snapshot.status.turnState)
@@ -343,7 +400,7 @@ export function App({
   }
 
   // ---- 会话选择器的数据整形：置顶优先、最近更新在前，输入即筛选 ----
-  const pickerList: SessionSummary[] = useMemo(() => {
+  const pickerSource: SessionSummary[] = useMemo(() => {
     const source: SessionSummary[] =
       pickerPage === 'active'
         ? [...snapshot.sessions]
@@ -357,15 +414,57 @@ export function App({
     source.sort(
       (a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0) || b.updatedAt - a.updatedAt,
     )
+    return source
+  }, [pickerPage, snapshot.sessions, archivedList])
+
+  /** 工作区分桶（当前页数据源按 cwd 归堆）：当前会话所在工作区置顶，其余按最新会话时间降序。 */
+  const workspaceEntries = useMemo(() => {
+    const buckets = new Map<string, { cwd: string; count: number; latest: number }>()
+    for (const session of pickerSource) {
+      const bucket = buckets.get(session.cwd)
+      if (bucket === undefined) {
+        buckets.set(session.cwd, { cwd: session.cwd, count: 1, latest: session.updatedAt })
+      } else {
+        bucket.count += 1
+        bucket.latest = Math.max(bucket.latest, session.updatedAt)
+      }
+    }
+    const currentCwd = snapshot.status.cwd ?? null
+    return [...buckets.values()].sort(
+      (a, b) => (a.cwd === currentCwd ? 0 : 1) - (b.cwd === currentCwd ? 0 : 1) || b.latest - a.latest,
+    )
+  }, [pickerSource, snapshot.status.cwd])
+
+  /** 工作区层 = 未钻取且工作区不止一个（单工作区直落会话层，省一次回车）。 */
+  const activeWorkspace =
+    pickerWorkspace ?? (workspaceEntries.length === 1 ? (workspaceEntries[0]?.cwd ?? null) : null)
+  const isWorkspaceLevel = activeWorkspace === null
+
+  /** 工作区层的筛选（名称/路径子串）。 */
+  const workspaceList = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase()
-    if (q === '') return source
-    return source.filter(
+    if (q === '') return workspaceEntries
+    return workspaceEntries.filter(
+      (entry) =>
+        workspaceLabel(entry.cwd).toLowerCase().includes(q) || entry.cwd.toLowerCase().includes(q),
+    )
+  }, [workspaceEntries, pickerQuery])
+
+  /** 会话层 = 已选工作区（或单工作区直落）的会话，再过筛选词。 */
+  const pickerList: SessionSummary[] = useMemo(() => {
+    const scoped =
+      activeWorkspace === null
+        ? pickerSource
+        : pickerSource.filter((session) => session.cwd === activeWorkspace)
+    const q = pickerQuery.trim().toLowerCase()
+    if (q === '') return scoped
+    return scoped.filter(
       (session) =>
         (session.title ?? '').toLowerCase().includes(q) ||
         session.cwd.toLowerCase().includes(q) ||
         session.id.toLowerCase().includes(q),
     )
-  }, [pickerPage, snapshot.sessions, archivedList, pickerQuery])
+  }, [pickerSource, activeWorkspace, pickerQuery])
 
   // ---- 恒定帧与各视口的窗口切片 ----
   const termRows = stdout?.rows ?? 24
@@ -373,17 +472,28 @@ export function App({
   const frameRows = Math.max(1, termRows - 1)
   /** 状态栏行数（0.6.57 去掉描边框后固定两行）。 */
   const statusbarLines = 2
+  /** 当前层的行数（工作区层 = 工作区数，会话层 = 会话数）；窗口切片与点击映射都按它算。 */
+  const pickerRowCount = isWorkspaceLevel ? workspaceList.length : pickerList.length
   /** 选择器列表窗口：框内除固定框架外全部让给列表（点击行号映射按它 1:1 对齐）。 */
   const pickerListRows = Math.min(
-    Math.max(pickerList.length, 0),
+    Math.max(pickerRowCount, 0),
     Math.max(1, frameRows - statusbarLines - PICKER_CHROME),
   )
   /** 窗口起点：选中项尽量居中（fzf 式），两端夹住；列表放得下时等于 0。 */
   const pickerStart = Math.min(
     Math.max(0, pickerIndex - Math.floor((pickerListRows - 1) / 2)),
-    Math.max(0, pickerList.length - pickerListRows),
+    Math.max(0, pickerRowCount - pickerListRows),
   )
   const visibleSessions = pickerList.slice(pickerStart, pickerStart + pickerListRows)
+  const visibleWorkspaces = workspaceList
+    .slice(pickerStart, pickerStart + pickerListRows)
+    .map((entry) => ({
+      cwd: entry.cwd,
+      name: workspaceLabel(entry.cwd),
+      count: entry.count,
+      latest: entry.latest,
+      current: entry.cwd !== '' && entry.cwd === snapshot.status.cwd,
+    }))
 
   /** 聊天窗口：末端锚在 chatAnchor（null = 跟最新），窗口向历史方向展开。 */
   const chatEnd = Math.min(chatAnchor ?? snapshot.entries.length, snapshot.entries.length)
@@ -431,6 +541,8 @@ export function App({
     setPickerBuffer(null)
     setPickerIndex(0)
     setPickerQuery('')
+    // 两页的工作区集合不同：切页回工作区层重新选（dsh 总管同语义）。
+    setPickerWorkspace(null)
     if (pickerPage === 'active') {
       setPickerPage('archived')
       reloadArchived()
@@ -473,6 +585,28 @@ export function App({
     if (choice === undefined) return
     setModelPicker(false)
     void runtime.setModel(choice.value)
+  }
+
+  /** 应用当前选中的模式（Enter 与「点击已选中项」共用）：回执走 notice。 */
+  const applyPreset = (): void => {
+    const preset = presetList[presetIndex]
+    if (preset === undefined) return
+    setPresetPicker(false)
+    const mutation = runtime.usePreset(preset.name)
+    setNotice(mutation.ok ? mutation.notice ?? `已切换到模式「${preset.label}」` : mutation.error)
+  }
+
+  /** 应用当前选中的技能（Enter 与「点击已选中项」共用）：把 /技能名 灌回输入行。 */
+  const applySkill = (): void => {
+    const skill = skillsList[skillsIndex]
+    if (skill === undefined) return
+    if (!skill.userInvocable) {
+      setNotice(`技能 ${skill.name} 没注册成命令（不进模型目录），不能这样调用`)
+      return
+    }
+    setSkillsPicker(false)
+    setNotice(null)
+    setComposerPreset({ text: `/${skill.name} `, token: Date.now() })
   }
 
   // ---- 0.6.61：设置页的动作（Enter 与鼠标点击共用的唯一真源）----
@@ -761,8 +895,19 @@ export function App({
     setPickerIndex(0)
     setPickerQuery('')
     setPickerPage('active')
+    setPickerWorkspace(null)
     void runtime.refreshSessions()
   }, [runtime])
+
+  /** 工作区层的 Enter/再点：钻进该工作区的会话列表（清筛选，焦点回顶）。 */
+  const enterWorkspace = (index: number): void => {
+    const entry = workspaceList[index]
+    if (entry === undefined) return
+    setPickerWorkspace(entry.cwd)
+    setPickerIndex(0)
+    setPickerQuery('')
+    setPickerArmed(false)
+  }
 
   /** 名单浮层的行（队友在前、后台会话在后；与渲染同一条装配规则）。 */
   const agentRows =
@@ -816,9 +961,13 @@ export function App({
         // 滚轮：64 上 / 65 下，一步一条（浮层/聊天同款颗粒度）。
         const step = button === '64' ? -1 : 1
         if (picker) {
-          setPickerIndex((current) => Math.max(0, Math.min(current + step, pickerList.length - 1)))
+          setPickerIndex((current) => Math.max(0, Math.min(current + step, pickerRowCount - 1)))
         } else if (modelPicker) {
           setModelIndex((current) => Math.max(0, Math.min(current + step, modelList.length - 1)))
+        } else if (presetPicker) {
+          setPresetIndex((current) => Math.max(0, Math.min(current + step, presetList.length - 1)))
+        } else if (skillsPicker) {
+          setSkillsIndex((current) => Math.max(0, Math.min(current + step, skillsList.length - 1)))
         } else if (agentView !== null) {
           if (agentView.mode === 'list') {
             setAgentIndex((current) => Math.max(0, Math.min(current + step, agentRows.length - 1)))
@@ -847,8 +996,13 @@ export function App({
         const row0 = row - 1 - listTop
         if (row0 < 0 || row0 >= pickerListRows) return
         const hit = pickerStart + row0
-        if (hit === pickerIndex) openSelectedSession()
-        else setPickerIndex(hit)
+        // 两级行结构相同（listTop/切片一致）：工作区层再点 = 钻入，会话层再点 = 打开。
+        if (hit !== pickerIndex) {
+          setPickerIndex(hit)
+          return
+        }
+        if (isWorkspaceLevel) enterWorkspace(hit)
+        else openSelectedSession()
         return
       }
       if (modelPicker) {
@@ -856,6 +1010,20 @@ export function App({
         if (row0 < 0 || row0 >= modelList.length) return
         if (row0 === modelIndex) applyModel()
         else setModelIndex(row0)
+        return
+      }
+      if (presetPicker) {
+        const row0 = row - 1 - 3
+        if (row0 < 0 || row0 >= presetList.length) return
+        if (row0 === presetIndex) applyPreset()
+        else setPresetIndex(row0)
+        return
+      }
+      if (skillsPicker) {
+        const row0 = row - 1 - 3
+        if (row0 < 0 || row0 >= skillsList.length) return
+        if (row0 === skillsIndex) applySkill()
+        else setSkillsIndex(row0)
         return
       }
       if (settingsOpen) {
@@ -1024,7 +1192,11 @@ export function App({
       }
       if (key.escape) {
         if (pickerArmed) setPickerArmed(false)
-        else setPicker(false)
+        else if (pickerWorkspace !== null) {
+          // 会话层 Esc 先回工作区层（dsh 子页惯例）；单工作区直落时没有上层，直接关。
+          setPickerWorkspace(null)
+          setPickerIndex(0)
+        } else setPicker(false)
         return
       }
       if (key.tab) {
@@ -1032,7 +1204,8 @@ export function App({
         return
       }
       if (key.return) {
-        openSelectedSession()
+        if (isWorkspaceLevel) enterWorkspace(pickerIndex)
+        else openSelectedSession()
         return
       }
       if (key.upArrow) {
@@ -1040,11 +1213,12 @@ export function App({
         return
       }
       if (key.downArrow) {
-        setPickerIndex((current) => Math.min(pickerList.length - 1, current + 1))
+        setPickerIndex((current) => Math.min(pickerRowCount - 1, current + 1))
         return
       }
       if (key.ctrl) {
-        // 动作键全走 Ctrl 组合——普通字符留给筛选输入。
+        // 动作键全走 Ctrl 组合——普通字符留给筛选输入；工作区层没有会话动作。
+        if (isWorkspaceLevel) return
         if (input === 'r' && selected !== undefined) {
           setPickerBuffer(selected.title ?? '')
         } else if (input === 'p' && selected !== undefined) {
@@ -1108,6 +1282,44 @@ export function App({
         if (printable !== '') {
           setModelQuery((current) => current + printable)
           setModelIndex(0)
+        }
+      }
+      return
+    }
+    // 模式浮层：与模型浮层同款（输入即筛选、Enter 切换、Esc 关）。
+    if (presetPicker) {
+      if (key.escape) setPresetPicker(false)
+      else if (key.return) applyPreset()
+      else if (key.upArrow) setPresetIndex((current) => Math.max(0, current - 1))
+      else if (key.downArrow)
+        setPresetIndex((current) => Math.min(presetList.length - 1, current + 1))
+      else if (key.backspace || key.delete) {
+        setPresetQuery((current) => current.slice(0, -1))
+        setPresetIndex(0)
+      } else if (!key.ctrl && !key.meta) {
+        const printable = input.replace(/[\r\n\t]+/g, '')
+        if (printable !== '') {
+          setPresetQuery((current) => current + printable)
+          setPresetIndex(0)
+        }
+      }
+      return
+    }
+    // 技能浮层：同款；Enter 对不可回填的技能只提示不关页。
+    if (skillsPicker) {
+      if (key.escape) setSkillsPicker(false)
+      else if (key.return) applySkill()
+      else if (key.upArrow) setSkillsIndex((current) => Math.max(0, current - 1))
+      else if (key.downArrow)
+        setSkillsIndex((current) => Math.min(skillsList.length - 1, current + 1))
+      else if (key.backspace || key.delete) {
+        setSkillsQuery((current) => current.slice(0, -1))
+        setSkillsIndex(0)
+      } else if (!key.ctrl && !key.meta) {
+        const printable = input.replace(/[\r\n\t]+/g, '')
+        if (printable !== '') {
+          setSkillsQuery((current) => current + printable)
+          setSkillsIndex(0)
         }
       }
       return
@@ -1218,6 +1430,21 @@ export function App({
           setModelIndex(0)
           setModelQuery('')
         },
+        openPresets: () => {
+          setPresetPicker(true)
+          setPresetIndex(0)
+          setPresetQuery('')
+        },
+        openSkills: () => {
+          setSkillsPicker(true)
+          setSkillsIndex(0)
+          setSkillsQuery('')
+        },
+        toggleThinking: (visible) => {
+          const next = visible ?? !expandThinking
+          setExpandThinking(next)
+          setNotice(next ? '思考块已展开（Ctrl+T 随时切换）' : '思考块已折叠（Ctrl+T 随时切换）')
+        },
         openAgents,
         openSettings,
         notice: setNotice,
@@ -1251,6 +1478,8 @@ export function App({
     picker ||
     transcriptOpen ||
     modelPicker ||
+    presetPicker ||
+    skillsPicker ||
     settingsOpen ||
     preview !== null ||
     agentView !== null ||
@@ -1285,8 +1514,11 @@ export function App({
         />
       ) : picker ? (
         <SessionPicker
+          level={isWorkspaceLevel ? 'workspaces' : 'sessions'}
+          workspaces={visibleWorkspaces}
+          workspaceTitle={pickerWorkspace === null ? null : workspaceLabel(pickerWorkspace)}
           sessions={visibleSessions}
-          total={pickerList.length}
+          total={isWorkspaceLevel ? workspaceList.length : pickerList.length}
           start={pickerStart}
           index={pickerIndex}
           page={pickerPage}
@@ -1300,6 +1532,16 @@ export function App({
         <TranscriptOverlay entries={overlayWindow} start={overlayStart} total={overlayTotal} />
       ) : modelPicker ? (
         <ModelPicker models={modelList} index={modelIndex} query={modelQuery} />
+      ) : presetPicker && presetSurface !== null ? (
+        <PresetPicker
+          presets={presetList}
+          current={presetSurface.current}
+          defaultName={presetSurface.defaultName}
+          index={presetIndex}
+          query={presetQuery}
+        />
+      ) : skillsPicker ? (
+        <SkillsPicker skills={skillsList} index={skillsIndex} query={skillsQuery} />
       ) : settingsOpen ? (
         <SettingsOverlay
           sections={settingsSections}

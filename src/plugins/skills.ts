@@ -360,8 +360,12 @@ export const skillsPlugin: Plugin.Object = {
       },
     })
 
-    // ── /skills：清单与用法 ──
+    // ── /skills：清单与用法（有选择器的端开浮层，没接的端 notice 清单）──
     ctx.commands.register({ name: 'skills', args: '', description: '查看技能清单，可在技能中心启停' }, ({ ui }) => {
+      if (ui.openSkills !== undefined) {
+        ui.openSkills()
+        return
+      }
       const items = service.list()
       if (items.length === 0) {
         ui.notice(
