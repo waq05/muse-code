@@ -7,7 +7,7 @@
 **桌面端**（自带运行时，无需装 Node）：到 [Releases](https://github.com/waq05/muse-code/releases) 下载
 安装版 `muse-code-setup-x.y.z.exe`（可选安装目录）或免安装单文件 `muse-code-portable-x.y.z.exe`。
 
-**CLI**（`msc` 命令，需要 Node.js ≥ 22.19；包名走 scope 是因为 npm 防 typosquat——无 scope 的 `muse-code` 与既有 `musecode` 太像被拒）：
+**CLI**（`msc` 命令，需要 Node.js ≥ 22.19）：
 
 ```sh
 npm i -g @waq666/muse-code    # 或免安装：npx @waq666/muse-code
@@ -120,8 +120,7 @@ scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scrip
 ## 插件开发
 
 外部插件 = 单个 ESM `.js` 文件放进 `~/.dsc/plugins/`，可注册工具、命令、监听事件，
-桌面端「插件」页可视化管理。完整 API 与开发规范见 **[docs/plugin-development.md](docs/plugin-development.md)**
-（面向 AI 编程助手编写，人类可直接跳到示例部分）；可运行示例见 `examples/plugins/ping.js`。
+桌面端「插件」页可视化管理。完整 API 与开发规范见 **[docs/plugin-development.md](docs/plugin-development.md)**；可运行示例见 `examples/plugins/ping.js`。
 
 ## 文档
 
