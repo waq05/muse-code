@@ -14,11 +14,12 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import YAML from 'yaml'
 import type { SkillInfoView, SkillSourceLabel } from '../contract.js'
+import { dscPath } from './path-policy.js'
 
 /** 用户级技能目录（技能中心的导入目标）。 */
-export const DSC_SKILLS_DIR = join(homedir(), '.dsc', 'skills')
+export const DSC_SKILLS_DIR = dscPath('skills')
 
-const SKILLS_JSON = join(homedir(), '.dsc', 'skills.json')
+const SKILLS_JSON = dscPath('skills.json')
 
 /** kebab-case 技能名（与 dsh 一致）。 */
 const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/

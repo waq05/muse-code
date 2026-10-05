@@ -35,9 +35,10 @@ import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import YAML from 'yaml'
 import { splitFrontmatter } from './skills.js'
+import { dscPath } from './path-policy.js'
 
 /** 模式文件目录。 */
-export const DSC_PRESETS_DIR = join(homedir(), '.dsc', 'presets')
+export const DSC_PRESETS_DIR = dscPath('presets')
 
 /** 四个出厂模式的标识（标准档是永久的回落目标，任何读不出来的情况都回落到它）。 */
 export const STANDARD_PRESET = 'standard'

@@ -30,9 +30,10 @@ import { basename, join } from 'node:path'
 import YAML from 'yaml'
 import type { EffortLevel } from '../contract.js'
 import { splitFrontmatter } from './skills.js'
+import { dscPath } from './path-policy.js'
 
 /** 角色文件目录。 */
-export const DSC_AGENTS_DIR = join(homedir(), '.dsc', 'agents')
+export const DSC_AGENTS_DIR = dscPath('agents')
 
 /** 队友想不想向用户要工具授权（最终还要受全局设置这个上限压着）。 */
 export type TeammateApproval = 'forbid' | 'ask' | 'foreground'

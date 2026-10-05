@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { withExclusiveLock } from './lockfile.js'
+import { dscPath } from './path-policy.js'
 
 /** 单个会话的展示属性；全部字段可选，缺省即「没有该属性」。 */
 export interface SessionMetaRecord {
@@ -45,7 +46,7 @@ const META_VERSION = 1
  * 模块一样，各自从 `~/.dsc` 起算。
  */
 export function sessionMetaPath(): string {
-  return join(homedir(), '.dsc', 'sessions', 'meta.json')
+  return dscPath('sessions', 'meta.json')
 }
 
 /**
@@ -97,7 +98,7 @@ export function patchSessionMeta(id: string, patch: Partial<Record<keyof Session
     }
     if (Object.keys(record).length === 0) delete all[id]
     else all[id] = record
-    mkdirSync(join(homedir(), '.dsc', 'sessions'), { recursive: true })
+    mkdirSync(dscPath('sessions'), { recursive: true })
     const target = sessionMetaPath()
     const temp = `${target}.tmp`
     writeFileSync(temp, JSON.stringify({ version: META_VERSION, sessions: all } satisfies SessionMetaFile, null, 2), 'utf8')

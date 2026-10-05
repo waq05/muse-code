@@ -28,11 +28,12 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { redact, scrubChildEnv } from './secrets.js'
 import type { ToolGuardInput } from './tool-guards.js'
+import { dscPath } from './path-policy.js'
 
 /** 钩子配置文件（与 settings.json、audit.jsonl 同级）。 */
-export const HOOKS_FILE = join(homedir(), '.dsc', 'hooks.json')
+export const HOOKS_FILE = dscPath('hooks.json')
 /** 脚本钩子的批准名单（与配置文件分开存：批准是「人对某条命令表过态」，不该跟着配置一起被覆盖）。 */
-export const HOOK_TRUST_FILE = join(homedir(), '.dsc', 'hooks-trusted.json')
+export const HOOK_TRUST_FILE = dscPath('hooks-trusted.json')
 
 /**
  * 钩子事件。只有 `pre-tool` 有裁决权，其余三个是观察者：
@@ -270,7 +271,7 @@ export function readHooks(): HooksDoc {
 /** 全量写配置（写完让缓存失效，下一次判定立刻用新内容）。 */
 function writeHooks(doc: HooksDoc): void {
   const body = { version: 1, settings: doc.settings, rules: doc.rules, scripts: doc.scripts }
-  mkdirSync(join(homedir(), '.dsc'), { recursive: true })
+  mkdirSync(dscPath(), { recursive: true })
   writeFileSync(HOOKS_FILE, `${JSON.stringify(body, null, 2)}\n`, 'utf8')
   cache = null
 }
@@ -488,7 +489,7 @@ function readTrust(): TrustDoc {
 }
 
 function writeTrust(doc: TrustDoc): void {
-  mkdirSync(join(homedir(), '.dsc'), { recursive: true })
+  mkdirSync(dscPath(), { recursive: true })
   writeFileSync(HOOK_TRUST_FILE, `${JSON.stringify({ version: 1, trusted: doc.trusted }, null, 2)}\n`, 'utf8')
 }
 

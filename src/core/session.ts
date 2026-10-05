@@ -18,6 +18,7 @@ import { summarizeChange } from './tools/fs-tools.js'
 import { dropSessionMeta, patchSessionMeta, readSessionMeta } from './session-meta.js'
 import type { SessionMetaRecord } from './session-meta.js'
 import { acquireLock, withExclusiveLock, type FileLock } from './lockfile.js'
+import { dscPath } from './path-policy.js'
 
 /** 会话元数据（jsonl 首行 + 列表投影）。 */
 export interface SessionMeta {
@@ -175,7 +176,7 @@ export function slugCwd(cwd: string): string {
 }
 
 export function sessionsRoot(): string {
-  return join(homedir(), '.dsc', 'sessions')
+  return dscPath('sessions')
 }
 
 /** T30：拿会话写租约；被别的进程占着就抛明确错误（桌面端与 TUI 同开一个工作区的保护）。 */
@@ -805,7 +806,7 @@ export function archivedRoot(): string {
 }
 
 export function trashRoot(): string {
-  return join(homedir(), '.dsc', '.trash')
+  return dscPath('.trash')
 }
 
 /** 回收站保留天数：超期的文件在下次访问归档区时清掉。 */
@@ -1095,10 +1096,10 @@ function busyLeaseMessage(filePath: string): string {
 
 
 /** 记录/读取 last-session 指针（--resume 无参时的目标）。 */
-const LAST_FILE = join(homedir(), '.dsc', '.last-session')
+const LAST_FILE = dscPath('.last-session')
 
 export function saveLastSession(session: Session): void {
-  mkdirSync(join(homedir(), '.dsc'), { recursive: true })
+  mkdirSync(dscPath(), { recursive: true })
   writeFileSync(LAST_FILE, session.filePath, 'utf8')
 }
 

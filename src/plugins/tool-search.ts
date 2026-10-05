@@ -37,12 +37,13 @@ import {
 } from '../core/tool-search.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { McpService, SettingsSectionSpec } from '../services/types.js'
+import { dscPath } from '../core/path-policy.js'
 
 /** 三个桥接工具的固定名字（它们自己不许被撤下，也不许再经 tool_call 包一层）。 */
 const BRIDGE_TOOL_NAMES = new Set(['tool_search', 'tool_describe', 'tool_call'])
 
 /** 配置与设置提示里要写清的来源文件（手改它同样生效）。 */
-const PLUGINS_FILE = join(homedir(), '.dsc', 'plugins.json')
+const PLUGINS_FILE = dscPath('plugins.json')
 
 /** 目录里的一项：MCP 工具与从注册表撤下的工具在检索与调用上长一个样。 */
 interface CatalogItem {

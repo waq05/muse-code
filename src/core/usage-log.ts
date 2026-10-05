@@ -16,6 +16,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { UsageDayView, UsageModelView, UsageStatsView } from '../contract.js'
+import { dscPath } from './path-policy.js'
 
 /** usage.jsonl 里的一行。字段名压短：这文件每轮请求都要追加一行。 */
 export interface UsageRecord {
@@ -34,13 +35,13 @@ export interface UsageRecord {
 }
 
 function usageFile(): string {
-  return join(homedir(), '.dsc', 'usage', 'usage.jsonl')
+  return dscPath('usage', 'usage.jsonl')
 }
 
 /** 追加一条用量记录。写失败绝不打断对话轮次——统计少一条无所谓。 */
 export function appendUsageRecord(record: Omit<UsageRecord, 't'>): void {
   try {
-    mkdirSync(join(homedir(), '.dsc', 'usage'), { recursive: true })
+    mkdirSync(dscPath('usage'), { recursive: true })
     appendFileSync(usageFile(), `${JSON.stringify({ t: Date.now(), ...record })}\n`, 'utf8')
   } catch {
     // 磁盘满 / 目录被占用：放弃这一条，下轮再试

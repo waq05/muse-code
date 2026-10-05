@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { PluginInfoView } from '../contract.js'
+import { dscPath } from './path-policy.js'
 
 /** 目录里的一项（不含运行时 enabled——它由条目树决定）。 */
 export interface PluginMeta {
@@ -85,7 +86,7 @@ export interface PluginEntry {
   config: Record<string, unknown>
 }
 
-const PLUGINS_JSON = join(homedir(), '.dsc', 'plugins.json')
+const PLUGINS_JSON = dscPath('plugins.json')
 
 /** 读取条目树（文件缺失/损坏按空处理；兼容旧版 disabled 数组格式）。 */
 export function readPluginEntries(): PluginEntry[] {
@@ -121,7 +122,7 @@ export function readPluginEntries(): PluginEntry[] {
 
 /** 写入条目树（原子性不追求——个人版单写者）。 */
 export function writePluginEntries(entries: PluginEntry[]): void {
-  mkdirSync(join(homedir(), '.dsc'), { recursive: true })
+  mkdirSync(dscPath(), { recursive: true })
   writeFileSync(
     PLUGINS_JSON,
     `${JSON.stringify({ version: 1, entries }, null, 2)}\n`,

@@ -1662,3 +1662,19 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **贴图与预览**：终端把粘贴限定成文本、WT 对纯图片剪贴板不发字节——Ctrl+V 在按键层自接（`\x16`），PowerShell 读剪贴板三级降级：FileDrop（资源管理器复制的图片文件）→ 位图存 %TEMP% PNG → 纯文本并回草稿兜底（clipboard-image.ts）。附件以芯片行呈现（`[图#N] 名.png ✕`）：主体点击=预览、✕=摘下，提交时与正文路径提取（attach.ts）合流成 data URL 发出（发完清空）。预览浮层走**半块真彩兜底**（dsh 的 sixel/kitty 在 WT 未稳，`▀`+`38;2`/`48;2` SGR 一格双像素全终端可用）：image-blocks.ts 让 System.Drawing 高质量缩放后吐 BGRA 原始字节，Node 拼字符画（PNG/JPEG/GIF/BMP 全认，免原生图像依赖）；会话流里用户消息的图片行也升级为可点预览。App 增 `clipboardReader`/`imageRenderer` 注入口，测试不真调 PowerShell。
 
 **测试**：新 `scripts/tui-features-test.mjs` 29 项全绿（欢迎页出现/长会话不画、思考分行、状态栏两行合并+无框+帧恒定、光标停靠序列（G 序列+?25h）、图片行点击预览、Ctrl+V 芯片→提交合流 data URL→清空、芯片预览/✕ 摘下、双击 Esc 全链（prime 提示→fork 参数→切换分叉→原话回框→提示语）、/agents→转录→关闭）；session-picker-mouse-test 27 项全绿（窗口指示 1–32）；composer-test 更新到新现实（/agents 顺延一位、假光标 ▏ 断言改物理光标）；全电池 0 新增 FAIL（remote-e2e 72/74 的两项与基线 stash 对照一致，预存在问题）；双包 typecheck 绿；`node bin/dsc.js --version` → 0.6.57。已知取舍：预览的字符画宽高按 1:2 字符格近似；芯片/命中区按列分界依赖 measuredSpan（click.ts 新增 absoluteLeft）；IME 停靠在补全面板开合的一帧有滞后；FileDrop 非图片扩展名按文本并回草稿。
+
+## 阶段 81：视觉对齐批一——真彩色板 / markdown 渲染 / 点阵欢迎块 / DSC_HOME 统一（0.6.58）
+
+**动因**：用户要求界面设计对齐 dsh-TUI 并先出计划书。走查方法：隔离 HOME + 假 OpenAI 端点（`scripts/_tui-visual-run.mjs`，回包故意是富 markdown）驱动真 TUI 实机截图三态，对照用户给的 dsh v0.13.0 实机截图 + dsh 源码级设计取证（theme.ts 色板、markdown.ts/MarkdownTable 排版、LogoV2/splashFonts 结构、PageMargin 几何）。计划书在 `docs/tui-design-alignment-plan.md`（14 项差距矩阵，P0×5），本轮做批一 P0。
+
+**theme.ts 真彩化**：16 色 ANSI 名升级为 Gentle Mist Blue 真彩 hex 全套——正文 #E8E6E0 暖白、accent #7DA1DE 雾蓝、success #82B89D / error #DA8A93 / warning #D8B270、permission #ABC2EC（行内代码/小标题/列表符号共用）、userPrompt #FFDF80 用户金、pill 蓝底 #5E88CC/深字 #22262E、静止描边 #55606F、渐变三阶 brand #4D6BFE→ice #93BEFF→pale #D7E4FF。组件不再允许颜色字面量。
+
+**markdown 子集渲染**（新 `app/markdown.ts` 解析 + `app/MarkdownView.tsx` 渲染）：标题（H1 accent 粗体下划线 / H2 permission 粗体 / H3+ 粗体）、**粗体**、*斜体*（贴词 `_` 不误伤 snake_case）、行内代码、链接（accent 下划线 + url 暗淡补注——终端没有可点链接，藏 url 丢信息）、无序/有序列表（符号染 permission）、`▎` 引用、代码块（两格缩进、保留语言围栏行、无闭合围栏）、`┌─┬┐` 框线表格（表头粗体居中，列宽按 CJK=2 显示宽度、超宽降级 label: value）。白名单子集：没见过的语法退回原文渲染。text 条目接入 ChatView/TranscriptOverlay，解析按 source memo，流式光标 ▌ 挂最后一段。**踩坑实录**：表格竖线错位——border 段 `─`.repeat(w+2) 而 cell 段只有 w（少两侧空格各 1），测试加了「每行竖线显示列必须一致」的对齐断言钉死。
+
+**用户消息行**：`❯ ` + 正文全金色 #FFDF80 粗体（dsh userPromptLabel），折行续行自然对齐文字列。
+
+**欢迎块**（Welcome.tsx 重写）：`MUSE CODE` 两行 5 行点阵大字（逐行 brand→ice→pale 渐变）+ `✦ Muse Code vX` 词标 + `✦ 把想法变成代码` tagline + model/cwd/tips 信息行；随内容从顶上滚走、≥30 条不画的既有约定保留；阶梯降级（行数 ≥30 且列数 ≥40 → 全块，否则词标+信息行）。不做鲸鱼（品牌不同），不做 8 款字体轮换（P2 可选）。
+
+**DSC_HOME 统一（顺手修）**：`migrate.ts` 等把 `join(homedir(), '.dsc', ...)` 钉死在真实用户目录、`path-policy` 的 `DSC_HOME` 只管部分路径——走查第一轮隔离失效的根因。codemod 把 25 个文件的 dsc 自有存储路径统一改为 `path-policy.dscPath()`（默认值不变 = homedir/.dsc，设 `DSC_HOME` 即整体隔离）；dsh 的 `.dsh` 路径保持真实主目录（迁移源不受 DSC_HOME 影响）。
+
+**验证**：新 `scripts/markdown-render-test.mjs` 26 项（解析 15 + 渲染 11 含表格竖线对齐）；tui-features 29、picker-mouse 27、composer、resident-agents 32/0、remote-host 140/140、其余电池全绿（remote-e2e 72/74 的两项为基线预存在）；双包 typecheck 绿；`msc --version` → 0.6.58；实机截图（boot 大字渐变块 / 对话态金色用户行+蓝标题+对齐表格+链接补注）与 dsh 实机图并排核对通过。批二预告：context 进度条、回到底部 pill（蓝底+Enter/End）、块间距+页边距、`⌸` 会话按钮、思考行 ⚓ 斜体。

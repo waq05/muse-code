@@ -16,9 +16,10 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { dscPath } from './path-policy.js'
 
 /** 团队目录（任务板 + 信箱）。 */
-export const TEAM_ROOT = join(homedir(), '.dsc', 'team')
+export const TEAM_ROOT = dscPath('team')
 /** 任务板目录（每个会话一块板）。 */
 export const BOARDS_DIR = join(TEAM_ROOT, 'boards')
 /** 信箱目录（每个队友一个 jsonl）。 */

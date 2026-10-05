@@ -45,6 +45,7 @@ import { KERNEL_API_VERSION } from '../core/plugin-registry.js'
 import { DSC_PLUGINS_DIR } from '../core/plugin-loader.js'
 import { DSC_VERSION } from '../core/version.js'
 import type { SettingsSectionSpec, SettingsService } from '../services/types.js'
+import { dscPath } from '../core/path-policy.js'
 
 const err = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -76,7 +77,7 @@ const EFFORT_OPTIONS = [
 ]
 
 /** dsc 的家目录（关于分区）。 */
-const DSC_HOME = join(homedir(), '.dsc')
+const DSC_HOME = dscPath()
 
 /** 读一个包版本号（失败返回 unknown，绝不因为读版本而崩）。 */
 function packageVersion(): string {

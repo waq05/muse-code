@@ -28,6 +28,7 @@ import {
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { isValidTimeZone, normalizeRule, type ScheduleRule } from './rule.js'
+import { dscPath } from '../path-policy.js'
 
 /** 任务最近一次执行的结果。`never` = 从没跑过；`running` = 槽位已推进、投递还没落定。 */
 export type ScheduleStatus = 'never' | 'running' | 'ok' | 'failed' | 'blocked' | 'skipped' | 'done'
@@ -100,7 +101,7 @@ export interface ScheduleStoreOptions {
 
 /** 数据目录：`DSC_HOME` 优先（和仓库其他模块同一套约定），否则 `~/.dsc/schedule`。 */
 export function scheduleDir(): string {
-  const home = process.env.DSC_HOME ?? join(homedir(), '.dsc')
+  const home = process.env.DSC_HOME ?? dscPath()
   return join(home, 'schedule')
 }
 

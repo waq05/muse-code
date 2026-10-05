@@ -30,9 +30,10 @@ import { activeRules } from '../core/command-policy.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import type { SettingsField, SettingsValue, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
+import { dscPath } from '../core/path-policy.js'
 
 /** 配置与设置提示里要写清的来源文件（手改它同样生效）。 */
-const PLUGINS_FILE = join(homedir(), '.dsc', 'plugins.json')
+const PLUGINS_FILE = dscPath('plugins.json')
 
 /** 前缀清单的多行文本形式（设置页那个框读写的就是它）。 */
 function prefixText(config: FloorConfig): string {

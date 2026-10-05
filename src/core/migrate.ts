@@ -15,11 +15,12 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import YAML from 'yaml'
 import type { RawModelCaps } from './model-caps.js'
+import { dscPath } from './path-policy.js'
 
 export const DSH_SETTINGS = join(homedir(), '.dsh', 'settings.yaml')
 export const DSH_CREDENTIALS = join(homedir(), '.dsh', '.credentials.yaml')
-export const DSC_CONFIG_YAML = join(homedir(), '.dsc', 'config.yaml')
-export const DSC_CREDENTIALS = join(homedir(), '.dsc', 'credentials.yaml')
+export const DSC_CONFIG_YAML = dscPath('config.yaml')
+export const DSC_CREDENTIALS = dscPath('credentials.yaml')
 
 /** config.yaml 里一个模型条目：除 id 外都可缺省，能力字段见 core/model-caps.ts。 */
 export interface FileModel extends RawModelCaps {

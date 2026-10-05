@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
+import { dscPath } from './path-policy.js'
 
 /** 记忆分格。`global` 是跨项目的事实，`user` 是用户本人，`workspace` 只属于当前仓库。 */
 export type MemoryTarget = 'global' | 'user' | 'workspace'
@@ -111,7 +112,7 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
 
 /** 记忆目录根（`~/.dsc/memory`）。 */
 export function memoryRoot(): string {
-  return join(homedir(), '.dsc', 'memory')
+  return dscPath('memory')
 }
 
 /** 把工作目录折成一个能当目录名的键：`D:\dsc` → `d-dsc`；过长的补一段哈希。 */

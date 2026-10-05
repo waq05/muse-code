@@ -15,9 +15,10 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { dscPath } from '../path-policy.js'
 
 /** 远程控制的数据目录。 */
-export const REMOTE_DIR = join(homedir(), '.dsc', 'remote')
+export const REMOTE_DIR = dscPath('remote')
 
 /** 几份文件的位置；`dir` 只在自检脚本里换（默认就是 `~/.dsc/remote`）。 */
 export interface RemoteFiles {

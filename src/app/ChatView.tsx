@@ -17,9 +17,10 @@ import { Box, Text } from 'ink'
 import type { DOMElement } from 'ink'
 import type { JSX, ReactNode } from 'react'
 import type { TranscriptEntry } from '../contract.js'
+import { MarkdownView } from './MarkdownView.js'
 import { ToolCard } from './ToolCard.js'
 import { useClickRegion, type RegisterClick } from './click.js'
-import { ACCENT, DIFF_COLOR, GAP, INDENT, STATUS_COLOR, TEXT } from './theme.js'
+import { ACCENT, DIFF_COLOR, GAP, INDENT, PALETTE, STATUS_COLOR, TEXT } from './theme.js'
 
 const oneLine = (text: string, limit: number): string => {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -84,17 +85,19 @@ export function Entry({
   onPreviewImages?: (images: string[]) => void
   registerClick?: RegisterClick
 }): JSX.Element | null {
-  const cursor = streaming ? <Text color={ACCENT}> ▌</Text> : null
   switch (entry.kind) {
     case 'user':
       return (
         <Box flexDirection="column" gap={GAP.none}>
           {entry.compaction !== undefined ? <CompactionRule count={entry.compaction.count} /> : null}
+          {/* 用户行金色粗体（dsh userPromptLabel），自然折行续行对齐文字列 */}
           <Box>
-            <Text {...TEXT.label}>
+            <Text color={PALETTE.userPrompt} bold>
               ❯{entry.steering === true ? ' ↩' : ''}{' '}
             </Text>
-            <Text {...TEXT.body}>{entry.text}</Text>
+            <Text color={PALETTE.userPrompt} bold>
+              {entry.text}
+            </Text>
           </Box>
           {entry.images !== undefined && entry.images.length > 0 ? (
             <ImageLine
@@ -135,10 +138,7 @@ export function Entry({
     case 'text':
       return (
         <Box>
-          <Text {...TEXT.body}>
-            {entry.text}
-            {cursor}
-          </Text>
+          <MarkdownView source={entry.text} cursor={streaming} />
         </Box>
       )
     case 'tool':

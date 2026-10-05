@@ -17,6 +17,7 @@ import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { resolvePluginConfig } from './plugin-registry.js'
+import { dscPath } from './path-policy.js'
 
 /** 插件在条目树（`~/.dsc/plugins.json`）里的键。 */
 const CONFIG_KEY = 'spill'
@@ -69,7 +70,7 @@ export const SPILL_DEFAULTS: SpillConfig = {
   maxBytes: 1_048_576,
   retentionDays: 7,
   maxTotalBytes: 67_108_864,
-  dir: join(homedir(), '.dsc', 'spill'),
+  dir: dscPath('spill'),
 }
 
 /** 一次落盘的结果。 */

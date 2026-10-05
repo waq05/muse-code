@@ -16,6 +16,7 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSy
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { archivedRoot, sessionsRoot, teammateRoot, trashRoot } from './session.js'
+import { dscPath } from './path-policy.js'
 
 /** 索引文件格式版本：读到的版本对不上就整表重建（旁路缓存没有迁移价值）。 */
 export const SESSION_INDEX_VERSION = 1
@@ -61,7 +62,7 @@ export const SESSION_INDEX_BOUNDS = {
  */
 export function defaultSessionIndexOptions(): SessionIndexOptions {
   return {
-    indexDir: join(homedir(), '.dsc', 'cache'),
+    indexDir: dscPath('cache'),
     includeArchived: false,
     includeHiddenDirs: false,
     maxFileBytes: 8 * 1024 * 1024,

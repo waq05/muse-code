@@ -20,8 +20,9 @@ import { homedir } from 'node:os'
 import type { MarketSkillView, MarketSource } from '../contract.js'
 import { errText } from './err-text.js'
 import { parseSkillMarkdown } from './skills.js'
+import { dscPath } from './path-policy.js'
 
-const CACHE_DIR = join(homedir(), '.dsc', 'cache')
+const CACHE_DIR = dscPath('cache')
 const CACHE_TTL_MS = 60 * 60 * 1000
 const FETCH_TIMEOUT_MS = 15_000
 const MAX_EXTRA_FILES = 40

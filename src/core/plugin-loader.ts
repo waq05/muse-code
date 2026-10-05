@@ -30,6 +30,7 @@ import {
   type PluginMeta,
 } from './plugin-registry.js'
 import { errText as err } from './err-text.js'
+import { dscPath } from './path-policy.js'
 
 /** 内核插件 API 版本（重导出，供宿主/文档引用）。 */
 export { KERNEL_API_VERSION }
@@ -284,7 +285,7 @@ export interface PluginMountFailure {
 }
 
 /** 外部插件目录（桌面端「添加插件」的复制目标，也是这里发现 `.js` 的地方）。 */
-export const DSC_PLUGINS_DIR = join(homedir(), '.dsc', 'plugins')
+export const DSC_PLUGINS_DIR = dscPath('plugins')
 
 /** 加载全部外部插件（宿主启动时调用）：条目树驱动，含热挂载与回滚语义。 */
 export async function mountAllExternalPlugins(
@@ -321,7 +322,7 @@ function isDisabledByEntry(file: string): boolean {
 
 /** 解析条目树里的文件名 → 绝对路径（仅 ~/.dsc/plugins/ 下的外部插件）。 */
 function resolveEntryPath(file: string): string | null {
-  const candidate = join(homedir(), '.dsc', 'plugins', file)
+  const candidate = dscPath('plugins', file)
   try {
     if (statSync(candidate).isFile()) return candidate
   } catch {

@@ -12,9 +12,10 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { dscPath } from './path-policy.js'
 
 /** 审计文件（跟 config.yaml 同级）。 */
-export const AUDIT_FILE = join(homedir(), '.dsc', 'audit.jsonl')
+export const AUDIT_FILE = dscPath('audit.jsonl')
 
 /** 审计事件种类。 */
 export type AuditKind =

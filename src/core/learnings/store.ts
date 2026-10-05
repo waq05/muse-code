@@ -22,6 +22,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { dscPath } from '../path-policy.js'
 
 /** 一条候选是从哪条闭环来的。 */
 export type LearningKind = 'correction' | 'failure' | 'note' | 'skill-draft'
@@ -89,7 +90,7 @@ export function normalizeLearningsState(raw: unknown): LearningsState {
 
 /** 候选目录根（`~/.dsc/learnings`）。 */
 export function learningsRoot(): string {
-  return join(homedir(), '.dsc', 'learnings')
+  return dscPath('learnings')
 }
 
 /**

@@ -22,6 +22,7 @@ import {
   type FileProvider,
 } from './migrate.js'
 import { readModelCaps, type ModelCaps } from './model-caps.js'
+import { dscPath } from './path-policy.js'
 
 /** 一个可对话的模型（能力声明见 core/model-caps.ts）。 */
 export interface ModelInfo extends ModelCaps {
@@ -51,7 +52,7 @@ export interface DscCoreConfig {
   temperature?: number
 }
 
-const DSC_CONFIG_JSON = join(homedir(), '.dsc', 'config.json')
+const DSC_CONFIG_JSON = dscPath('config.json')
 
 /**
  * 把凭据库的 refs 段（env 名 → key 值）注入 process.env：dsc 自己的

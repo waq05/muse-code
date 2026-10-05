@@ -12,8 +12,9 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { ApprovalPolicy, ArchivedFilter, EffortLevel, MarketSource, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiPrefsView, UiProcessFold } from '../contract.js'
 import { isHttpUrl } from './remote/notify.js'
+import { dscPath } from './path-policy.js'
 
-export const DSC_SETTINGS_JSON = join(homedir(), '.dsc', 'settings.json')
+export const DSC_SETTINGS_JSON = dscPath('settings.json')
 
 /** 预置市场源：Anthropic 官方技能库 + dsh 仓库自带的 .agents/skills。 */
 export const DEFAULT_MARKET_SOURCES: readonly MarketSource[] = [

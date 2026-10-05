@@ -17,12 +17,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { dscPath } from './path-policy.js'
 
 /** 单条命令段的判定结果（从严到宽）。 */
 export type CommandDecision = 'allow' | 'ask' | 'deny'
 
 /** 用户规则文件路径（和 config.yaml 同级；能手改，也允许审批卡往里追加）。 */
-export const POLICY_RULES_FILE = join(homedir(), '.dsc', 'policy.rules')
+export const POLICY_RULES_FILE = dscPath('policy.rules')
 
 /** 一条前缀规则：`pattern` 是要按序匹配的命令词，末尾 `*` 表示「后面随便」。 */
 export interface PrefixRule {

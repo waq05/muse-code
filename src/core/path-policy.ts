@@ -19,6 +19,11 @@ import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 /** dsc 自己的配置目录（config.yaml / credentials.yaml 住这里）。 */
 export const DSC_HOME = process.env.DSC_HOME ?? join(homedir(), '.dsc')
 
+/** dsc 自有存储下的绝对路径（config、会话、用量、插件……隔离测试与迁移的单一坐标）。 */
+export function dscPath(...parts: string[]): string {
+  return join(DSC_HOME, ...parts)
+}
+
 /** 主目录下的路径（凭据文件、设置文件的绝对坐标）。 */
 function joinHomeAbsolute(...parts: string[]): string {
   return join(homedir(), ...parts)

@@ -20,9 +20,10 @@ import { browsePluginMarketSource, installPluginMarketEntry, type MarketEntry } 
 import { listPluginInfos } from '../core/plugin-registry.js'
 import { mountExternalPlugin, setPluginEnabledHot } from '../core/plugin-loader.js'
 import type { ToolEntry } from '../core/tools.js'
+import { dscPath } from '../core/path-policy.js'
 
 function pluginsDir(): string {
-  return join(homedir(), '.dsc', 'plugins')
+  return dscPath('plugins')
 }
 
 function renderList(): string {

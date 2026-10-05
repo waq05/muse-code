@@ -35,6 +35,7 @@ import type { HookJudgement, HookRun, HookScript } from './hooks.js'
 import { resolvePluginConfig } from './plugin-registry.js'
 import { scrubChildEnv, redact } from './secrets.js'
 import { wrapUntrusted } from './untrusted.js'
+import { dscPath } from './path-policy.js'
 
 // ── 十二个事件与它们的档位 ───────────────────────────────────────────────────
 
@@ -189,7 +190,7 @@ export interface LifecycleHooksConfig {
 /** 缺省值。放着让用户改，不是硬编码的裁决。 */
 export const LIFECYCLE_DEFAULTS: LifecycleHooksConfig = {
   enabled: true,
-  configPath: join(homedir(), '.dsc', 'lifecycle-hooks.json'),
+  configPath: dscPath('lifecycle-hooks.json'),
   timeoutMs: HOOK_TIMEOUT_DEFAULT,
   failClosed: true,
   commandAllowlist: '',
