@@ -100,6 +100,10 @@ export const commandsPlugin: Plugin.Object = {
       ({ ui }) => ui.openAgents?.(),
     )
     service.register(
+      { name: 'settings', args: '', description: '打开设置页' },
+      ({ ui }) => ui.openSettings?.(),
+    )
+    service.register(
       {
         name: 'model',
         args: '<[端点/]模型名>',

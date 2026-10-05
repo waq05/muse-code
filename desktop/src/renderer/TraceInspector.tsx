@@ -126,6 +126,20 @@ export function TraceInspector(props: {
           </Section>
         )}
 
+        {entry.kind === 'subagent' && (
+          <Section label="子代理">
+            <dl className="ti-facts">
+              <Fact label="任务" value={entry.sub.task} />
+              <Fact label="名称" value={entry.sub.name} />
+              <Fact label="状态" value={entry.sub.state} />
+              {entry.sub.model !== undefined && <Fact label="模型" value={entry.sub.model} />}
+              <Fact label="轮数" value={String(entry.sub.rounds)} />
+              <Fact label="工具调用" value={String(entry.sub.toolCalls)} />
+              {entry.sub.tokens !== undefined && <Fact label="Token" value={String(entry.sub.tokens)} />}
+            </dl>
+          </Section>
+        )}
+
         {entry.kind === 'system' && (
           <Section label="通知原文">
             <pre className="ti-code" data-trace-code="system">

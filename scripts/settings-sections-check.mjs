@@ -77,6 +77,20 @@ check(
   `${beforeMount.length} → ${afterMount.length}`,
 )
 
+console.log('\n── 终端界面：TUI 自己的显示偏好 ──')
+const tuiSectionView = kernel.settings.sections().find((section) => section.id === 'tui')
+check('终端界面分区已注册', tuiSectionView !== undefined, JSON.stringify(kernel.settings.sections().map((s) => s.id)))
+check('终端界面分区是声明式（非 custom，两端同一张表渲染）', tuiSectionView?.custom === false, String(tuiSectionView?.custom))
+check(
+  '思考块默认展开开关在字段表里',
+  tuiSectionView?.fields.some((field) => field.key === 'reasoningDefaultOpen') === true,
+  JSON.stringify(tuiSectionView?.fields.map((field) => field.key)),
+)
+const tuiSaved = await kernel.settings.save('tui', 'reasoningDefaultOpen', true)
+check('写入思考块默认展开成功', tuiSaved.ok === true, JSON.stringify(tuiSaved))
+check('成功回执走 notice（不进 error 字段）', tuiSaved.ok === true && tuiSaved.notice !== undefined, JSON.stringify(tuiSaved))
+check('值落到了 prefs.ui（ui 层深合并不动其它键）', kernel.settings.prefs().ui.reasoningDefaultOpen === true, String(kernel.settings.prefs().ui.reasoningDefaultOpen))
+
 console.log('\n── 插件贡献的分区：不传第二参照旧不进设置页 ──')
 const offPlain = kernel.settings.registerSection({
   id: 'probe-plain',

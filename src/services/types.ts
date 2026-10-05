@@ -445,6 +445,11 @@ export interface CommandContext {
    * 忽略该回调（命令本身仍注册，/help 里可见）。
    */
   openAgents?(): void
+  /**
+   * 打开设置页（/settings）。可选：桌面端映射到自己的设置窗口，暂未接的端
+   * 忽略该回调（命令本身仍注册，/help 里可见）。
+   */
+  openSettings?(): void
   notice(text: string): void
 }
 
@@ -765,8 +770,12 @@ export interface SettingsSectionSpec {
   fields(): SettingsField[]
   /** 当前控件值（打开分区时调用）。 */
   values(): MaybePromise<SettingsValues>
-  /** 控件写入；抛错或返回字符串 = 失败原因。 */
-  save?(key: string, value: SettingsValue): MaybePromise<string | void>
+  /**
+   * 控件写入；返回字符串 = 失败原因（老契约，校验不过的短报错），
+   * 返回 {@link SettingsMutationOk} = 成功（`notice` 是给用户看的回执文案），
+   * 返回 void = 成功且无回执，抛错 = 失败原因。
+   */
+  save?(key: string, value: SettingsValue): MaybePromise<string | void | SettingsMutationOk>
   /**
    * 按钮动作；返回字符串 = 完成后的提示文案（变成长在控件下面的一行字），
    * 返回 {@link SettingsMutationOk} = 文案之外再带一份结构化数据给界面（如「连接手机」的

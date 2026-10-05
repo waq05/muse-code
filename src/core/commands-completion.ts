@@ -32,6 +32,7 @@ export const BUILT_IN_COMMANDS: CommandSpec[] = [
   { name: 'copy', args: '', description: '复制上一条回复到剪贴板' },
   { name: 'export', args: '[文件路径]', description: '导出当前会话为 markdown' },
   { name: 'review', args: '[关注点]', description: '审查工作区未提交改动' },
+  { name: 'settings', args: '', description: '打开设置页' },
   { name: 'help', args: '', description: '查看帮助' },
   { name: 'exit', args: '', description: '退出' },
 ]

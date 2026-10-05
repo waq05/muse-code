@@ -27,6 +27,7 @@
  *
  * @module dsc-tui/app/App
  */
+import { spawn } from 'node:child_process'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Box, Text, useInput, useStdout } from 'ink'
 import type { DOMElement } from 'ink'
@@ -35,6 +36,10 @@ import type {
   ArchivedSessionView,
   DscRuntime,
   SessionSummary,
+  SettingsField,
+  SettingsSectionView,
+  SettingsValue,
+  SettingsValues,
   TranscriptEntry,
 } from '../contract.js'
 import { runCommand } from '../plugins/commands.js'
@@ -50,6 +55,14 @@ import { ModelPicker } from './ModelPicker.js'
 import { PlanReviewCard, type PlanAction } from './PlanReviewCard.js'
 import { PreviewOverlay } from './PreviewOverlay.js'
 import { SessionPicker } from './SessionPicker.js'
+import { SETTINGS_CHROME, SETTINGS_LIST_TOP, SettingsOverlay } from './SettingsOverlay.js'
+import {
+  buildSettingsRows,
+  focusableRows,
+  isFocusableRow,
+  settingsWindowStart,
+  type SettingsRow,
+} from './settings-model.js'
 import { shortId, StatusBar } from './StatusBar.js'
 import { TaskStrips } from './TaskStrips.js'
 import { TranscriptOverlay } from './TranscriptOverlay.js'
@@ -166,6 +179,14 @@ export function App({
   const [modelPicker, setModelPicker] = useState(false)
   const [modelIndex, setModelIndex] = useState(0)
   const [modelQuery, setModelQuery] = useState('')
+  /** ---- 0.6.61：设置页（/settings）---- 焦点/草稿/回执/滚动全在这组状态里。 */
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsSections, setSettingsSections] = useState<SettingsSectionView[]>([])
+  const [settingsValues, setSettingsValues] = useState<Record<string, SettingsValues>>({})
+  /** 焦点在 focusables（可聚焦行号表）里的位置。 */
+  const [settingsIndex, setSettingsIndex] = useState(0)
+  const [settingsEdit, setSettingsEdit] = useState<{ sectionId: string; key: string; draft: string } | null>(null)
+  const [settingsNotice, setSettingsNotice] = useState<{ ok: boolean; text: string } | null>(null)
   const lastCtrlC = useRef(0)
   /** 可切换模型列表：进程内静态，取一次即可。 */
   const models = useMemo(() => runtime.listModels(), [runtime])
@@ -213,6 +234,13 @@ export function App({
       }
     }
   }, [snapshot.status.turnState, stdout])
+
+  // 设置里的「思考块默认展开」是初值（0.6.61）：启动读一次，Ctrl+T 仍是会话内
+  // 的临时开关。旧测试的 runtime mock 没有这个方法——缺了就静默跳过。
+  useEffect(() => {
+    if (typeof runtime.getUiPrefs !== 'function') return
+    if (runtime.getUiPrefs().reasoningDefaultOpen === true) setExpandThinking(true)
+  }, [runtime])
 
   // 鼠标跟踪全时开启（SGR 点击/滚轮；不启用 1002/1003——拖拽选区留给终端原生行为）。
   useEffect(() => {
@@ -351,6 +379,19 @@ export function App({
   const chatEnd = Math.min(chatAnchor ?? snapshot.entries.length, snapshot.entries.length)
   const chatWindow = snapshot.entries.slice(Math.max(0, chatEnd - CHAT_WINDOW), chatEnd)
 
+  // ---- 设置页（/settings）的行模型与窗口切片（几何与 SettingsOverlay 共表）----
+  const settingsRows = useMemo(() => buildSettingsRows(settingsSections), [settingsSections])
+  const settingsFocusables = useMemo(
+    () => focusableRows(settingsRows, settingsSections),
+    [settingsRows, settingsSections],
+  )
+  /** 焦点行 = focusables 里的第 index 个；列表变短时夹住（分区装载前后都安全）。 */
+  const settingsFocusRow =
+    settingsFocusables[Math.min(settingsIndex, Math.max(0, settingsFocusables.length - 1))] ?? 0
+  /** 设置页视口：帧内扣除固定框架（上下边框 2 + 标题 1 + notice 1 + 提示条 1）。 */
+  const settingsViewport = Math.max(1, frameRows - statusbarLines - SETTINGS_CHROME)
+  const settingsWindow = settingsWindowStart(settingsFocusRow, settingsViewport, settingsRows.length)
+
   /** 回看浮层的窗口（offset 是从尾部往回的条数）。 */
   const overlayTotal = snapshot.entries.length
   const overlayEnd = Math.max(1, overlayTotal - Math.min(scrollOffset, Math.max(0, overlayTotal - 1)))
@@ -422,6 +463,147 @@ export function App({
     if (choice === undefined) return
     setModelPicker(false)
     void runtime.setModel(choice.value)
+  }
+
+  // ---- 0.6.61：设置页的动作（Enter 与鼠标点击共用的唯一真源）----
+
+  /** 写一个设置项：回执进设置页底部 notice 行；成功后就地刷新值表（改动即保存）。 */
+  const applySetting = (sectionId: string, key: string, value: SettingsValue): void => {
+    void runtime
+      .setSettingValue(sectionId, key, value)
+      .then((mutation) => {
+        if (!mutation.ok) {
+          setSettingsNotice({ ok: false, text: mutation.error })
+          return
+        }
+        setSettingsValues((current) => ({
+          ...current,
+          [sectionId]: { ...current[sectionId], [key]: value },
+        }))
+        setSettingsNotice({ ok: true, text: mutation.notice ?? '已保存' })
+        // 思考块默认展开除了新会话语义，当前会话也当场跟着切
+        if (sectionId === 'tui' && key === 'reasoningDefaultOpen') setExpandThinking(value === true)
+      })
+      .catch((cause: unknown) =>
+        setSettingsNotice({ ok: false, text: cause instanceof Error ? cause.message : String(cause) }),
+      )
+  }
+
+  /** 执行分区动作（button 字段）：回执可能带结构化载荷（发布页链接等），TUI 只显示文案。 */
+  const runSettingsAction = (sectionId: string, action: string): void => {
+    void runtime
+      .runSettingAction(sectionId, action)
+      .then((mutation) => {
+        if (!mutation.ok) {
+          setSettingsNotice({ ok: false, text: mutation.error })
+          return
+        }
+        const fallback = mutation.data?.kind === 'url' ? mutation.data.url : '已完成'
+        setSettingsNotice({ ok: true, text: mutation.notice ?? fallback })
+      })
+      .catch((cause: unknown) =>
+        setSettingsNotice({ ok: false, text: cause instanceof Error ? cause.message : String(cause) }),
+      )
+  }
+
+  /** info.copyable 行的复制：/copy 同款（win32 clip / darwin pbcopy / linux wl-copy）。 */
+  const copyInfoText = (text: string): void => {
+    const command =
+      process.platform === 'darwin' ? 'pbcopy' : process.platform === 'win32' ? 'clip' : 'wl-copy'
+    try {
+      const child = spawn(command, [], { stdio: ['pipe', 'ignore', 'ignore'] })
+      child.on('error', () => setSettingsNotice({ ok: false, text: `复制失败：找不到 ${command} 命令` }))
+      child.stdin?.end(text)
+      setSettingsNotice({ ok: true, text: `已复制：${text}` })
+    } catch (error) {
+      setSettingsNotice({
+        ok: false,
+        text: `复制失败：${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+  }
+
+  /** 行 → 字段解析（结构行或下标越界返回 null）。 */
+  const settingsFieldAt = (row: SettingsRow | undefined): { sectionId: string; field: SettingsField } | null => {
+    if (row === undefined || row.kind !== 'field') return null
+    const section = settingsSections.find((entry) => entry.id === row.sectionId)
+    const field = section?.fields[row.fieldIndex]
+    return field !== undefined ? { sectionId: row.sectionId, field } : null
+  }
+
+  /** 行的主动作（Enter 与「点击该行」共用）：switch/select 改值即存，text/number 进编辑。 */
+  const activateSettingsRow = (row: SettingsRow | undefined, direction: 1 | -1): void => {
+    if (row?.kind === 'hint') {
+      if (row.jump === 'model-picker') {
+        setSettingsOpen(false)
+        setModelPicker(true)
+        setModelIndex(0)
+        setModelQuery('')
+      } else if (row.jump === 'usage') {
+        setSettingsOpen(false)
+        runCommand('/usage', runtime, {
+          openPicker: openSessionPicker,
+          openModels: () => {},
+          openAgents,
+          notice: setNotice,
+        })
+      }
+      return
+    }
+    const hit = settingsFieldAt(row)
+    if (hit === null) return
+    const { sectionId, field } = hit
+    if (field.type === 'switch') {
+      applySetting(sectionId, field.key, settingsValues[sectionId]?.[field.key] === true ? false : true)
+      return
+    }
+    if (field.type === 'select') {
+      const options = field.options
+      if (options.length === 0) return
+      const current = String(settingsValues[sectionId]?.[field.key] ?? '')
+      const at = options.findIndex((option) => option.value === current)
+      const next = options[(((at + direction) % options.length) + options.length) % options.length] ?? options[0]
+      if (next !== undefined) applySetting(sectionId, field.key, next.value)
+      return
+    }
+    if (field.type === 'text' || field.type === 'number') {
+      const current = settingsValues[sectionId]?.[field.key]
+      setSettingsEdit({ sectionId, key: field.key, draft: current === undefined ? '' : String(current) })
+      return
+    }
+    if (field.type === 'button') {
+      runSettingsAction(sectionId, field.action)
+      return
+    }
+    if (field.type === 'info' && field.copyable === true) copyInfoText(field.text)
+  }
+
+  /** 编辑态 Enter：number 先校验（非法留编辑态弹红，对齐 dsh），text 直接入库。 */
+  const commitSettingsEdit = (): void => {
+    if (settingsEdit === null) return
+    const hit = settingsFieldAt(settingsRows[settingsFocusRow])
+    if (hit === null || !('key' in hit.field) || hit.field.key !== settingsEdit.key) {
+      setSettingsEdit(null)
+      return
+    }
+    if (hit.field.type === 'number') {
+      const parsed = Number(settingsEdit.draft)
+      const invalid =
+        settingsEdit.draft.trim() === '' ||
+        Number.isNaN(parsed) ||
+        (hit.field.min !== undefined && parsed < hit.field.min) ||
+        (hit.field.max !== undefined && parsed > hit.field.max)
+      if (invalid) {
+        const range = `${hit.field.min ?? '-∞'}–${hit.field.max ?? '∞'}`
+        setSettingsNotice({ ok: false, text: `无效输入：需要 ${range} 之间的数字` })
+        return
+      }
+      setSettingsEdit(null)
+      applySetting(hit.sectionId, hit.field.key, parsed)
+      return
+    }
+    setSettingsEdit(null)
+    if (hit.field.type === 'text') applySetting(hit.sectionId, hit.field.key, settingsEdit.draft)
   }
 
   // ---- 0.6.57：双击 Esc 撤回上一轮 ----
@@ -529,6 +711,28 @@ export function App({
     setAgentIndex(0)
   }, [])
 
+  /** 打开设置页（/settings 命令入口）：同步拿分区表，值表逐分区异步装填。 */
+  const openSettings = useCallback(() => {
+    const sections = runtime.getSettingsSections()
+    setSettingsSections(sections)
+    setSettingsValues({})
+    setSettingsIndex(0)
+    setSettingsEdit(null)
+    setSettingsNotice(null)
+    setSettingsOpen(true)
+    for (const section of sections) {
+      void runtime
+        .getSectionValues(section.id)
+        .then((sectionValues) => {
+          setSettingsValues((current) => ({ ...current, [section.id]: sectionValues }))
+        })
+        .catch(() => {
+          // 单个分区取值失败不拖垮整页：空表 = 控件显示占位，保存时由后端报错
+          setSettingsValues((current) => ({ ...current, [section.id]: {} }))
+        })
+    }
+  }, [runtime])
+
   /** 打开会话选择器（/resume 命令、输入框 ⌸ 按钮、点击入口共用一条通道）。 */
   const openSessionPicker = useCallback(() => {
     setPicker(true)
@@ -603,6 +807,11 @@ export function App({
         } else if (transcriptOpen) {
           const maxOffset = Math.max(0, snapshot.entries.length - 1)
           setScrollOffset((current) => Math.max(0, Math.min(current - step, maxOffset)))
+        } else if (settingsOpen) {
+          // 设置页滚轮 = 移动焦点（dsh 同语义），窗口随焦点跟随
+          setSettingsIndex((current) =>
+            Math.max(0, Math.min(current + step, Math.max(0, settingsFocusables.length - 1))),
+          )
         } else {
           scrollChat(step)
         }
@@ -625,6 +834,18 @@ export function App({
         if (row0 < 0 || row0 >= modelList.length) return
         if (row0 === modelIndex) applyModel()
         else setModelIndex(row0)
+        return
+      }
+      if (settingsOpen) {
+        if (settingsEdit !== null) return // 草稿由键盘独占（对齐 dsh 的编辑态）
+        // 列表行从「外框顶边 + 标题行」之后起排，滚动窗口与组件共用同一份行模型
+        const slice = row - 1 - SETTINGS_LIST_TOP
+        if (slice < 0 || slice >= settingsViewport) return
+        const target = settingsRows[settingsWindow + slice]
+        if (target === undefined || (target.kind !== 'field' && target.kind !== 'hint')) return
+        const fields = settingsSections.find((section) => section.id === target.sectionId)?.fields ?? []
+        if (!isFocusableRow(target, fields)) return
+        activateSettingsRow(target, 1)
         return
       }
       // 卡片页脚按钮 / 提问选项 / 回底提示条 / 附件与后台芯片 / 图片行：点击时现量
@@ -869,6 +1090,42 @@ export function App({
       }
       return
     }
+    // 设置页：编辑态独占键盘（对齐 dsh，草稿之外的一切都不响应）；其余 ↑↓ 焦点、
+    // ←→ 循环 select、Enter 主动作（切换/编辑/执行/复制/跳转）、Esc 关页。
+    if (settingsOpen) {
+      const at = Math.min(settingsIndex, Math.max(0, settingsFocusables.length - 1))
+      const focusRow = settingsFocusables[at] ?? 0
+      if (settingsEdit !== null) {
+        if (key.escape) {
+          setSettingsEdit(null)
+        } else if (key.return) {
+          commitSettingsEdit()
+        } else if (key.backspace || key.delete) {
+          setSettingsEdit({ ...settingsEdit, draft: settingsEdit.draft.slice(0, -1) })
+        } else if (!key.ctrl && !key.meta) {
+          const printable = input.replace(/[\r\n\t]+/g, '')
+          if (printable !== '') {
+            setSettingsEdit({ ...settingsEdit, draft: settingsEdit.draft + printable })
+          }
+        }
+        return
+      }
+      if (key.escape) {
+        setSettingsOpen(false)
+        return
+      }
+      if (key.upArrow) {
+        setSettingsIndex(Math.max(0, at - 1))
+        return
+      }
+      if (key.downArrow) {
+        setSettingsIndex(Math.min(settingsFocusables.length - 1, at + 1))
+        return
+      }
+      if (key.return || key.rightArrow) activateSettingsRow(settingsRows[focusRow], 1)
+      else if (key.leftArrow) activateSettingsRow(settingsRows[focusRow], -1)
+      return
+    }
     // 回到底部 pill 可见且输入为空时：Enter/End 跳回最新（codex/dsh 同语义；
     // 输入非空时 End 仍归 Composer 的光标移动）。
     if (chatAnchor !== null && !modal && !panelOpen && draftRef.current === '') {
@@ -934,6 +1191,7 @@ export function App({
           setModelQuery('')
         },
         openAgents,
+        openSettings,
         notice: setNotice,
       })
       return
@@ -965,6 +1223,7 @@ export function App({
     picker ||
     transcriptOpen ||
     modelPicker ||
+    settingsOpen ||
     preview !== null ||
     agentView !== null ||
     (plan !== null && !planFeedback)
@@ -1013,6 +1272,17 @@ export function App({
         <TranscriptOverlay entries={overlayWindow} start={overlayStart} total={overlayTotal} />
       ) : modelPicker ? (
         <ModelPicker models={modelList} index={modelIndex} query={modelQuery} />
+      ) : settingsOpen ? (
+        <SettingsOverlay
+          sections={settingsSections}
+          rows={settingsRows}
+          values={settingsValues}
+          focusRow={settingsFocusRow}
+          windowStart={settingsWindow}
+          viewport={settingsViewport}
+          editing={settingsEdit}
+          notice={settingsNotice}
+        />
       ) : (
         <>
           <Box flexDirection="column" flexGrow={1} overflowY="hidden" justifyContent="flex-end">

@@ -25,7 +25,7 @@ import { entryTs } from './turn-timing.js'
  * （它同时是二级分组的边界，但整轮折叠仍包含它）。
  */
 export type TraceStepKind =
-  | 'tool' | 'thinking' | 'system' | 'plan' | 'turn-end' | 'turn-max-tokens' | 'model-retry'
+  | 'tool' | 'thinking' | 'subagent' | 'system' | 'plan' | 'turn-end' | 'turn-max-tokens' | 'model-retry'
 
 /** 轨迹页会渲染的条目（去掉 user / text：前者是轮头，后者留在对话页）。 */
 export type TraceStepEntry = Extract<TranscriptEntry, { kind: TraceStepKind }>
@@ -98,6 +98,7 @@ export interface TraceModel {
 export const KIND_LABEL: Record<TraceStepKind | 'user' | 'changes' | 'turnDiff', string> = {
   tool: '工具调用',
   thinking: '思考',
+  subagent: '子代理',
   system: '系统事件',
   plan: '计划卡',
   'turn-end': '轮结束',
@@ -130,6 +131,9 @@ export function stepName(entry: TranscriptEntry): string {
       return '达到长度上限'
     case 'model-retry':
       return `模型重试（第 ${String(entry.attempt)} 次）`
+    case 'subagent':
+      // 任务是身份：时间条悬停与检查器标题都用它认卡；太长截断
+      return entry.sub.task.length > 24 ? `${entry.sub.task.slice(0, 24)}…` : entry.sub.task
     case 'user':
       return '用户消息'
     default:

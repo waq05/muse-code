@@ -161,16 +161,26 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     }
 
     /**
-     * 分区 `save()` 专用的那一条：返回值含义与 {@link mutate} 相反。
+     * 分区 `save()` 专用的那一条：返回字符串 = 失败原因（老契约，插件分区都在用），
+     * 返回 {@link SettingsMutationOk} = 成功（`notice` 是给用户看的回执文案），
+     * 抛错同样是失败，void = 成功且无回执。
      *
-     * 契约见 `SettingsSectionSpec.save`——「抛错或返回字符串 = 失败原因」，而字符串当
-     * 成功提示是 `action()` 与 `saveProvider()` 那几条路的规矩。两条共用一个 mutate，
-     * 校验失败会显示成绿色的成功提示条，错值还会被存进去。
+     * 历史包袱：general 分区曾把成功文案直接 return（老契约下进了 error 字段），
+     * 桌面端将错就错把它当反馈显示（红色 toast）。0.6.61 起成功回执走 notice，
+     * 两端都显示成正常提示。
      */
-    async function mutateSave(work: () => string | void | Promise<string | void>): Promise<SettingsMutation> {
+    async function mutateSave(
+      work: () => string | void | SettingsMutationOk | Promise<string | void | SettingsMutationOk>,
+    ): Promise<SettingsMutation> {
       try {
-        const failure = await work()
-        if (typeof failure === 'string' && failure !== '') return { ok: false, error: failure }
+        const result = await work()
+        if (result !== null && typeof result === 'object') {
+          return {
+            ok: true,
+            notice: typeof result.notice === 'string' && result.notice !== '' ? result.notice : undefined,
+          }
+        }
+        if (typeof result === 'string' && result !== '') return { ok: false, error: result }
         return { ok: true }
       } catch (error) {
         return { ok: false, error: err(error) }
@@ -211,25 +221,27 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           if (!POLICY_OPTIONS.some((option) => option.value === policy)) throw new Error(`未知的权限模式 ${value}`)
           ctx.approval.setPolicy(policy)
           savePrefs({ defaultPolicy: policy })
-          return `权限模式已设为「${POLICY_OPTIONS.find((option) => option.value === policy)?.label ?? policy}」，下次启动沿用`
+          return { notice: `权限模式已设为「${POLICY_OPTIONS.find((option) => option.value === policy)?.label ?? policy}」，下次启动沿用` }
         }
         if (key === 'effort') {
           const effort = String(value) as EffortLevel
           if (!EFFORT_OPTIONS.some((option) => option.value === effort)) throw new Error(`未知的思考强度 ${value}`)
           ctx.llm.setEffort(effort)
           savePrefs({ defaultEffort: effort })
-          return `思考强度已设为「${EFFORT_OPTIONS.find((option) => option.value === effort)?.label ?? effort}」，下次启动沿用`
+          return { notice: `思考强度已设为「${EFFORT_OPTIONS.find((option) => option.value === effort)?.label ?? effort}」，下次启动沿用` }
         }
         if (key === 'temperature') {
           writeTemperature(value === 'follow' ? null : Number(value))
           reloadLive()
-          return value === 'follow' ? '已改为跟随端点默认' : `温度已设为 ${value}`
+          return { notice: value === 'follow' ? '已改为跟随端点默认' : `温度已设为 ${value}` }
         }
         if (key === 'closeToTray') {
           savePrefs({ closeToTray: value === true })
-          return value === true
-            ? '已设为关窗缩到托盘，托盘图标可以唤起或退出'
-            : '已设为关窗直接退出（宿主收尾最多 2 秒）'
+          return {
+            notice: value === true
+              ? '已设为关窗缩到托盘，托盘图标可以唤起或退出'
+              : '已设为关窗直接退出（宿主收尾最多 2 秒）',
+          }
         }
         throw new Error(`未知的设置项 ${key}`)
       },
@@ -290,6 +302,39 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       values: () => ({}),
     }
 
+    // ── 内置分区：终端界面（TUI 自己的显示偏好；桌面端不消费这些键） ────────────
+    const tuiSection: SettingsSectionSpec = {
+      id: 'tui',
+      title: '终端界面',
+      subtitle: '终端版（TUI）自己的显示偏好',
+      order: 35,
+      fields(): SettingsField[] {
+        return [
+          {
+            type: 'switch',
+            key: 'reasoningDefaultOpen',
+            label: '思考块默认展开',
+            help: '新会话的思考块默认摊开；会话内 Ctrl+T 随时切换',
+          },
+        ]
+      },
+      values(): Values {
+        return { reasoningDefaultOpen: prefs.ui.reasoningDefaultOpen }
+      },
+      async save(key, value) {
+        if (key === 'reasoningDefaultOpen') {
+          // UiPrefsView 是必填字段的整对象契约，这里整份展开只换目标键，
+          // writePrefs 落盘时对 ui 层做合并。成功回执走 { notice }（save 的
+          // 老契约里返回字符串是失败原因，不能拿来当提示文案）。
+          savePrefs({ ui: { ...prefs.ui, reasoningDefaultOpen: value === true } })
+          return {
+            notice: value === true ? '思考块已设为默认展开，新会话生效' : '思考块已设为默认折叠，新会话生效',
+          }
+        }
+        throw new Error(`未知的设置项 ${key}`)
+      },
+    }
+
     // ── 内置分区：关于 ────────────────────────────────────────────────────────
     const about: SettingsSectionSpec = {
       id: 'about',
@@ -341,7 +386,7 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       }
     }
 
-    for (const section of [general, models, presetsSection, skillsSection, archiveSection, usageSection, about]) {
+    for (const section of [general, models, presetsSection, skillsSection, archiveSection, usageSection, tuiSection, about]) {
       register(section, true)
     }
 
