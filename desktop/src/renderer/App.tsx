@@ -39,6 +39,7 @@ import {
   unsplitPane as dockUnsplitPane,
 } from './dock-model.js'
 import { PluginsView } from './PluginsView.js'
+import { QueueDock } from './queue-dock.js'
 import { SessionPicker } from './SessionPicker.js'
 import { isSessionMarker } from './session-marker.js'
 import { SettingsModal } from './SettingsModal.js'
@@ -549,7 +550,7 @@ export function App(): JSX.Element {
     })
   }
 
-  const handleSubmit = (text: string, images?: string[]): void => {
+  const handleSubmit = (text: string, images?: string[], options?: { steer?: boolean }): void => {
     setTab('chat')
     if (text.startsWith('/') && images === undefined) {
       // / 命令统一派发到宿主命令注册表（内置 + 外部插件命令）；
@@ -558,11 +559,23 @@ export function App(): JSX.Element {
       void proxy.runCommand(text)
       return
     }
+    // 插话（Ctrl+Enter）：先按普通路径提交，提交完再让宿主把新那条提到队首、打断当前
+    // 回合。下标按「提交那一刻队列有多长」算——新的一条必然排在队尾，而队伍只会从尾
+    // 巴长出来（提示、作业通知也排在后面），所以这个下标在两步之间不会漂。回合要是在
+    // 这两步的空档里刚好跑完，宿主那边队列已空、不会动手（见 core/loop.ts 的 steerQueued），
+    // 消息那时已经作为新一轮发出去了，这里只提示一句。
+    const steerIndex = options?.steer === true ? (snapshot === null ? 0 : snapshot.queued.length) : null
     // 新会话在首条消息落盘之前不留文件，侧栏看不见它：submit 的宿主处理器里同步
     // appendUser，RPC 回来时文件已存在，这时刷一次列表才有效（分叉路径同款坑，见 ChatView）
     proxy
       .submit(text, images)
-      .then(() => proxy.refreshSessions())
+      .then(() => {
+        proxy.refreshSessions().catch(() => {})
+        if (steerIndex === null) return
+        void proxy.steerQueued(steerIndex).then((done) => {
+          if (!done) toastErr('插话没赶上：这一轮刚结束，这条消息会自己发出去')
+        })
+      })
       .catch(() => {})
   }
 
@@ -588,7 +601,11 @@ export function App(): JSX.Element {
 
   // 顶栏标题：活动会话的标题（首条用户消息），否则最近一条用户消息，否则「新会话」
   const active = snapshot.sessions.find((s) => s.id.endsWith(`${snapshot.status.sessionId ?? '#'}.jsonl`))
-  const lastUser = [...snapshot.entries].reverse().find((entry) => entry.kind === 'user')
+  // 运行时投递的消息（队友汇报）不当标题来源：它的正文是 <teammate-report> 机器文本，
+  // 拿它当标题就是一行 XML。
+  const lastUser = [...snapshot.entries]
+    .reverse()
+    .find((entry) => entry.kind === 'user' && entry.internal !== true)
   const conversationTitle =
     active?.title ??
     (lastUser !== undefined && lastUser.kind === 'user' ? lastUser.text.slice(0, 40) : '新会话')
@@ -727,9 +744,28 @@ export function App(): JSX.Element {
           <>
             <div className="topbar">
               <div className="topbar-title-row">
-                <span className="title" data-tip={peek === null ? conversationTitle : `队友 ${peek.name} 的运行记录，只读`}>
-                  {peek === null ? conversationTitle : `队友 ${peek.name}`}
-                </span>
+                {peek === null ? (
+                  <span className="title" data-tip={conversationTitle}>
+                    {conversationTitle}
+                  </span>
+                ) : (
+                  /* 会话层级（对照 dsh 的 ConversationSessionHeader 里的 nav.crumbs）：
+                     左边那节是按钮——点它回主会话；右边是当前看的那份队友运行记录，纯文本
+                     （点它没有去处）。看队友时标题栏原来只写「队友 xxx」，回主会话只能按
+                     运行记录头行那颗小 ×，或者去会话列里点主会话那行。 */
+                  <nav className="crumbs" aria-label="会话层级">
+                    <button className="crumb crumb-link" data-tip="回主会话" onClick={() => setPeek(null)}>
+                      {conversationTitle}
+                    </button>
+                    <span className="crumb-sep" aria-hidden>
+                      /
+                    </span>
+                    <span className="crumb crumb-current" data-tip={`队友 ${peek.name} 的运行记录，只读`}>
+                      队友 {peek.name}
+                    </span>
+                    <span className="crumb-badge">只读</span>
+                  </nav>
+                )}
                 {/* 本会话派出的子智能体（对齐 dsh 的「55 个子智能体」下拉）：一个都没有时
                     整颗不渲染，标题右边不留空壳。 */}
                 {sessionMates.length > 0 && (
@@ -881,24 +917,33 @@ export function App(): JSX.Element {
                   />
                 ) : null}
                 {peek === null ? (
-                  <Composer
-                    disabled={snapshot.surfaces.pendingApproval !== null}
-                    draftKey={snapshot.status.sessionId ?? ''}
-                    models={models}
-                    model={snapshot.status.model}
-                    effort={snapshot.status.effort}
-                    policy={snapshot.surfaces.policy}
-                    preset={snapshot.surfaces.preset}
-                    working={snapshot.status.turnState !== 'idle'}
-                    cwd={cwd}
-                    listFiles={listWorkspaceFiles}
-                    onSubmit={handleSubmit}
-                    onInterrupt={() => proxy.interrupt()}
-                    onModelChange={(value) => void proxy.setModel(value)}
-                    onEffortChange={(value) => void proxy.setEffort(value)}
-                    onPolicyChange={(value) => proxy.setPolicy(value)}
-                    onPresetChange={(value) => handlePresetChange(value)}
-                  />
+                  <>
+                    <Composer
+                      disabled={snapshot.surfaces.pendingApproval !== null}
+                      draftKey={snapshot.status.sessionId ?? ''}
+                      models={models}
+                      model={snapshot.status.model}
+                      effort={snapshot.status.effort}
+                      policy={snapshot.surfaces.policy}
+                      preset={snapshot.surfaces.preset}
+                      working={snapshot.status.turnState !== 'idle'}
+                      cwd={cwd}
+                      listFiles={listWorkspaceFiles}
+                      onSubmit={handleSubmit}
+                      onInterrupt={() => proxy.interrupt()}
+                      onModelChange={(value) => void proxy.setModel(value)}
+                      onEffortChange={(value) => void proxy.setEffort(value)}
+                      onPolicyChange={(value) => proxy.setPolicy(value)}
+                      onPresetChange={(value) => handlePresetChange(value)}
+                    />
+                    {/* 排队消息条：输入框**下面**（对齐 dsh 的 conversation.input.dock），
+                        回合跑着时提交的消息先列在这儿，跑完自动发；空队列整条不渲染。 */}
+                    <QueueDock
+                      items={snapshot.queued}
+                      running={snapshot.status.turnState !== 'idle'}
+                      proxy={proxy}
+                    />
+                  </>
                 ) : (
                   <div className="peek-lock">
                     你在看队友 {peek.name} 的运行记录，这里是只读的：写不了字，也改不了它的上下文。

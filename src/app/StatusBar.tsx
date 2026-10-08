@@ -232,6 +232,7 @@ export function StatusBar({
   status,
   surfaces,
   subagents,
+  queued,
   config,
   onOpenAgent,
   registerClick,
@@ -239,6 +240,11 @@ export function StatusBar({
   status: StatusView
   surfaces: RuntimeSurfaces
   subagents: RuntimeSnapshot['subagents']
+  /**
+   * 排队中的输入条数（0.6.67）：回合跑动中提交的消息先在内核收件箱里排队，
+   * 界面这边没有队列条可点，至少要看得见「我刚才那一句排上了」。0 就不画这一段。
+   */
+  queued: number
   /** 段显隐（prefs.ui.statusBar；设置 → 终端界面 → 状态栏 子页可改）。 */
   config: StatusBarPrefsView
   /** 点后台芯片：打开那个会话的转录浮层（子代理查看入口之一）。 */
@@ -272,6 +278,11 @@ export function StatusBar({
     },
   ]
   if (config.model) left.push({ kind: 'text', id: 'model', text: status.model, tone: 'secondary', priority: -1 })
+  // 排队中的输入（0.6.67）：回合跑动中提交的消息在内核收件箱里等着出账，终端这边
+  // 没有队列条，至少让「我刚发的那句排上了」看得见。priority 0：这条是临时状态，
+  // 挤不下时比 turn/model/会话先让位的只有它（比错字好）。
+  if (queued > 0)
+    left.push({ kind: 'text', id: 'queued', text: `⌛ 排队 ${String(queued)} 条`, tone: 'secondary', priority: 0 })
   if (config.effort)
     left.push({ kind: 'text', id: 'effort', text: `effort ${status.effort ?? '-'}`, tone: 'secondary', priority: 5 })
   if (config.cache && usage !== null && cacheTotal > 0)

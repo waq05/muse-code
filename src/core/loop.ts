@@ -10,6 +10,8 @@
  * 通知、定时补投）先进 `async-inbox` 状态条目排队，步骤边界/回合收尾才落库
  * （drainInbox）——它们不能落在「还没落结果的 tool 调用」和结果中间，否则
  * 网关按「tool 结果必须紧跟 tool_calls」判 400，会话从此卡死。
+ * 0.6.67 起「入箱」与「进对话」在界面上也分开：入箱期间它只是输入框下方的
+ * 队列条（可以编辑 / 删除 / 插话），出账那一刻才画成对话里的气泡。
  *
  * 每个协议要求：assistant 带 tool_calls 时，后续必须为每个 call 补一条
  * tool 消息（包括被拒绝的调用——拒绝也 append "用户拒绝" 结果），
@@ -149,12 +151,9 @@ export class MiniAgent {
     // 要在 enqueueTurn 之前读 running——那之后 running 会被置真，再来一条就分不出先后了。
     if (this.running) {
       this.session.enqueueAsync(text, images)
-      this.deps.emit({
-        type: 'user',
-        text,
-        ...(images !== undefined && images.length > 0 ? { images } : {}),
-        steering: true,
-      })
+      // 入箱只是「排队」，还没进对话：这里不发 user 事件（0.6.67 起出账时才发），
+      // 只报一条「收件箱变了」，界面据此把队列条画出来 / 刷新。
+      this.deps.emit({ type: 'inbox' })
       return
     }
     this.session.appendUser(text, images)
@@ -164,6 +163,51 @@ export class MiniAgent {
       ...(images !== undefined && images.length > 0 ? { images } : {}),
     })
     this.enqueueTurn()
+  }
+
+  /**
+   * 改一条排队中的输入（回合跑动中提交、还没出账的那些）。
+   * @returns 是否真的改了；越界（等到出账了）返回 false，界面据此提示。
+   */
+  editQueued(index: number, text: string): boolean {
+    const changed = this.session.editAsync(index, text)
+    if (changed) this.deps.emit({ type: 'inbox' })
+    return changed
+  }
+
+  /** 撤掉一条排队中的输入：它还没进对话，撤了就等于没发过。 */
+  removeQueued(index: number): boolean {
+    const changed = this.session.removeAsync(index)
+    if (changed) this.deps.emit({ type: 'inbox' })
+    return changed
+  }
+
+  /**
+   * 插话（对照 dsh 的 steer）：把要插的那条提到队首，并打断当前回合——回合收尾
+   * 出账时它先落库，紧接着自动补一轮，模型下一句话就先看它。
+   *
+   * 为什么要打断：dsc 的收件箱本来就在**下一个步骤边界**自动并进当前回合
+   * （见 runTurn 里的 drainInbox(true)），所以「排在后面等」与「插话」的差别只剩
+   * 「模型现在正在吐的这段话要不要说完」。要更快，只能打断——半截回复按 T33 的
+   * 规矩保留为截断的 assistant 记录，输入一条不丢。
+   *
+   * @param index - 提到队首的那一条；省略则保持原顺序把整队送进去。
+   * @returns 是否真的插上了；agent 没在跑（队列马上就会自己出账）时返回 false。
+   */
+  steerQueued(index?: number): boolean {
+    if (!this.running) return false
+    // 队列空了就绝不打断：界面按「提交那一刻的队列长度」算下标，而这一轮可能在
+    // 提交与插话之间刚好跑完——那时消息已经作为新一轮发出去（不在队列里），
+    // 不设这道闸就会把刚开始的那一轮白打断。
+    const items = this.session.asyncInbox()
+    if (items.length === 0) return false
+    if (index !== undefined) {
+      if (items[index] === undefined) return false
+      this.session.promoteAsync(index)
+    }
+    this.deps.emit({ type: 'inbox' })
+    this.cancel()
+    return true
   }
 
   cancel(): void {
@@ -203,12 +247,23 @@ export class MiniAgent {
    * - **回合收尾**（`midTurn = false`）：消息悬在最后一条 assistant 之后，挂起
    *   pendingTurn 让模型接话；正在跑的回合收不了尾时输入也不会丢。
    *
-   * 界面在入箱时就已经把消息画出来了（user 事件随 enqueue 发），出账不再重发。
+   * 0.6.67 起 user 事件在这里发（而不是入箱时）：排队的消息在这一刻才真正进对话，
+   * 界面上也就这一刻才画气泡——入箱期间它是输入框下方的队列条（快照的 `queued`）。
+   * `steering` 按出账时机标：步骤边界并进本轮的算轮中途插话（界面上带 ↩），
+   * 收尾出账的那批属于下一轮，不是插话。
    */
   private drainInbox(midTurn: boolean): void {
     const items = this.session.takeAsyncInbox()
     if (items.length === 0) return
-    for (const item of items) this.session.appendUser(item.text, item.images)
+    for (const item of items) {
+      this.session.appendUser(item.text, item.images)
+      this.deps.emit({
+        type: 'user',
+        text: item.text,
+        ...(item.images !== undefined && item.images.length > 0 ? { images: item.images } : {}),
+        ...(midTurn ? { steering: true } : {}),
+      })
+    }
     if (!midTurn) this.pendingTurn = true
   }
 

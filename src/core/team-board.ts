@@ -25,6 +25,17 @@ export const BOARDS_DIR = join(TEAM_ROOT, 'boards')
 /** 信箱目录（每个队友一个 jsonl）。 */
 export const INBOX_DIR = join(TEAM_ROOT, 'inbox')
 
+/**
+ * 队友干完活投给父会话的那条汇报，正文固定以这个开头。
+ *
+ * 为什么要有它、而不是两处各写一份字面量：adapter 靠这个前缀把这条消息认出来
+ * （跟压缩摘要的 `SUMMARY_BANNER` 同一个套路），认出后给条目打 `internal` 标记，
+ * 界面就不再把它当「人打的字」渲染（对照 dsh 的 turn-trigger 节点：非人发起的
+ * 唤醒消息渲染成一行可展开的「子任务状态更新」，不是用户气泡）。
+ * 插件与 adapter 共用同一个常量，改一处漏一处就会出现「汇报又原样冒出来」。
+ */
+export const TEAMMATE_REPORT_OPEN = '<teammate-report '
+
 /** 任务状态机：pending → in_progress → completed，只有三态，没有中间态。 */
 export type TaskStatus = 'pending' | 'in_progress' | 'completed'
 

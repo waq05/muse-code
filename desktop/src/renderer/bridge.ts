@@ -120,6 +120,11 @@ export function createRuntimeProxy(): RuntimeProxy {
     getSnapshot: () => Promise.reject(new Error('快照经 onSnapshot 推送；代理不支持 getSnapshot')),
     submit: (text, images) => callVoid('submit', text, images),
     interrupt: (id) => callVoid('interrupt', id),
+    // 排队输入（0.6.67）：输入框下方队列条上的编辑 / 删除 / 插话；返回是否真的做到
+    // （那条已经出账、或 agent 没在跑时返回 false，界面据此给一句提示）。
+    editQueued: (index, text) => call<boolean>('editQueued', index, text),
+    removeQueued: (index) => call<boolean>('removeQueued', index),
+    steerQueued: (index) => call<boolean>('steerQueued', index),
     openSession: (id) => callVoid('openSession', id),
     compact: () => callVoid('compact'),
     setModel: (model) => callVoid('setModel', model),

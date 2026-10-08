@@ -248,6 +248,14 @@ export const transcriptPlugin: Plugin.Object = {
           sessionsLoading: ctx.session.loading,
           sessionStates,
           subagents,
+          // 排队中的输入（0.6.67）：收件箱是当前会话 state 里的一条，界面照它画
+          // 输入框下方的队列条。index 就是它在队伍里的位置（0 = 队首）：编辑 / 删除 /
+          // 插话都按它定位，渲染层也拿它当 key。
+          queued: ctx.session.current().asyncInbox().map((item, index) => ({
+            index,
+            text: item.text,
+            ...(item.images !== undefined && item.images.length > 0 ? { images: item.images } : {}),
+          })),
         }
         snapshot = built
         return built

@@ -263,9 +263,16 @@
   /* ── 密度：整体缩放行高与纵向内距（紧凑 / 标准 / 宽松）── */
   --dsc-density: 1;
   --dsc-row-h: calc(26px * var(--dsc-density));
+  /* 对话「过程」行的行高：思考行、工具行、阶段组头这三行共用。
+     比控件行 --dsc-row-h 矮 2px——对照 dsh 的 ReasoningRow.module.css:6-9（收起态 24px）。
+     它们与侧栏、选择器那些「要点的控件行」不是一档：过程行只要读得清、点得中。 */
+  --dsc-process-row-h: calc(24px * var(--dsc-density));
   --dsc-row-pad-x: 8px;
   --dsc-row-gap: 6px;
   --dsc-row-lead: 14px;
+  /* 紧堆叠间距：同一轮里过程行之间用它（对照 dsh 的 --dsh-chat-flow-gap 默认值 6px，
+     见 ui-chat 的 ChatView.module.css:68-71 与 ChatGroupSeat.module.css:86-92）。
+     0.6.x 之前对话页不分档，一律吃 --dsc-turn-gap（16px），一屏过程行显得很空。 */
   --dsc-stack-gap: calc(6px * var(--dsc-density));
   --dsc-block-gap: calc(12px * var(--dsc-density));
   --dsc-para-gap: calc(11px * var(--dsc-density));

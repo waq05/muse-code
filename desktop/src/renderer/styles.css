@@ -994,37 +994,43 @@
   position: relative;
 }
 
-/* 正文列两侧的拖拽条（对照 dsh 的正文宽度手柄）：12px 宽的热区，中心压在正文列的边缘线上。
-   列宽由 --dsc-thread-max 说了算，所以拖一下，正文、审批卡、输入框三处一起挪。
+/* 正文列两侧的拖拽条（对照 dsh 的正文宽度手柄 ConversationWidthControls.tsx +
+   ConversationRoot.module.css 的 .widthHandle）：12px 宽的热区，**内缘落在正文列缘外 24px**，
+   整条再往外沿伸。列宽由 --dsc-thread-max 说了算，所以拖一下，正文、审批卡、输入框三处一起挪。
    「列缘在这一层里的哪个 x」不是这一层算得出来的事——正文列在滚动区里居中，滚动区右侧还
    留着刻度轨道与滚动条槽（见上面「对话区状态与刻度优化」段），在另一层里按 50% 重算一遍
    就会差半格；改由 ThreadResizer.tsx 量出真实矩形、写进 --dsc-thread-col-start / -end，
    这里只负责摆位（列变宽、窗口缩放，把手跟着列走）。
-   width 里的 min() 是窄窗口的兜底：热区一半要落在本层内，列缘贴到层边时热区跟着收窄，
-   免得它越到隔壁侧栏头上；绝对定位的空元素宽度归零时也不会留下一块错位的热区。 */
+   为什么让开 24px（0.6.67 改）：列缘就是输入框的右边框，把手压在列缘上时，那条 2px 提示
+   竖条正好落在发送键右边 10px 处，看着跟发送键叠在一起。dsh 的把手内缘离列 24px、提示
+   竖条画在条内靠列那一侧（离列 28px），两个控件一眼分得开。
+   width 里的 min() 是窄窗口的兜底：除了列缘外那 24px 让位，还要在最外侧留 24px 安全带
+   （滚动条那一栏），空间不够时热区自己收窄，不会越到隔壁去；绝对定位的空元素宽度归零时
+   也不会留下一块错位的热区。 */
 .thread-handle {
   cursor: col-resize;
   position: absolute;
   top: 0;
   bottom: 0;
   touch-action: none;
-  /* 中心与列缘重合：一半落在列外、一半落在列内；列内那半边落在正文列的 24px 内缩里，
-     压不到正文（正文、气泡都在这条内缩线以内）。 */
-  transform: translateX(-50%);
   width: 12px;
   z-index: var(--dsc-z-handle);
 }
 
-/* 左把手压在列左缘、右把手压在列右缘。变量还没写上来时（ThreadResizer 挂上之前那一帧）
-   退回居中摆位，宽度也退回 12px，不会出现「热区算成负数、宽度归零」那种抓不住的把手。 */
+/* 左把手在列左缘外 24px 处向内收（translateX(-100%)：left 是它的**右**缘）；
+   右把手在列右缘外 24px 处向右展开（left 就是它的左缘）。
+   变量还没写上来时（ThreadResizer 挂上之前那一帧）退回按 50% 摆位，宽度照旧收窄，
+   不会出现「热区算成负数、宽度归零」那种抓不住的把手。 */
 .thread-handle[data-side='left'] {
-  left: var(--dsc-thread-col-start, 50%);
-  width: min(12px, calc(var(--dsc-thread-col-start, 50%) * 2));
+  left: calc(var(--dsc-thread-col-start, 50%) - 24px);
+  transform: translateX(-100%);
+  width: min(12px, calc(var(--dsc-thread-col-start, 50%) - 24px - 24px));
 }
 
 .thread-handle[data-side='right'] {
-  left: var(--dsc-thread-col-end, 50%);
-  width: min(12px, calc((100% - var(--dsc-thread-col-end, 50%)) * 2));
+  left: calc(var(--dsc-thread-col-end, 50%) + 24px);
+  transform: none;
+  width: min(12px, calc(100% - var(--dsc-thread-col-end, 50%) - 24px - 24px));
 }
 
 /* 高亮：一条 2px 竖条跟着鼠标上下走（拖动中由 JS 把鼠标竖向位置写进 --dsc-handle-y），
@@ -1052,7 +1058,8 @@
 }
 
 .thread-handle::after {
-  /* 竖条居中：热区中心就是列缘，所以这一条正好压在正文列的边上 */
+  /* 竖条居中在热区里：热区内缘离列缘 24px、宽 12px，所以这一条落在离列缘 30px 处
+     （对照 dsh 的 .widthHandle::after：它画在内缘里侧 4px，即离列 28px）。 */
   left: calc(50% - 1px);
 }
 
@@ -1104,6 +1111,67 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── 会话层级面包屑（对照 dsh 的 ConversationSessionHeader 的 nav.crumbs）──
+   看队友的运行记录时，标题换成「主会话标题 / 队友名」：左边那节点得动（回主会话），
+   右边那节是当前所在的层级（纯文本，没有去处）。宽度吃标题同一档预算，长了逐节省略。 */
+.crumbs {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  max-width: min(60%, 520px);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.crumb {
+  border: none;
+  font-size: var(--dsc-fs-ui-lg);
+  font-weight: 600;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 可点的那一节：顶栏整体是窗口拖拽区，按钮必须自己豁免，否则点了没反应。 */
+.crumb-link {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  padding: 2px 6px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.crumb-link:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.crumb-sep {
+  color: var(--dsc-text-quaternary);
+  font-weight: 400;
+}
+
+.crumb-current {
+  color: var(--dsc-text-primary);
+  padding: 2px 0;
+}
+
+/* 「只读」小标：运行记录视图写不了字，先把这件事说在标题上。 */
+.crumb-badge {
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-label);
+  font-weight: 400;
+  padding: 0 6px;
 }
 
 /* 页签行：单独一行，撑满行高的按钮让选中态下划线正好压在顶栏分界线上。 */
@@ -1378,6 +1446,94 @@
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-caption);
   text-align: center;
+  white-space: pre-wrap;
+}
+
+/* ── 非人发起的唤醒消息（队友干完活的汇报）：一行可展开的通知，不是用户气泡 ──
+   对照 dsh 的 TurnTriggerNodeView.module.css：整块是「描边 + 圆角 + 一层极浅底色」的通知，
+   头部一行「图标 + 标题 + 时刻 + 箭头」，正文默认收起。dsh 的头部字号是页面正文档
+   （--dsh-content-font-size），这里按对话页的次要档 --dsc-fs-caption 走——它是过程侧的
+   一行说明，不是要读的正文。 */
+.turn-trigger {
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-block);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.turn-trigger-head {
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  font-family: inherit;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+  padding: 6px 10px;
+  text-align: left;
+  transition: color var(--dsc-dur) var(--dsc-ease);
+  width: 100%;
+}
+
+.turn-trigger-head:hover {
+  color: var(--dsc-text-secondary);
+}
+
+.turn-trigger-head:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+.turn-trigger-icon {
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+  flex: none;
+}
+
+.turn-trigger-label {
+  flex: none;
+}
+
+/* 时刻贴右缘（dsh 的 .time 同样是 margin-left: auto）。 */
+.turn-trigger-time {
+  color: var(--dsc-text-quaternary);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.turn-trigger-chevron {
+  color: inherit;
+  flex: none;
+  transition: transform var(--dsc-dur) var(--dsc-ease);
+}
+
+.turn-trigger-chevron.on {
+  transform: rotate(180deg);
+}
+
+/* 正文缩进到标题文字那一列（图标 13px + gap 8px ≈ 21px，取 28px 让原文块自己成一列）。 */
+.turn-trigger-body {
+  padding: 0 10px 8px 28px;
+}
+
+.turn-trigger-note {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  margin: 0 0 6px;
+}
+
+/* 原文照抄：等宽、保留换行，限高滚动——一次汇报可能很长（任务原文 + 汇报全文）。 */
+.turn-trigger-text {
+  color: var(--dsc-text-secondary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-code);
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
@@ -1700,7 +1856,7 @@
   font-family: var(--dsc-font-mono);
   font-size: var(--dsc-fs-tool);
   gap: 8px;
-  min-height: var(--dsc-row-h);
+  min-height: var(--dsc-process-row-h);
   padding: 0 8px;
   user-select: none;
 }
@@ -2340,6 +2496,166 @@
 .send-btn.stop {
   background: var(--dsc-control-active-bg);
   color: var(--dsc-red);
+}
+
+/* 停止与「排队发送」并排时（回合跑着 + 手上有草稿）：停止退成描边小圆钮，
+   别跟主行动的发送键抢眼。红色留着——那是「停」的身份色。 */
+.send-btn.stop.dim {
+  background: transparent;
+  border: 1px solid var(--dsc-stroke-3);
+  color: var(--dsc-text-tertiary);
+  height: calc(var(--dsc-send) - 4px);
+  width: calc(var(--dsc-send) - 4px);
+}
+
+.send-btn.stop.dim:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-red);
+}
+
+/* ══════════ 排队消息条（输入框下方，对照 dsh 的 conversation.input.dock）══════════
+   回合跑动中提交的消息先进内核的收件箱，这里把它们列出来：一眼看见「发了、还没轮到」，
+   并且改得动 / 撤得掉 / 插得上。队列空了整块不渲染（组件直接 return null）。 */
+.queue-dock {
+  margin-top: 6px;
+}
+
+.queue-panel {
+  background: var(--dsc-bg-card);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  overflow: hidden;
+}
+
+/* 头行：两条以上才画（一条时那一行自己带队列图标）。 */
+.queue-head {
+  align-items: center;
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+  min-height: var(--dsc-row-h);
+  padding: 3px 10px;
+  width: 100%;
+}
+
+.queue-head:hover {
+  background: var(--dsc-fill-quinary);
+}
+
+.queue-head:disabled {
+  cursor: default;
+}
+
+.queue-lead {
+  color: var(--dsc-text-quaternary);
+  display: flex;
+  flex-shrink: 0;
+}
+
+.queue-count {
+  color: var(--dsc-text-secondary);
+  font-weight: 600;
+}
+
+.queue-note {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-label);
+}
+
+.queue-caret {
+  color: var(--dsc-text-quaternary);
+  display: flex;
+  margin-left: auto;
+}
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  padding: 3px 6px 6px;
+}
+
+.queue-row {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  display: flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+  min-height: var(--dsc-row-h);
+  padding: 2px 6px;
+}
+
+.queue-row:hover {
+  background: var(--dsc-fill-quinary);
+}
+
+.queue-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-badge {
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-badge);
+  color: var(--dsc-text-quaternary);
+  flex-shrink: 0;
+  font-size: var(--dsc-fs-label);
+  padding: 0 4px;
+}
+
+.queue-acts {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.queue-act {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-quaternary);
+  display: flex;
+  height: 20px;
+  justify-content: center;
+  width: 20px;
+}
+
+.queue-act:hover:not(:disabled) {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.queue-act:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+/* 行内编辑：跟输入框同一套观感（无边框、随内容长高、封顶 8 行由 rows 算）。 */
+.queue-edit-box {
+  background: var(--dsc-composer-fill);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-primary);
+  flex: 1;
+  font-family: inherit;
+  font-size: var(--dsc-fs-caption);
+  line-height: var(--dsc-lh-body);
+  max-height: 160px;
+  min-width: 0;
+  outline: none;
+  padding: 4px 8px;
+  resize: vertical;
+}
+
+.queue-edit-box:focus {
+  border-color: var(--dsc-stroke-1);
 }
 
 /* ══════════ 插件管理页 ══════════ */
@@ -6912,7 +7228,7 @@ body.resizing iframe {
   cursor: pointer;
   display: flex;
   gap: 8px;
-  min-height: var(--dsc-row-h);
+  min-height: var(--dsc-process-row-h);
   padding: 0 8px;
   transition: background var(--dsc-dur) var(--dsc-ease);
   user-select: none;
@@ -7489,7 +7805,8 @@ body.resizing iframe {
 
 /* ══════════ 会话脚注与思考折叠改版 ══════════ */
 /* 这一段只做两件事，别处的规则一行没改（旧段落里必要的改动就地改了：.round-foot 改成贴左、
-   .thread-handle 改成贴正文列缘、.think-status 收成 flex: none、.think-body 多一层裁剪、
+   .thread-handle 改成贴正文列缘（0.6.67 又让它退到列缘外 24px，见上面的把手注释）、
+   .think-status 收成 flex: none、.think-body 多一层裁剪、
    .think-bar 换成 .think-block 的直接子项）：
      1. 助手消息那条操作条：用量搬去了每轮页脚，剩下的按钮这一轮也搬走了（见文件末尾那一段）；
      2. 思考折叠条的折叠态改成 dsh ReasoningRow 的「图标 + 标题 + 分隔点 + 摘要行」：
@@ -7970,7 +8287,7 @@ body.resizing iframe {
      而不是独立的一格，靠紧些才读成「图标 + 一句话」这一整块。 */
   gap: 6px;
   justify-content: flex-start;
-  min-height: var(--dsc-row-h);
+  min-height: var(--dsc-process-row-h);
   padding: 0 8px;
   text-align: left;
   transition:
@@ -8144,12 +8461,36 @@ body.resizing iframe {
 
 /* ── 一轮的座位：把「用户消息 → 总开关 → 过程区 → 最终回答 → 页脚」收进一个盒子 ──
    为什么需要它：阶段组的组体要有自己的限高与滚动，而组员在 entries 里是连续的一段——
-   只有按块（座位 / 组）产出才包得住。间距继续吃 .chat-inner 那一档 gap，观感与
-   0.6.3 的「所有条目平铺在 .chat-inner 里」一致。 */
+   只有按块（座位 / 组）产出才包得住。
+
+   座位内的行距分三档（0.6.67 起，对照 dsh 的 ui-chat ChatView.module.css:68-95 与
+   ChatGroupSeat.module.css:86-92）：
+   - **过程行之间** 6px（--dsc-stack-gap）：思考行、工具卡、阶段组头紧着排，
+     一屏能多读好几行；dsh 的 --dsh-chat-flow-gap 默认值就是 6px。
+   - **用户消息之后的第一条、整轮开关两侧** 16px（--dsc-turn-gap）：dsh 给 turn-process
+     这一行两侧留的白（它是一条带下边框的分节线，贴着上下内容会读不出「分节」）。
+   - **助手回答两侧** 12px（--dsc-block-gap）：dsh 的 response 档。
+   为什么 gap 只写 6px、其余用 margin-top 补差：flex 容器里 gap 与 margin 相加、不会塌陷，
+   一格 gap 加一条「补差」正好落在目标值上，且不用给每条行加类名。 */
 .turn-seat {
   display: flex;
   flex-direction: column;
-  gap: var(--dsc-turn-gap);
+  gap: var(--dsc-stack-gap);
+}
+
+/* 用户消息之后的第一条、开关行自己、开关行之后那一条：一律 16px。
+   注意开关行（.turn-fold）与轮尾卡/页脚都不是 .entry-row，是 .turn-seat 的直接子项。 */
+.turn-seat > :first-child + *,
+.turn-seat > .turn-fold,
+.turn-seat > .turn-fold + * {
+  margin-top: calc(var(--dsc-turn-gap) - var(--dsc-stack-gap));
+}
+
+/* 助手回答（正文条目）与改文件卡、轮尾页脚：12px，比过程行松一档。 */
+.turn-seat > .entry-row:has(> .entry-text),
+.turn-seat > .changes-card,
+.turn-seat > .round-foot {
+  margin-top: calc(var(--dsc-block-gap) - var(--dsc-stack-gap));
 }
 
 /* ── 阶段组的座位：组头 + 组体 ── */
@@ -8204,11 +8545,13 @@ body.resizing iframe {
   );
 }
 
-/* 组体里的内容列：不限高（限高在 .step-body 上），间距与 .chat-inner 同一档。 */
+/* 组体里的内容列：不限高（限高在 .step-body 上），行距与座位里的过程行同一档
+   （--dsc-stack-gap，对照 dsh 的 ChatGroupSeat.module.css:86-92 把
+   --dsh-chat-flow-gap 覆写成 6px）。 */
 .step-content {
   display: flex;
   flex-direction: column;
-  gap: var(--dsc-turn-gap);
+  gap: var(--dsc-stack-gap);
 }
 
 /* ── 页脚里那三颗新按钮（复制 / 赞 / 踩）──

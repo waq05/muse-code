@@ -83,6 +83,7 @@ import { toastErr, toastOk } from './components/toast.js'
 import { IconEdit } from './icons.js'
 import { estimateTextTokens } from './token-estimate.js'
 import { MarkdownText } from './chat/markdown-text.js'
+import { TurnTriggerRow } from './chat/turn-trigger.js'
 import { loadFeedback, recordFeedback, type Feedback } from './chat/feedback.js'
 import { buildRoundFolds, TurnFoldRow, type RoundFold } from './chat/round-fold.js'
 import { buildSeatPlan, type ChatPlanItem, type RoundSeatPlan } from './chat/seat-plan.js'
@@ -570,6 +571,13 @@ export function ChatView(props: {
     if (entry === undefined) return null
     switch (entry.kind) {
       case 'user': {
+        // 运行时投进来的消息（目前只有队友干完活的 <teammate-report> 汇报）不是人打的字：
+        // 画成一行可展开的「子任务状态更新」，不画用户气泡（对照 dsh 的 turn-trigger 节点：
+        // TurnTriggerNodeView 默认收起，展开才看得到通知正文）。模型照样看得到全文——
+        // 这条消息在会话与请求里原样保留，只是界面换了种画法。
+        if (entry.internal === true) {
+          return <TurnTriggerRow text={entry.text} ts={entry.ts} />
+        }
         const open = editing !== null && editing.index === index
         // T18：审查队友的 <review-findings> 汇报渲染成 findings 卡（按条 + 行号跳转），
         // 「编辑重发」对这种消息没有意义，一并隐藏。

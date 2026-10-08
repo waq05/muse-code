@@ -571,6 +571,20 @@ export interface AgentService {
    * 挂着的审批卡随信号兜底成 reject，回合以 aborted 收尾。
    */
   interrupt(filePath?: string): void
+  /**
+   * 改一条排队中的输入（当前查看会话的收件箱，界面上的队列条）。0.6.67 起
+   * 「入箱」不再当对话条目画，队列条是它的唯一界面，所以这三个动作与
+   * {@link followup} 是一套：提交 → 排队 → 编辑 / 删除 / 插话。
+   * @returns 是否真的改了；那条已经出账（越界）时返回 false。
+   */
+  editQueued(index: number, text: string): boolean
+  /** 撤掉一条排队中的输入。 */
+  removeQueued(index: number): boolean
+  /**
+   * 插话：把第 index 条提到队首并打断当前回合（收尾出账后它先发）。
+   * @param index - 省略则保持原顺序把整队送进去。
+   */
+  steerQueued(index?: number): boolean
   /** 那个会话有没有常驻 agent（生产者决定「投递」还是「写文件等用户回来」）。 */
   hasAgent(sessionId: string): boolean
   /** 按 jsonl 路径找常驻会话实例（session.open 复用常驻会话、避免重复拿写租约）。 */

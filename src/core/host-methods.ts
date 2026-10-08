@@ -25,6 +25,10 @@ export type InvokableMethod = Exclude<keyof DscRuntime, LocalOnlyMethod>
 export const INVOKABLE_METHODS = [
   'submit',
   'interrupt',
+  // 排队输入（0.6.67）：队列条上的编辑 / 删除 / 插话
+  'editQueued',
+  'removeQueued',
+  'steerQueued',
   'openSession',
   'compact',
   'setModel',

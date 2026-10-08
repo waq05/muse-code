@@ -241,8 +241,12 @@ export type TranscriptEntry =
    * images 是 data URL 清单（用户贴进来的图）；界面渲染成缩略图。
    * `compaction` 只出现在重放出来的压缩摘要上（见 {@link CompactionMark}）。
    * `steering` = 这条消息是在助手回合**还没跑完**时插进来的（对照 dsh 的 steering 节点）。
+   * `internal` = 这条消息不是人打的字，是运行时投递进来的（目前只有队友干完活的
+   * `<teammate-report>` 汇报）。模型照常看得到全文，界面不拿它当用户气泡渲染——
+   * 对话页把它画成一行「子任务状态更新」（对照 dsh 的 turn-trigger 节点：
+   * TurnTriggerNodeView 默认收起，展开才看得到通知正文）。
    */
-  | { kind: 'user'; id: number; text: string; images?: string[]; ts?: number; compaction?: CompactionMark; steering?: boolean }
+  | { kind: 'user'; id: number; text: string; images?: string[]; ts?: number; compaction?: CompactionMark; steering?: boolean; internal?: boolean }
   /**
    * durationMs 是这段思考从第一口 reasoning delta 到定稿的耗时（≥1s 界面才显示）。
    * 为什么可选：重放历史日志造不出它（日志只存定稿文本），老会话回看就降级不显示。
@@ -1159,6 +1163,25 @@ export interface RuntimeSnapshot {
    * /agents 浮层；任务收工（settle）或切走会话即从这里消失。
    */
   subagents: Array<{ sessionPath: string; state: SessionRunState }>
+  /**
+   * 排队中的用户输入（0.6.67）：回合跑动中提交、还没被这一轮认领的那些。
+   * 输入框下方的队列条照它画；空数组 = 不画那条。
+   */
+  queued: QueuedMessageView[]
+}
+
+/**
+ * 一条排队中的用户输入（对照 dsh 的 InboxState `next-turn` 行）。
+ *
+ * 它在会话日志里只以 `async-inbox` 状态条目存在，落库（drainInbox）之后才算对话条目——
+ * 所以界面不画气泡，画队列条。
+ */
+export interface QueuedMessageView {
+  /** 在队列里的位置（0 在最前）：编辑 / 删除 / 插话都按它定位。 */
+  index: number
+  text: string
+  /** 随消息一起排队的图片（data URL 清单）。 */
+  images?: string[]
 }
 
 /**
@@ -1188,6 +1211,20 @@ export interface DscRuntime {
    * 随信号兜底成 reject。
    */
   interrupt(filePath?: string): void
+  /**
+   * 改一条排队中的输入（`RuntimeSnapshot.queued` 里的第 index 条）。
+   * @returns 是否改到；那条已经出账（越界）时返回 false，界面据此给一句提示。
+   */
+  editQueued(index: number, text: string): boolean
+  /** 撤掉一条排队中的输入：它还没进对话，撤了就等于没发过。 */
+  removeQueued(index: number): boolean
+  /**
+   * 插话（对照 dsh 的 steer）：把第 index 条提到队首并**打断**当前回合，
+   * 收尾出账后它作为新一轮的第一条发出去。
+   * @param index - 省略则保持原顺序把整队送进去。
+   * @returns 是否真的插上了；agent 没在跑（队列马上会自己出账）时返回 false。
+   */
+  steerQueued(index?: number): boolean
   openSession(id?: string): Promise<void>
   compact(): Promise<void>
   setModel(model: string): Promise<void>

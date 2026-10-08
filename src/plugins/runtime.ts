@@ -67,6 +67,19 @@ export const runtimePlugin: Plugin.Object = {
         ctx.agent.interrupt()
       },
 
+      // 排队输入（0.6.67）：界面上的队列条按快照的 queued 画，这三个是它的动作面。
+      editQueued(index: number, text: string) {
+        return ctx.agent.editQueued(index, text)
+      },
+
+      removeQueued(index: number) {
+        return ctx.agent.removeQueued(index)
+      },
+
+      steerQueued(index?: number) {
+        return ctx.agent.steerQueued(index)
+      },
+
       openSession(filePath?: string) {
         return ctx.session.open(filePath)
       },

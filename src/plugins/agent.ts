@@ -211,6 +211,19 @@ export const agentPlugin: Plugin.Object = {
       hasAgent(sessionId: string) {
         return agents.has(sessionId)
       },
+      // 排队输入的三个动作（0.6.67）：只作用于**当前查看**的那个 agent——队列条画在
+      // 输入框下方，编辑 / 删除 / 插话的都是眼前这一队；后台会话的排队输入留在它自己的
+      // 收件箱里，切回去时随快照一起出现。入箱与编辑删除都会发 `inbox` 事件，
+      // 转录层收到即刷新快照，这里不必再补一次 touch。
+      editQueued(index: number, text: string) {
+        return active?.editQueued(index, text) ?? false
+      },
+      removeQueued(index: number) {
+        return active?.removeQueued(index) ?? false
+      },
+      steerQueued(index?: number) {
+        return active?.steerQueued(index) ?? false
+      },
       sessionFor(filePath: string) {
         for (const agent of agents.values()) {
           if (agent.session.filePath === filePath) return agent.session

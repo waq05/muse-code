@@ -20,6 +20,12 @@ export type CoreEvent =
    */
   | { type: 'user'; text: string; images?: string[]; steering?: boolean }
   /**
+   * 收件箱变了（入箱 / 编辑 / 删除 / 提前），本身不产生条目：界面照快照里的
+   * `queued` 画输入框下方的队列条。发这条是为了让快照失效重画——排队的消息
+   * 不再是「入箱即画的气泡」（0.6.67 起改由 drainInbox 出账时才发 `user`）。
+   */
+  | { type: 'inbox' }
+  /**
    * 一次模型请求的定稿（直播尾此刻应折叠为定稿条目）。
    *
    * `finishReason` 是协议给的收尾原因；`'length'` 表示这次输出撞上了长度上限

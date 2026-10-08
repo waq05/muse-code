@@ -81,7 +81,7 @@ export function Composer(props: {
   draftKey: string
   /** @ 提及候选的数据源（App 注入：dock fs-list 的工作区遍历，带缓存）。 */
   listFiles(): Promise<string[]>
-  onSubmit(text: string, images?: string[]): void
+  onSubmit(text: string, images?: string[], options?: { steer?: boolean }): void
   onInterrupt(): void
   onModelChange(value: string): void
   onEffortChange(value: EffortLevel): void
@@ -223,10 +223,10 @@ export function Composer(props: {
     }
   }
 
-  const submit = (): void => {
+  const submit = (steer = false): void => {
     const text = expandCommand(value).trim()
     if (text === '' && attachments.length === 0) return
-    props.onSubmit(text, attachments.length > 0 ? attachments : undefined)
+    props.onSubmit(text, attachments.length > 0 ? attachments : undefined, steer ? { steer: true } : undefined)
     if (text !== '' && !text.startsWith('/')) {
       setHistory((current) => [...current.slice(-49), text])
     }
@@ -288,14 +288,16 @@ export function Composer(props: {
           setValue(item.insert)
           return
         }
-        submit()
+        submit(event.ctrlKey || event.metaKey)
         return
       }
       return
     }
+    // Ctrl/Cmd+回车 = 提交并插话（对照 dsh 的 busy-Enter 约定：回车排队、加速键插话）。
+    // 回合没在跑时它跟普通回车一样，只是发出去——插话那一步由宿主判断要不要动手。
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
-      submit()
+      submit(event.ctrlKey || event.metaKey)
       return
     }
     if (event.key === 'ArrowUp' && value === '' && history.length > 0) {
@@ -330,6 +332,13 @@ export function Composer(props: {
   }, [props.models])
 
   const currentLabel = currentChoice?.model ?? props.model
+  /** 输入框里有东西可发（正文或贴图）。 */
+  const sendable = value.trim() !== '' || attachments.length > 0
+  /**
+   * 回合跑着、手上又有内容：这一下不是「发出去」而是「排队」（内核出账时机见
+   * core/loop.ts 的 drainInbox）。这时右下角并排两颗——停止留着，一键能停。
+   */
+  const queueing = props.working && sendable
 
   return (
     <div
@@ -427,9 +436,11 @@ export function Composer(props: {
         placeholder={
           props.disabled
             ? '等待审批…'
-            : canPasteImage
-              ? '发消息，/ 调用指令，@ 引用文件，可贴图或拖图片进来'
-              : '发消息，/ 调用指令，@ 引用文件（当前模型没开照片输入，贴图会被拒绝）'
+            : props.working
+              ? '回合进行中：回车把消息排进队里，Ctrl+Enter 插话（打断当前输出）'
+              : canPasteImage
+                ? '发消息，/ 调用指令，@ 引用文件，可贴图或拖图片进来'
+                : '发消息，/ 调用指令，@ 引用文件（当前模型没开照片输入，贴图会被拒绝）'
         }
         disabled={props.disabled}
         onChange={(event) => {
@@ -618,20 +629,33 @@ export function Composer(props: {
               </>
             )}
           </div>
-          {props.working ? (
-            <button className="send-btn stop" data-tip="打断当前回合" onClick={props.onInterrupt}>
+          {/* 回合跑着：停止钮一直在（哪怕手上正打着字，一键能停）；
+              有内容可发时它旁边再多一颗发送钮——那一下是排队，不是立刻发。 */}
+          {props.working && (
+            <button
+              className={`send-btn stop${queueing ? ' dim' : ''}`}
+              aria-label="打断当前回合"
+              data-tip="打断当前回合"
+              onClick={props.onInterrupt}
+            >
               <IconStop size={16} />
             </button>
-          ) : (
+          )}
+          {!props.working || queueing ? (
             <button
               className="send-btn"
-              data-tip="发送，快捷键 Enter"
-              disabled={(value.trim() === '' && attachments.length === 0) || props.disabled}
-              onClick={submit}
+              aria-label={props.working ? '排队发送' : '发送'}
+              data-tip={
+                props.working
+                  ? '排队发送：这一轮跑完立刻发出（Ctrl+Enter 插话：打断当前输出先发这条）'
+                  : '发送，快捷键 Enter'
+              }
+              disabled={!sendable || props.disabled}
+              onClick={() => submit()}
             >
               <IconArrowUp size={16} />
             </button>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

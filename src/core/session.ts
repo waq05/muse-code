@@ -706,6 +706,52 @@ export class Session {
   }
 
   /**
+   * 收件箱只读快照：界面照它画输入框下方的「排队消息」条（0.6.67）。只偷看，
+   * 不取货也不动日志——取货是 {@link takeAsyncInbox}。
+   */
+  asyncInbox(): ReadonlyArray<{ text: string; images?: string[] }> {
+    return this.state('async-inbox')?.items ?? []
+  }
+
+  /**
+   * 改一条排队中的异步输入（正文换掉，图片不动）。越界或改成空白当空操作。
+   * @returns 是否真的改了（调用方据此决定要不要让界面刷新）。
+   */
+  editAsync(index: number, text: string): boolean {
+    const items = [...this.asyncInbox()]
+    const current = items[index]
+    if (current === undefined || text.trim() === '') return false
+    const keptImages = current.images !== undefined && current.images.length > 0 ? current.images : undefined
+    items[index] = keptImages === undefined ? { text } : { text, images: keptImages }
+    this.appendState('async-inbox', { items })
+    return true
+  }
+
+  /** 撤掉一条排队中的异步输入（还没出账，撤了就等于没发过）。 */
+  removeAsync(index: number): boolean {
+    const items = [...this.asyncInbox()]
+    if (items[index] === undefined) return false
+    items.splice(index, 1)
+    this.appendState('async-inbox', { items })
+    return true
+  }
+
+  /**
+   * 把一条排队输入提到队首（插话用，0.6.67）：回合被 {@link MiniAgent.cancel} 打断后
+   * 收尾出账，队首那条先落库，模型下一句话就先看到它。
+   */
+  promoteAsync(index: number): boolean {
+    const items = [...this.asyncInbox()]
+    const current = items[index]
+    if (current === undefined) return false
+    // 已经在队首：没有可提前的，算「已经就位」（不写日志）
+    if (index === 0) return true
+    items.splice(index, 1)
+    this.appendState('async-inbox', { items: [current, ...items] })
+    return true
+  }
+
+  /**
    * 收件箱出账：取走全部排队中的异步输入并清空条目。空箱是常见路径，不动日志。
    * 取走后由调用方负责 appendUser 落库（顺序上保证 tool 结果已闭合）。
    */

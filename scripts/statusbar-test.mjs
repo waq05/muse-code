@@ -63,12 +63,12 @@ const clean = (frame) => frame.replace(/\x1b\[[0-9;?<]*[A-Za-z]/g, '')
 
 let instance = null
 /** 渲一帧 StatusBar：columns 决定丢段预算，config 决定段显隐。 */
-const renderBar = async ({ columns = 110, config = DEFAULT_STATUS_BAR_PREFS, status = STATUS, subagents = [], registerClick, onOpenAgent }) => {
+const renderBar = async ({ columns = 110, config = DEFAULT_STATUS_BAR_PREFS, status = STATUS, subagents = [], queued = 0, registerClick, onOpenAgent }) => {
   if (instance !== null) instance.unmount()
   output = ''
   stdout.columns = columns
   instance = render(
-    React.createElement(StatusBar, { status, surfaces: SURFACES, subagents, config, registerClick, onOpenAgent }),
+    React.createElement(StatusBar, { status, surfaces: SURFACES, subagents, queued, config, registerClick, onOpenAgent }),
     // useStdout 读的就是这份 stdout 的 columns——必须传外面这份（列宽在这儿改）
     { stdout, exitOnCtrlC: false, patchConsole: false },
   )
@@ -190,6 +190,13 @@ check('没有干活队友就没有芯片（收工/切会话即消失）', !frame
     )
   }
 }
+
+// 5c. 排队中的输入（0.6.67）：回合跑动中提交的消息在内核收件箱里等着出账，
+// 终端这边没有队列条，至少让「我刚发的那句排上了」看得见。
+frame = await renderBar({ columns: 110, queued: 2 })
+check('排队段在（⌛ + 条数）', frame.includes('⌛ 排队 2 条'), JSON.stringify(frame.slice(0, 200)))
+frame = await renderBar({ columns: 110, queued: 0 })
+check('没有排队输入就没有这一段', !frame.includes('排队'), JSON.stringify(frame.slice(0, 200)))
 
 // 6. 窄终端丢段：tokens（优先级 0）先丢，session 次之；状态点与模型永不丢
 frame = await renderBar({

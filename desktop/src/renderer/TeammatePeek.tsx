@@ -30,7 +30,7 @@ export function TeammatePeek(props: {
         <span className="peek-task" data-tip={teammate.task}>
           任务：{teammate.task}
         </span>
-        <span className="peek-hint">只读视图；要发话用标题旁的「智能体团队」</span>
+        <span className="peek-hint">只读视图；点标题栏左边那节回主会话，要发话用标题旁的「智能体团队」</span>
         <button className="icon-btn" data-tip="关闭并返回自己的会话" onClick={props.onClose}>
           <IconClose size={14} />
         </button>

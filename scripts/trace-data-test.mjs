@@ -256,6 +256,8 @@ const harness = (() => {
       { role: 'tool', tool_call_id: 'c9', content: '文件内容', ts: 1400 },
     ],
     toolErrors: new Map(),
+    // 快照组装会读收件箱（0.6.67 的排队消息条）：这个假会话按「没有排队输入」给。
+    asyncInbox: () => [],
     meta: { id: 'aaaaaaaabbbbcccc' },
   }
   const handlers = new Map()

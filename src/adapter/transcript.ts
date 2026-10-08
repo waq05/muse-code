@@ -17,6 +17,7 @@ import type { CoreEvent } from '../core/events.js'
 import { contentImages, contentText, type ChatMessage } from '../core/llm.js'
 import type { FileChangeSummary } from '../core/tools.js'
 import { SUMMARY_BANNER } from '../core/compact-anchors.js'
+import { TEAMMATE_REPORT_OPEN } from '../core/team-board.js'
 import { addUsageToBuckets, emptyCostBuckets, isPeakHour, type CostBuckets } from '../core/pricing.js'
 import { emptySegments, type RequestSegments } from '../core/token-estimate.js'
 import type { CompactionMark, SubagentCardView, TokenUsageView, ToolCallView, ToolStatus, TranscriptEntry } from '../contract.js'
@@ -369,6 +370,12 @@ export class Transcript {
         // 老会话重放时系统提示不落进条目（日志里根本不存 system 行），全靠这个前缀
         // 才能认出「这里压过一次」，所以标记就打在摘要这条 user 条目上（kind 不动）。
         const compacted = event.text.startsWith(SUMMARY_BANNER)
+        // 队友干完活投回来的 <teammate-report> 也是一条 role:'user' 的消息（subagent 插件
+        // 投的）：它必须留在上下文里（模型要看汇报），但不该在对话页装成人打的字。
+        // 跟压缩摘要同一个套路——靠正文前缀认出来，认出后打 internal 标记，界面按
+        // 「非人发起的唤醒」渲染（对照 dsh 的 turn-trigger 节点）。重放历史走的是同一条
+        // reduce，所以老会话里的汇报也照样被认出来。
+        const internal = event.text.startsWith(TEAMMATE_REPORT_OPEN)
         this.list.push(
           this.stamp({
             kind: 'user',
@@ -377,6 +384,7 @@ export class Transcript {
             ...(imageCount > 0 ? { images: event.images } : {}),
             ...(compacted ? { compaction: this.compactionMark() } : {}),
             ...(event.steering === true ? { steering: true } : {}),
+            ...(internal ? { internal: true } : {}),
           }),
         )
         return true
@@ -574,6 +582,10 @@ export class Transcript {
         this.dropPrepared()
         return true
       }
+      // 收件箱变了（入箱 / 编辑 / 删除 / 提前）：不产生条目，但要让快照失效——
+      // 排队的输入画在输入框下方的队列条里，数据来自快照的 `queued`。
+      case 'inbox':
+        return true
       default:
         return false
     }

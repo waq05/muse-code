@@ -39,7 +39,7 @@ import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '../core/session.js'
 import { redact } from '../core/secrets.js'
 import { argsSummary, type ToolContext, type ToolEntry } from '../core/tools.js'
 import { ToolGuardRegistry, toolApprovalGuard } from '../core/tool-guards.js'
-import { inboxAppend } from '../core/team-board.js'
+import { inboxAppend, TEAMMATE_REPORT_OPEN } from '../core/team-board.js'
 import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TranscriptEntry } from '../contract.js'
 import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '../services/types.js'
 import { reviewMessage } from '../core/git-info.js'
@@ -514,7 +514,7 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
           : teammate.lastText === ''
             ? '（它没留下文字结论）'
             : teammate.lastText
-      const notice = `<teammate-report from="${teammate.name}" role="${teammate.role}" state="${state}">
+      const notice = `${TEAMMATE_REPORT_OPEN}from="${teammate.name}" role="${teammate.role}" state="${state}">
 派给它的任务：${teammate.task}
 它的汇报：
 ${body}

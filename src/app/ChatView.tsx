@@ -236,6 +236,12 @@ export function Entry({
 }): JSX.Element | null {
   switch (entry.kind) {
     case 'user':
+      // 运行时投进来的消息（队友干完活的 <teammate-report> 汇报）：不是人打的字，
+      // 只报一行「子任务状态更新」，正文留在会话里给模型看（对照 dsh 的 turn-trigger 节点，
+      // 那边默认也只是一行标题）。终端界面不做展开——要看原文去桌面端或会话 jsonl。
+      if (entry.internal === true) {
+        return <Text {...TEXT.secondary}>⌸ 子任务状态更新</Text>
+      }
       return (
         <Box flexDirection="column" gap={GAP.none}>
           {entry.compaction !== undefined ? <CompactionRule count={entry.compaction.count} /> : null}
