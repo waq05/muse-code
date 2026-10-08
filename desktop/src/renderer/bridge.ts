@@ -20,6 +20,7 @@ import type {
   ProviderDraft,
   RuntimeSnapshot,
   SessionForkResult,
+  SessionUsageView,
   SettingsMutation,
   SettingsSectionView,
   SettingsValue,
@@ -36,22 +37,11 @@ import type {
 /**
  * 会话用量投影：壳进程读 `~/.dsc/usage/usage.jsonl` 后按会话 id 汇总的结果。
  *
- * 形状与 `electron/main/session-usage.ts` 里的 SessionUsageView 一致：
- * 渲染层与壳进程分属两个 tsconfig 子项目（web / node），类型文件互相看不到，
- * 只能各写一份；改一边记得改另一边。
+ * 形状就是宿主契约里的 {@link SessionUsageView}（折叠口径的唯一原件在
+ * `core/usage-log.ts` 的 readSessionUsage，宿主与壳进程共用）：渲染层直接取用，
+ * 不再各写一份副本。
  */
-export interface SessionUsageView {
-  /** 这个会话的模型请求条数。 */
-  requests: number
-  inputTokens: number
-  outputTokens: number
-  /** 前缀缓存读取（日志 ch）与未缓存输入（日志 cm）：只统计上报过缓存明细的请求。 */
-  cacheHitTokens: number
-  cacheMissTokens: number
-  /** 最后一次请求的输入 token = 当前上下文占用（服务端真值）。 */
-  lastInputTokens: number
-  lastAt: number
-}
+export type { SessionUsageView }
 
 export interface DscBridge {
   invoke(method: string, args?: unknown[]): Promise<unknown>

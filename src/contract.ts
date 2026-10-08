@@ -449,6 +449,51 @@ export interface UsageStatsView {
 }
 
 /**
+ * 单条会话的用量与耗时投影：壳进程读 `~/.dsc/usage/usage.jsonl` 后按会话 id 汇总
+ * （折叠口径的唯一原件在 core/usage-log.ts 的 readSessionUsage，宿主与壳进程共用）。
+ *
+ * 为什么由壳进程读文件、而不是问宿主：这份日志本来就是纯数据文件，读它只多一次 IO，
+ * 宿主忙着跑回合或正在重启时这段读数照样在。
+ */
+export interface SessionUsageView {
+  /** 这个会话的模型请求条数（含切到本进程之前的历史请求）。 */
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  /**
+   * 前缀缓存读取（日志的 ch）与未缓存输入（日志的 cm）。
+   *
+   * 只有 0.6.46 起、且服务端真回了缓存明细的请求进这两个数：老行没有这两栏，
+   * 把它们塞进分母会把命中率算低——宁缺不假（与设置页「前缀缓存命中」同口径）。
+   */
+  cacheHitTokens: number
+  cacheMissTokens: number
+  /**
+   * 最后一次请求的输入 token：每次请求都会重发完整上下文，
+   * 所以这就是此刻的上下文占用（服务端真值，不是估算）。
+   */
+  lastInputTokens: number
+  /** 最后一次请求落盘的时刻（毫秒）；没有时间戳的行记 0。 */
+  lastAt: number
+  /**
+   * 这一步的墙钟读数（毫秒，日志的 lm/ft/d，0.6.67 起；口径见 core/throughput.ts）：
+   * `llmMs` 发出 → 定稿、`ttftMs` 首字延迟（配 `ttftSteps` 算平均）、
+   * `decodeMs` 纯解码时间、`decodeTokens` 与它成对的那批请求的输出 token。
+   *
+   * 输出速度 = decodeTokens ÷ (decodeMs / 1000)，整个会话累计——不是「本轮」。
+   * 老行没这三项：它们既不进分子也不进分母（宁缺不假）。
+   */
+  llmMs: number
+  ttftMs: number
+  ttftSteps: number
+  decodeMs: number
+  decodeTokens: number
+  /** 工具调用的累计耗时与次数（日志的 `k: 'tool'` 行）。 */
+  toolMs: number
+  toolCalls: number
+}
+
+/**
  * 底部状态行数据：只放对话引擎自己的事实（哪条会话、哪个模型、这一轮在干什么）。
  * 某个功能点的状态（权限模式、协作模式、审批卡……）不进这里，由那个功能点自己
  * 往 {@link RuntimeSnapshot.surfaces} 里贡献自己那一块。

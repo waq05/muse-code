@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { Session } from '../core/session.js'
 import { MiniAgent } from '../core/loop.js'
-import { appendUsageRecord } from '../core/usage-log.js'
+import { appendToolRecord, appendUsageRecord } from '../core/usage-log.js'
 import { clearReadLedger } from '../core/path-policy.js'
 import { errText } from '../adapter/transcript.js'
 import type { AgentService, TurnSignal } from '../services/types.js'
@@ -56,8 +56,10 @@ export const agentPlugin: Plugin.Object = {
       sessionPath: session.filePath,
     })
 
-    const makeAgent = (session: Session): MiniAgent =>
-      new MiniAgent(
+    const makeAgent = (session: Session): MiniAgent => {
+      /** 工具名按 callId 记着：`tool/result` 事件只带 callId，工具行要写工具名。 */
+      const toolNames = new Map<string, string>()
+      return new MiniAgent(
         {
           route: () => ctx.llm.route(),
           // 系统提示每次请求重拼：切模式、改 AGENTS.md、换模型都不用重启。
@@ -73,7 +75,8 @@ export const agentPlugin: Plugin.Object = {
           guards: ctx.guards,
           emit: (event) => {
             // 用量按发起回合的会话记账落一条到 ~/.dsc/usage/usage.jsonl；落盘失败
-            // 已被 appendUsageRecord 自己吞掉，不能影响对话轮次。
+            // 已被 appendUsageRecord 自己吞掉，不能影响对话轮次。这一步的墙钟读数
+            // （lm/ft/d）同一条出账：界面按整个会话累计算输出速度与首字延迟。
             if (event.type === 'usage') {
               appendUsageRecord({
                 provider: ctx.llm.provider,
@@ -83,7 +86,17 @@ export const agentPlugin: Plugin.Object = {
                 ...(event.cacheHitTokens === undefined ? {} : { ch: event.cacheHitTokens }),
                 ...(event.cacheMissTokens === undefined ? {} : { cm: event.cacheMissTokens }),
                 sid: session.meta.id,
+                ...(event.llmMs === undefined ? {} : { lm: event.llmMs }),
+                ...(event.ttftMs === undefined ? {} : { ft: event.ttftMs }),
+                ...(event.decodeMs === undefined ? {} : { d: event.decodeMs }),
               })
+            }
+            // 工具调用也记一条（第二种行）：界面读同一个文件算「工具耗时」。
+            // 没带 ms 的（打断时补的合成结果）不记——没有起点就没有耗时。
+            if (event.type === 'tool/call') toolNames.set(event.callId, event.name)
+            if (event.type === 'tool/result' && event.ms !== undefined) {
+              appendToolRecord({ sid: session.meta.id, n: toolNames.get(event.callId) ?? '', ms: event.ms })
+              toolNames.delete(event.callId)
             }
             // 回合起止广播出去（带会话归属）：目标续跑、压缩守卫、生命周期钩子这些
             // 「接着往下推/守着门」的行为自己听，按 sessionId 认领；循环不认识目标。
@@ -123,6 +136,7 @@ export const agentPlugin: Plugin.Object = {
         },
         session,
       )
+    }
 
     const disposeAgent = (agent: MiniAgent): void => {
       agents.delete(agent.sessionId)

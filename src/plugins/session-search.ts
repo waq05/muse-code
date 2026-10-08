@@ -6,14 +6,14 @@
  *   - 把服务挂成 `ctx.sessionSearch`，别的功能点（例如压缩恢复时的指针）可以直接用；
  *   - 加一个 `/search` 命令与一个设置分区，人手翻历史与调索引参数都走这里。
  *
- * 首次启用或索引目录换地方时要在后台回填，进度走 `ctx.transcript.system`；
- * 回填分批做，批与批之间让出事件循环，宿主与界面不会卡住。
+ * 首次启用或索引目录换地方时要在后台回填：全程静默（0.6.67 起不再往对话中间写进度
+ * 与「索引就绪」，只有真失败才报一条），回填分批做，批与批之间让出事件循环，
+ * 宿主与界面不会卡住。
  *
  * @module dsc/plugins/session-search
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
-import { bootNoticeOnce } from '../core/boot-notices.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import { defaultSessionIndexOptions, SESSION_INDEX_BOUNDS, SESSION_INDEX_FILE, SessionIndex } from '../core/session-index.js'
 import type { SessionIndexHit, SessionIndexOptions, SessionIndexSearchOptions } from '../core/session-index.js'
@@ -77,40 +77,20 @@ export const sessionSearchPlugin: Plugin.Object = {
     /** 插件已经卸载：后台回填不该再往会话流里写话。 */
     let disposed = false
 
-    /** 后台跑一次索引任务：分批推进度，结束时报一句结果，全程不挡宿主。 */
-    const runTask = (
-      label: string,
-      task: (onProgress: (done: number, total: number) => void) => Promise<number>,
-    ): void => {
-      let lastReported = 0
-      const onProgress = (done: number, total: number): void => {
-        if (disposed) return
-        // 回填几百个文件时不必每个文件报一声，十来条就够看出在动
-        const step = Math.max(Math.ceil(total / 10), 1)
-        if (done < total && done - lastReported < step) return
-        lastReported = done
-        // 启动提示只展示一次（0.6.64）：同进度同文本不再说第二遍（key 带进度值，
-        // 真有新文件要解析时数字变了自然重发）
-        const text = `会话索引${label}：${String(done)}/${String(total)} 个文件`
-        if (bootNoticeOnce(`session-index.progress:${label}:${String(done)}/${String(total)}`, text)) {
-          ctx.transcript.system(text)
-        }
-      }
-      void task(onProgress)
-        .then((parsed) => {
-          if (disposed || parsed <= 0) return
-          const stats = index.stats()
-          const ready =
-            `会话索引就绪：${String(stats.files)} 个会话文件、${String(stats.terms)} 个词项` +
-            `（这次解析了 ${String(parsed)} 个文件）。用 session_search 工具或 /search 检索。`
-          if (bootNoticeOnce('session-index.ready', ready)) ctx.transcript.system(ready)
-        })
-        .catch((error: unknown) => {
-          if (!disposed) ctx.transcript.system(`会话索引没能建起来：${errText(error)}`)
-        })
+    /**
+     * 后台跑一次索引任务：分批推进，全程不挡宿主，也不往会话流里写话。
+     *
+     * 0.6.67 起静默（原先每批回填会往对话中间写「会话索引回填：N/M 个文件」、
+     * 建好再写一条「会话索引就绪…」）：那两行是开机噪音，检索能力本身照旧——
+     * 索引有没有建起来去 `/search` 里看结果，真建不起来才报一条错。
+     */
+    const runTask = (task: () => Promise<number>): void => {
+      void task().catch((error: unknown) => {
+        if (!disposed) ctx.transcript.system(`会话索引没能建起来：${errText(error)}`)
+      })
     }
 
-    runTask('回填', (onProgress) => index.sync(onProgress))
+    runTask(() => index.sync())
 
     /** 配置改了：换一个按新参数建的索引，并在后台对齐一次。 */
     const applyIndexConfig = (patch: Record<string, unknown>): void => {
@@ -118,7 +98,7 @@ export const sessionSearchPlugin: Plugin.Object = {
       config = readConfig(passed)
       index = new SessionIndex(config)
       index.load()
-      runTask('回填', (onProgress) => index.sync(onProgress))
+      runTask(() => index.sync())
     }
 
     // ── 服务（别的功能点用 ctx.get('sessionSearch') 读它；插件关着时它不存在）──────
@@ -349,11 +329,13 @@ export const sessionSearchPlugin: Plugin.Object = {
       },
       action(name): string | void {
         if (name !== 'rebuild') return `这个分区没有这个按钮：${name}`
-        runTask('重建', async (onProgress) => {
-          await index.rebuild(onProgress)
+        // 重建同样静默（0.6.67 起不再往对话中间写进度）：跟回填走同一条后台通道，
+        // 只在真失败时由 runTask 报一条错
+        runTask(async () => {
+          await index.rebuild()
           return index.stats().files
         })
-        return '已经开始重建索引，进度写在会话流里'
+        return '已经开始重建索引（后台进行，重建完搜索结果就是新的）'
       },
     }
     const offSection = ctx.settings.registerSection(section)

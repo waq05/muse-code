@@ -11,7 +11,12 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "useUnknownInCatchVariables": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@dsc/runtime": ["../lib/index.js"],
+      "@dsc/runtime/*": ["../lib/*"]
+    }
   },
   "include": ["electron/**/*.ts", "electron.vite.config.ts"]
 }

@@ -40,7 +40,13 @@ export type CoreEvent =
    * 它计一次调用、不解析参数，界面上只渲染成不可展开的一行。
    */
   | { type: 'tool/prepare'; name: string }
-  | { type: 'tool/result'; callId: string; text: string; error?: string }
+  /**
+   * 这条工具调用的结果；`ms` 是「发起 → 结果」的墙钟耗时（毫秒）。
+   *
+   * 只有真的发过 `tool/call` 的调用才有这个数：被打断时给没开始的调用补的合成结果
+   * （协议要求成对）没有起点，就不报——用量日志里同一口径（宁缺不假）。
+   */
+  | { type: 'tool/result'; callId: string; text: string; error?: string; ms?: number }
   /**
    * 一次成功的 write / edit 落盘后的实际改动（紧跟在同 callId 的 `tool/result` 之后）。
    * adapter 折成 `kind: 'changes'` 条目，界面聚合成轮尾「文件已更改」卡。
@@ -62,8 +68,22 @@ export type CoreEvent =
    *
    * `model` 是这次请求实际用的模型 id（0.6.60 起）：费用估算按笔归属到模型价目，
    * 会话中途换模型不会把 A 模型的用量算到 B 的单价上。
+   *
+   * 0.6.67 起随带这一步的三个墙钟读数（毫秒，口径见 core/loop.ts 的 stepTiming）：
+   * `llmMs` 发出→定稿、`ttftMs` 发出→第一口输出、`decodeMs` 第一口输出→定稿。
+   * 拿不到第一口时后两项不报（没有分母就不报数，不编 0）。
    */
-  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheHitTokens?: number; cacheMissTokens?: number; model?: string }
+  | {
+      type: 'usage'
+      inputTokens: number
+      outputTokens: number
+      cacheHitTokens?: number
+      cacheMissTokens?: number
+      model?: string
+      llmMs?: number
+      ttftMs?: number
+      decodeMs?: number
+    }
   /**
    * 一次请求组装完成、马上要发出去：附带这份请求按内容类型的 token 估算分段。
    * 发在流式**之前**，context 条在模型还没吐字时就能画出当前的上下文组成。

@@ -4082,15 +4082,6 @@ body.resizing iframe {
   margin-left: auto;
 }
 
-/* 卡脚注：说清这些数是估的还是服务端真值——不写清就成了编数据 */
-.ctx-note {
-  border-top: 1px solid var(--dsc-stroke-4);
-  color: var(--dsc-text-quaternary);
-  font-size: var(--dsc-fs-micro);
-  line-height: 1.5;
-  padding-top: 8px;
-}
-
 /* ══════════ 会话选择 overlay（/resume） ══════════ */
 
 .overlay {

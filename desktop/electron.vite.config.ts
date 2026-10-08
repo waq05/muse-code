@@ -6,12 +6,21 @@ import react from '@vitejs/plugin-react'
 /**
  * dsc-desktop 构建配置（electron-vite 5）。
  * main/preload 入口显式声明（布局为 electron/{main,preload}）；
- * renderer 用 dsc 根目录的编译产物（../lib）作为源，alias `@dsc/runtime`
+ * renderer 与 main 都用 dsc 根目录的编译产物（../lib）作为源，alias `@dsc/runtime`
  * 指向它——dev 直接引用源仓库，打包时经 extraResources 携带
  * （见 scripts/prepare-runtime.mjs 与 electron-builder.yml）。
+ *
+ * main 也挂这个别名是为了共用宿主那份口径（会话用量的折叠、输出速度的算法在
+ * core/usage-log.ts 与 core/throughput.ts 里各只有一份）：rollup 在构建时就把它们
+ * 打进来，运行期不依赖 asar 之外的文件，与渲染层同一套机制。
  */
 export default defineConfig({
   main: {
+    resolve: {
+      alias: {
+        '@dsc/runtime': fileURLToPath(new URL('../lib', import.meta.url)),
+      },
+    },
     build: {
       rollupOptions: {
         input: { index: resolve('electron/main/index.ts') },
@@ -19,6 +28,11 @@ export default defineConfig({
     },
   },
   preload: {
+    resolve: {
+      alias: {
+        '@dsc/runtime': fileURLToPath(new URL('../lib', import.meta.url)),
+      },
+    },
     build: {
       rollupOptions: {
         input: { index: resolve('electron/preload/index.ts') },

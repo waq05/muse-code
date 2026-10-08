@@ -95,6 +95,28 @@ function summarizeArgs(argsText: string): string {
   return flat.length > 160 ? `${flat.slice(0, 160)}…` : flat
 }
 
+/**
+ * 一步模型请求的三个墙钟读数（毫秒），口径与 dsh 的 sessionStats 投影一致：
+ * `llmMs` = 发出 → 定稿；`ttftMs` = 发出 → 第一口输出（首字延迟）；
+ * `decodeMs` = 第一口输出 → 定稿（纯解码时间，输出速度的分母）。
+ *
+ * 一步里始终没拿到输出（请求立刻失败、或没吐字就被打断）就只报 `llmMs`：
+ * 后两项没有可信的终点，不报比编 0 好。
+ */
+function stepTiming(
+  startedAt: number,
+  firstTokenAt: number | null,
+  finishedAt: number,
+): { llmMs: number; ttftMs?: number; decodeMs?: number } {
+  const llmMs = Math.max(0, finishedAt - startedAt)
+  if (firstTokenAt === null) return { llmMs }
+  return {
+    llmMs,
+    ttftMs: Math.max(0, firstTokenAt - startedAt),
+    decodeMs: Math.max(0, finishedAt - firstTokenAt),
+  }
+}
+
 export class MiniAgent {
   /** 这个 agent 从生到死只认一个会话（0.6.48 常驻模型：切会话=换 agent，不再换底层会话）。 */
   readonly session: Session
@@ -103,6 +125,13 @@ export class MiniAgent {
   /** 回合真正在跑（turn/start 起到 turn/end 发出为止）。收尾聚合的尾段不算。 */
   private turnActive = false
   private pendingTurn = false
+  /**
+   * 已广播 `tool/call` 还没落结果的调用 → 发起时刻。
+   *
+   * 工具耗时的起点只认这一刻（对照 dsh 的 `tool/call` → `tool/result` 折叠）：
+   * 打断时给没开始的调用补的合成结果没有起点，就不报耗时。
+   */
+  private readonly callStartedAt = new Map<string, number>()
 
   constructor(
     private readonly deps: AgentDeps,
@@ -340,6 +369,11 @@ export class MiniAgent {
    * 再自动整轮重试一次（消息按会话现状重新组装——半截已经在里面了，模型顺着续）。
    */
   private async requestOnce(signal: AbortSignal): Promise<StreamResult> {
+    // 这一步的墙钟读数（随 usage 事件出账，界面算输出速度与首字延迟，算法见
+    // core/throughput.ts）：起点放重试循环外面——一步之内重试几次都算这一步，
+    // 与 dsh 的 step/start → assistant/message 边界同一口径。
+    const startedAt = Date.now()
+    let firstTokenAt: number | null = null
     for (let attempt = 1; ; attempt += 1) {
       const route = this.deps.route()
       const tools = this.deps.tools()
@@ -378,14 +412,24 @@ export class MiniAgent {
               : {}),
           },
           {
-            onDelta: (kind, text) => this.deps.emit({ type: 'delta', kind, text }),
-            // 「模型决定要调什么」与「工具真的开跑」之间那段真空，界面上靠这一条才有线索
-            onToolPrepare: (name) => this.deps.emit({ type: 'tool/prepare', name }),
+            onDelta: (kind, text) => {
+              // 第一口输出定下首字延迟的终点；之后每一口都不再动它
+              if (firstTokenAt === null) firstTokenAt = Date.now()
+              this.deps.emit({ type: 'delta', kind, text })
+            },
+            // 「模型决定要调什么」与「工具真的开跑」之间那段真空，界面上靠这一条才有线索。
+            // 工具名同样是模型的输出 token（对照 dsh 的 isTokenDelta：具名工具增量算首 token），
+            // 所以它也要参与首字延迟——只出工具调用、不吐正文的一步否则就没有首字时刻了。
+            onToolPrepare: (name) => {
+              if (firstTokenAt === null) firstTokenAt = Date.now()
+              this.deps.emit({ type: 'tool/prepare', name })
+            },
             // 重试发生在 llm 层内部，不透出来用户只会觉得界面莫名卡了几秒
             onRetry: (attempt, reason) => this.deps.emit({ type: 'model/retry', attempt, reason }),
           },
         )
         this.session.appendAssistant(result.text, result.reasoning, result.toolCalls)
+        const timing = stepTiming(startedAt, firstTokenAt, Date.now())
         this.deps.emit({
           type: 'message',
           text: result.text,
@@ -400,6 +444,7 @@ export class MiniAgent {
             ...(result.usage.cacheHitTokens === undefined ? {} : { cacheHitTokens: result.usage.cacheHitTokens }),
             ...(result.usage.cacheMissTokens === undefined ? {} : { cacheMissTokens: result.usage.cacheMissTokens }),
             model: route.model,
+            ...timing,
           })
         }
         return result
@@ -456,6 +501,7 @@ export class MiniAgent {
         return
       }
       this.deps.emit({ type: 'tool/call', callId: call.id, name: call.name, args: call.arguments })
+      this.callStartedAt.set(call.id, Date.now())
       const tool = registry.get(call.name)
       if (tool === undefined) {
         await flushFlying()
@@ -548,12 +594,17 @@ export class MiniAgent {
 
   /** 落库一条 tool 消息并广播结果事件。 */
   private finishCall(call: ToolCall, outcome: ToolOutcome): void {
+    const startedAt = this.callStartedAt.get(call.id)
+    this.callStartedAt.delete(call.id)
     this.session.appendTool(call.id, call.name, outcome.stored, outcome.error)
     this.deps.emit({
       type: 'tool/result',
       callId: call.id,
       text: outcome.text,
       ...(outcome.error !== undefined ? { error: outcome.error } : {}),
+      // done / failed / rejected 一视同仁：跑挂了、被审批拒掉、半路被打断的调用同样
+      // 占用了这段时间（与 adapter 里工具卡 durationMs 同一口径）
+      ...(startedAt === undefined ? {} : { ms: Math.max(0, Date.now() - startedAt) }),
     })
     // 成功的落盘类调用随带真实改动：界面聚合成轮尾「文件已更改」卡
     if (outcome.error === undefined && outcome.changes !== undefined) {

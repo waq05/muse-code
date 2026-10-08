@@ -5,22 +5,31 @@
  *
  * 数据来源分三层，拿不到的那一段就整段不画，卡里拿不到的项就整行省略，不编数：
  *   1. 轮次与步数：直接在快照条目上数（user 条目 = 一轮，tool 条目 = 一步）；
- *   2. 输出速度与会话时钟：宿主只给累计 token、不给任何时间戳，所以由这里按
- *      「快照到达时刻」自己量——速度是增量除以流逝时间，会话开始/最近活动是
- *      界面侧观察到的时刻（不是会话文件的创建时间，卡脚注里写明口径）；
- *   3. 累计用量与上下文占用：壳进程读宿主的 `~/.dsc/usage/usage.jsonl`（只读）
- *      后按会话 id 汇总，经 `dsc.sessionUsage(sessionId)` 拿到。
+ *   2. 输出速度、首字延迟与两项耗时：壳进程读宿主的 `~/.dsc/usage/usage.jsonl`
+ *      （只读）后按会话 id 汇总——速度是**整会话累计**的纯解码吞吐，口径见
+ *      core/throughput.ts（宿主快照里只有累计 token、没有任何时间戳，量不出这个数）；
+ *      会话时钟仍旧在界面侧观察（会话开始/最近活动是快照变化的时刻，不是会话文件的时间）；
+ *   3. 累计用量与上下文占用：同一份日志汇总里取，经 `dsc.sessionUsage(sessionId)` 拿到。
  *
  * 第二段卡的缓存三行来自用量日志的 ch/cm 两栏（core/llm.ts 0.6.46 起解析服务端回的
  * 缓存命中字段并落库）：只有真上报过的请求进分母，老行不进——宁缺不假。
  *
  * @module desktop/renderer/StatusBar
  */
-import { useEffect, useRef, useState, type JSX } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import type { StatusView, TokenUsageView, TranscriptEntry } from '@dsc/runtime/contract.js'
 import { dsc, type SessionUsageView } from './bridge.js'
 import { IconActivity, IconDatabase } from './icons.js'
-import { estimateTextTokens, formatCacheHitPercent, formatExactTokens, formatTokens } from './token-estimate.js'
+import {
+  averageTtftMs,
+  estimateTextTokens,
+  formatCacheHitPercent,
+  formatExactTokens,
+  formatTokens,
+  formatTokensPerSecond,
+  tokensPerSecond,
+} from './token-estimate.js'
+import { formatTraceDuration } from './trace-format.js'
 
 const TURN_TEXT: Record<StatusView['turnState'], string> = {
   idle: '空闲',
@@ -39,18 +48,22 @@ export function StatusBar(props: {
   const { status } = props
   const turns = props.entries.filter((entry) => entry.kind === 'user').length
   const steps = props.entries.filter((entry) => entry.kind === 'tool').length
-  const outputTokens = status.usage?.outputTokens ?? 0
-  const speed = useOutputSpeed(outputTokens, status.turnState)
-  const logged = useSessionUsage(status.sessionId, status.turnState)
+
+  // 累计用量优先读用量日志（含切到本进程之前的历史请求）；日志里还没有这个会话时，
+  // 退回快照里的会话累计（只算本进程开着的这段时间）。两个都是真值，只是口径不同。
+  const snapshotTotal = status.usage === null ? 0 : status.usage.inputTokens + status.usage.outputTokens
+  // 日志读下来那一刻重读一次：快照的累计用量一变，就说明有一次请求定稿了，
+  // 它刚落进日志——速度与首字延迟因此在一轮中途也能跟着更新
+  const logged = useSessionUsage(status.sessionId, status.turnState, snapshotTotal)
+  // 输出速度 = 本会话已定稿请求的输出 token ÷ 纯解码时间（口径见 core/throughput.ts，与 dsh 同）：
+  // 日志里还没有这条会话、或老行没记解码期，就整段省略（不拿快照增量估一个数顶上去）
+  const speed = logged === null ? null : tokensPerSecond(logged)
   const clock = useSessionClock(
     status.sessionId,
     activityKey(props.entries, status),
     sessionHasContent(props.entries, status),
   )
 
-  // 累计用量优先读用量日志（含切到本进程之前的历史请求）；日志里还没有这个会话时，
-  // 退回快照里的会话累计（只算本进程开着的这段时间）。两个都是真值，只是口径不同。
-  const snapshotTotal = status.usage === null ? 0 : status.usage.inputTokens + status.usage.outputTokens
   const total = logged === null ? snapshotTotal : logged.inputTokens + logged.outputTokens
 
   // 上下文占用 = 最后一次请求的输入 token（每次请求重发完整上下文，服务端真值）
@@ -78,10 +91,12 @@ export function StatusBar(props: {
               <IconActivity size={12} />
             </span>
             {turns} 轮 {steps} 步
-            {/* 速度是量出来的：还没量到（这一轮刚开口）就整段省略 */}
-            {speed !== null && <span className="seg-dim"> · {String(Math.round(speed))} tok/s</span>}
+            {/* 速度是整会话累计量出来的：日志里还没样本（这一步还没定稿）就整段省略 */}
+            {speed !== null && (
+              <span className="seg-dim"> · {formatTokensPerSecond(speed)} tok/s</span>
+            )}
           </button>
-          <TurnCard turns={turns} steps={steps} speed={speed} clock={clock} />
+          <TurnCard turns={turns} steps={steps} speed={speed} logged={logged} clock={clock} />
         </span>
 
         {total > 0 && (
@@ -119,18 +134,29 @@ function CardRow(props: { label: string; value: string }): JSX.Element {
 }
 
 /**
- * 第一段的详情卡：轮次、步数、输出速度与会话时间。
+ * 第一段的详情卡：轮次、步数、输出速度、首字延迟、两项耗时与会话时间。
  *
- * 时间来自 {@link useSessionClock}（界面侧观察值），拿不到就整行省略。
+ * 速度、首字延迟、LLM 耗时、工具耗时来自 `dsc.sessionUsage`（宿主用量日志的真值，
+ * 整个会话累计，随每次请求落盘）；日志里还没这几项时整行省略。
+ * 时间来自 {@link useSessionClock}（界面侧观察值），拿不到也整行省略。
  */
 function TurnCard(props: {
   turns: number
   steps: number
   speed: number | null
+  logged: SessionUsageView | null
   clock: SessionClock | null
 }): JSX.Element {
   const startedAt = props.clock?.startedAt ?? null
   const lastActiveAt = props.clock?.lastActiveAt ?? null
+  const logged = props.logged
+  // 首字延迟报的是平均（累计 ÷ 样本数）：单看累计毫秒没有可比性，请求一多就只见涨
+  const ttft = logged === null ? null : averageTtftMs(logged)
+  const ttftText = ttft === null ? null : formatTraceDuration(ttft)
+  const ttftSteps = logged?.ttftSteps ?? 0
+  const toolCalls = logged?.toolCalls ?? 0
+  const llmText = logged === null || logged.llmMs <= 0 ? null : formatTraceDuration(logged.llmMs)
+  const toolText = logged === null || toolCalls === 0 ? null : formatTraceDuration(logged.toolMs)
   return (
     <div className="ctx-card" role="note">
       <div className="ctx-head">
@@ -143,18 +169,21 @@ function TurnCard(props: {
       <div className="ctx-rows">
         <CardRow label="用户轮数" value={`${props.turns} 轮`} />
         <CardRow label="工具调用" value={`${props.steps} 步`} />
-        {/* 速度是这一轮按快照增量量的，所以带 ~ 注明是估值 */}
-        {props.speed !== null && <CardRow label="输出速度" value={`~${String(Math.round(props.speed))} tok/s`} />}
+        {/* 速度是纯解码吞吐（首字等待与工具执行都不在分母里），所以不带 ~ */}
+        {props.speed !== null && (
+          <CardRow label="输出速度" value={`${formatTokensPerSecond(props.speed)} tok/s`} />
+        )}
+        {ttftText !== null && (
+          <CardRow label="首字延迟" value={`${ttftText}（平均 ${String(ttftSteps)} 次）`} />
+        )}
+        {llmText !== null && <CardRow label="LLM 耗时" value={llmText} />}
+        {toolText !== null && (
+          <CardRow label="工具耗时" value={`${toolText} · ${String(toolCalls)} 次`} />
+        )}
         {startedAt !== null && <CardRow label="会话开始" value={clockText(startedAt)} />}
         {lastActiveAt !== null && (
           <CardRow label="最近活动" value={`${clockText(lastActiveAt)}（${agoText(lastActiveAt)}）`} />
         )}
-      </div>
-      <div className="ctx-note">
-        轮数与步骤按快照条目数（一条用户消息算一轮，一次工具调用算一步）
-        {props.speed !== null ? '；速度 = 本轮输出增量 ÷ 快照间隔，是界面侧测量值' : '；速度这一轮还没量到'}。
-        宿主快照不带时间戳，会话开始是界面侧第一次看到这条会话有内容的时刻（不是会话文件的创建时间），
-        最近活动是最近一次快照变化的时刻。
       </div>
     </div>
   )
@@ -165,7 +194,7 @@ function TurnCard(props: {
  * （对照 dsh 的「Token 用量」卡，另留 dsc 自己的请求数与最近请求两行）。
  *
  * 全部字段来自 `dsc.sessionUsage`（宿主用量日志的真值）；日志里还没有这条会话时
- * 只有快照口径的输入/输出两项，请求数与最近请求整行省略，脚注说明换的是哪套口径。
+ * 只有快照口径的输入/输出两项，请求数与最近请求整行省略。
  * 缓存那三行只在日志真上报过缓存明细时出现（0.6.46 起），否则退回单行「输入 token」。
  */
 function TokenCard(props: {
@@ -201,11 +230,6 @@ function TokenCard(props: {
         {output !== null && <CardRow label="输出" value={formatExactTokens(output)} />}
         {lastAt !== null && <CardRow label="最近请求" value={`${clockText(lastAt)}（${agoText(lastAt)}）`} />}
       </div>
-      <div className="ctx-note">
-        {logged === null
-          ? '宿主用量日志里还没有这条会话，这里只有本进程内的累计（宿主快照口径），不含切到本进程之前的历史请求，因此不列请求数、缓存明细与最近请求时间。'
-          : '数字来自宿主用量日志：每次模型请求记一条，输入含该次重发的完整上下文，所以远大于输出。缓存三行只统计上报过缓存明细的请求（0.6.46 起），未缓存输入 + 缓存读取 就是这些请求的输入总量。'}
-      </div>
     </div>
   )
 }
@@ -222,7 +246,7 @@ function ContextSegment(props: { used: number; total: number; messageTokens: num
         <ContextRing percent={shown} />
         {percent}%
       </button>
-      <ContextCard {...props} percent={percent} shown={shown} />
+      <ContextCard {...props} percent={percent} />
     </span>
   )
 }
@@ -232,7 +256,6 @@ function ContextCard(props: {
   used: number
   total: number
   percent: number
-  shown: number
   messageTokens: number
 }): JSX.Element {
   // 分解只在两个数都讲得通时才画：消息估算得大于 0，而且不能超过真实输入
@@ -268,12 +291,6 @@ function ContextCard(props: {
           </div>
         </div>
       )}
-      <div className="ctx-note">
-        在窗口里占 {props.shown}%
-        {split
-          ? '；对话消息按正文字符估算（工具结果按 1500 字符截断后计），系统提示词与工具定义由「本次输入 − 消息估算」推得，宿主没有分项上报。'
-          : `；宿主未提供上下文构成分解，这里只报总占用。`}
-      </div>
     </div>
   )
 }
@@ -301,43 +318,16 @@ function ContextRing({ percent }: { percent: number }): JSX.Element {
 }
 
 /**
- * 输出速度（token/秒）：宿主快照里只有累计 token，没有时间戳。
+ * 会话累计用量与各项耗时：切会话时取一次，之后每轮跑完（忙转闲）与每次请求定稿
+ * （快照累计 token 一变）再取一次——日志里会变的就是这些时刻。
  *
- * 所以由本组件自己量：忙起来记下第一个锚点（当时累计输出 + 到达时刻），之后每张
- * 快照按增量除以真实流逝时间。锚点放 ref 里不触发渲染，只有算出来的速率进 state；
- * 一轮结束只清锚点、留着上一次的速率，免得每轮开头那段空白期把数字闪没。
- *
- * @param outputTokens - 本会话累计输出 token（快照的 status.usage）
+ * @param settledTokens - 快照口径的本会话累计 token；它一变就说明有一次请求刚落进日志。
  */
-function useOutputSpeed(outputTokens: number, turnState: StatusView['turnState']): number | null {
-  const anchor = useRef<{ tokens: number; at: number } | null>(null)
-  const [speed, setSpeed] = useState<number | null>(null)
-  const busy = turnState !== 'idle'
-  useEffect(() => {
-    if (!busy) {
-      anchor.current = null
-      return
-    }
-    const now = Date.now()
-    const previous = anchor.current
-    if (previous === null) {
-      anchor.current = { tokens: outputTokens, at: now }
-      return
-    }
-    const seconds = (now - previous.at) / 1000
-    const gained = outputTokens - previous.tokens
-    // 半秒以下或这一段没吐字（比如刚发完请求在等服务端首包）就不更新，避免除出天文数字
-    if (seconds < 0.5 || gained <= 0) return
-    setSpeed(gained / seconds)
-  }, [busy, outputTokens])
-  return speed
-}
-
-/**
- * 会话累计用量：切会话时取一次，之后每轮跑完（忙转闲）再取一次——
- * 这份数字只有这两个时刻会变。
- */
-function useSessionUsage(sessionId: string | null, turnState: StatusView['turnState']): SessionUsageView | null {
+function useSessionUsage(
+  sessionId: string | null,
+  turnState: StatusView['turnState'],
+  settledTokens: number,
+): SessionUsageView | null {
   // 连会话 id 一起存：切会话那一刻旧数字必须立刻作废，不能把上一条会话的账挂在新的底下
   const [bag, setBag] = useState<{ id: string; view: SessionUsageView | null } | null>(null)
   const busy = turnState !== 'idle'
@@ -359,7 +349,7 @@ function useSessionUsage(sessionId: string | null, turnState: StatusView['turnSt
     return () => {
       alive = false
     }
-  }, [sessionId, busy])
+  }, [sessionId, busy, settledTokens])
   return bag !== null && bag.id === sessionId ? bag.view : null
 }
 

@@ -12,6 +12,16 @@
 
 export { estimateTextTokens } from '@dsc/runtime/core/token-estimate.js'
 
+/**
+ * 输出速度与首字延迟的口径原件在宿主 `core/throughput.ts`：转出口给各组件一行 import。
+ * 谁都不许在渲染层自己再写一遍 `token ÷ 秒` —— 口径只许有一份。
+ */
+export {
+  averageTtftMs,
+  formatTokensPerSecond,
+  tokensPerSecond,
+} from '@dsc/runtime/core/throughput.js'
+
 /** 去掉小数末尾多余的 0：46.0K → 46K，1.00M → 1M。 */
 function trimZero(value: number): string {
   const text = value >= 100 ? value.toFixed(0) : value.toFixed(1)
